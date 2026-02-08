@@ -32,11 +32,6 @@ class ScreenStateReceiver : BroadcastReceiver() {
         scope.launch {
             try {
                 processEvent(context, type, timestamp)
-                // Cleanup old events (older than 7 days) once in a while
-                if (Math.random() < 0.1) { // 10% chance to cleanup on each event
-                    val db = SleepEventDatabase.getDatabase(context)
-                    db.screenEventDao().deleteOldEvents(timestamp - 7 * 24 * 60 * 60 * 1000)
-                }
             } finally {
                 pendingResult.finish()
             }

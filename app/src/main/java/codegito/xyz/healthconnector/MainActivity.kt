@@ -85,9 +85,13 @@ class MainActivity : ComponentActivity() {
         }
 
     private fun ensureServiceRunning() {
-        if (!isServiceRunning(SleepTrackingService::class.java)) {
-            val serviceIntent = Intent(this, SleepTrackingService::class.java)
-            startForegroundService(serviceIntent)
+        lifecycleScope.launch {
+            if (userPreferencesRepository.isAutoSleepDetectionActive()) {
+                if (!isServiceRunning(SleepTrackingService::class.java)) {
+                    val serviceIntent = Intent(this@MainActivity, SleepTrackingService::class.java)
+                    startForegroundService(serviceIntent)
+                }
+            }
         }
     }
 

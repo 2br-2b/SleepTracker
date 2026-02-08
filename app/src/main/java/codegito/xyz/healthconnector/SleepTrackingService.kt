@@ -20,9 +20,16 @@ class SleepTrackingService : Service() {
 
     private val screenStateReceiver = ScreenStateReceiver()
     private val scope = CoroutineScope(Dispatchers.IO)
+    private var settingsJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate() {
         super.onCreate()
+
+        // Create notification channels for reminders
+        NotificationHelper.createNotificationChannels(this)
+
+        // Start as foreground service immediately to satisfy Android requirements
+        startForegroundServiceCompat()
 
         // Register the screen state receiver
         val filter = IntentFilter().apply {
@@ -32,17 +39,42 @@ class SleepTrackingService : Service() {
         }
         registerReceiver(screenStateReceiver, filter)
 
-        // Create notification channels for reminders
-        NotificationHelper.createNotificationChannels(this)
-        
-        // Schedule deadline alarm
-        scope.launch {
+        // Monitor settings for changes
+        settingsJob = scope.launch {
             val prefs = UserPreferencesRepository(this@SleepTrackingService)
-            val wakeupEnd = prefs.wakeupWindowEnd.first()
-            NotificationHelper.scheduleDeadlineAlarm(this@SleepTrackingService, wakeupEnd)
+            
+            // Watch for mode or window changes
+            kotlinx.coroutines.combine(
+                prefs.sleepDetectionMode,
+                prefs.wakeupWindowEnd,
+                prefs.bedtimeWindowStart
+            ) { mode, wakeupEnd, bedtimeStart ->
+                Triple(mode, wakeupEnd, bedtimeStart)
+            }.collect { (mode, wakeupEnd, bedtimeStart) ->
+                if (mode == SleepDetectionMode.MANUAL) {
+                    Log.d("SleepTrackingService", "Manual mode enabled, stopping service")
+                    stopSelf()
+                } else {
+                    // Reschedule deadline alarm if settings change
+                    NotificationHelper.scheduleDeadlineAlarm(this@SleepTrackingService, wakeupEnd)
+                }
+            }
         }
 
-        // Start as foreground service
+        // Periodic maintenance (database cleanup)
+        scope.launch {
+            try {
+                val timestamp = System.currentTimeMillis()
+                val db = codegito.xyz.healthconnector.data.db.SleepEventDatabase.getDatabase(this@SleepTrackingService)
+                db.screenEventDao().deleteOldEvents(timestamp - 7 * 24 * 60 * 60 * 1000)
+                Log.d("SleepTrackingService", "Cleaned up old events")
+            } catch (e: Exception) {
+                Log.e("SleepTrackingService", "Cleanup failed", e)
+            }
+        }
+    }
+
+    private fun startForegroundServiceCompat() {
         if (Build.VERSION.SDK_INT >= 34) { // Android 14+
             startForeground(
                 NOTIFICATION_ID,
@@ -55,12 +87,22 @@ class SleepTrackingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Handle explicit stop intent if needed
+        if (intent?.action == "STOP_SERVICE") {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         return START_STICKY // Restart if killed by system
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(screenStateReceiver)
+        settingsJob?.cancel()
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (e: Exception) {
+            // Might not be registered if crashed during onCreate
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -76,18 +118,25 @@ class SleepTrackingService : Service() {
         val channel = NotificationChannel(
             channelId,
             channelName,
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
-            description = "Monitors screen state for sleep tracking"
+            description = "Active while monitoring sleep patterns"
         }
         notificationManager.createNotificationChannel(channel)
 
+        val intent = Intent(this, MainActivity::class.java)
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            this, 0, intent, 
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("Sleep Tracking Active")
-            .setContentText("Monitoring your sleep patterns")
-            .setSmallIcon(android.R.drawable.ic_menu_today) // TODO: Replace with custom icon
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentText("Tap to open Sleep Tracker and review logs")
+            .setSmallIcon(android.R.drawable.ic_menu_today)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setOngoing(true)
+            .setContentIntent(pendingIntent)
             .build()
     }
 

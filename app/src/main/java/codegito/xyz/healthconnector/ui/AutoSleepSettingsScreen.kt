@@ -126,17 +126,31 @@ fun AutoSleepSettingsScreen(
                 SectionHeader("Default template")
                 Text("When you start logging a new day, the app will provide a default template. This can either be automatically generated based on when you lock and unlock your phone or start as a template. Either way, you will be able to edit this before saving it to Health Connect.", style = MaterialTheme.typography.bodySmall)
                 Column {
+                    val context = LocalContext.current
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(
                             selected = detectionMode == SleepDetectionMode.AUTO,
-                            onClick = { scope.launch { userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.AUTO) } }
+                            onClick = { 
+                                scope.launch { 
+                                    userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.AUTO)
+                                    val serviceIntent = android.content.Intent(context, codegito.xyz.healthconnector.SleepTrackingService::class.java)
+                                    context.startForegroundService(serviceIntent)
+                                } 
+                            }
                         )
                         Text("Auto-detect")
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(
                             selected = detectionMode == SleepDetectionMode.MANUAL,
-                            onClick = { scope.launch { userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.MANUAL) } }
+                            onClick = { 
+                                scope.launch { 
+                                    userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.MANUAL)
+                                    // The service stops itself by observing preferences, but we can also be explicit
+                                    val serviceIntent = android.content.Intent(context, codegito.xyz.healthconnector.SleepTrackingService::class.java)
+                                    context.stopService(serviceIntent)
+                                } 
+                            }
                         )
                         Text("Template")
                     }

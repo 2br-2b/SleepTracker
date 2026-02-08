@@ -183,6 +183,16 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { preferences -> preferences[REMINDER_DEADLINE_SILENT_ENABLED_KEY] = enabled }
     }
 
+    suspend fun isAutoSleepDetectionActive(): Boolean {
+        return sleepDetectionMode.first() == SleepDetectionMode.AUTO
+    }
+
+    suspend fun isAnyReminderEnabled(): Boolean {
+        return reminderFirstUnlockEnabled.first() ||
+               reminderDeadlineLoudEnabled.first() ||
+               reminderDeadlineSilentEnabled.first()
+    }
+
     private fun getDefaultTemplate(): SleepLogTemplate {
         return SleepLogTemplate(
             bedtimeOffsetMinutes = 22 * 60, // 10 PM
