@@ -81,7 +81,7 @@ fun EditSleepStagesScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            itemsIndexed(stages, key = { _, item -> item.id }) { index, stage ->
+            itemsIndexed(stages, key = { _, item -> item.healthConnectType }) { index, stage ->
                 val isDragged = dragReorderState.draggedIndex == index
                 
                 SleepStageEditRow(
@@ -131,7 +131,9 @@ fun EditSleepStagesScreen(
             confirmButton = {
                 TextButton(onClick = {
                     stages = stages.toMutableList().apply {
-                        this[index] = stages[index].copy(emoji = emojiInput)
+                        val currentStage = stages[index]
+                        val finalEmoji = if (emojiInput == SleepStageConfig.getStageEmoji(currentStage.healthConnectType)) null else emojiInput
+                        this[index] = currentStage.copy(customEmoji = finalEmoji)
                     }
                     save()
                     showingEmojiDialogForStageIndex = null

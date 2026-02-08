@@ -54,7 +54,7 @@ object SleepDetectionEngine {
             segments.add(
                 SleepSegment(
                     endTime = sleepingStartTime,
-                    sleepStage = SleepSessionRecord.STAGE_TYPE_AWAKE
+                    sleepStage = SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED
                 )
             )
             

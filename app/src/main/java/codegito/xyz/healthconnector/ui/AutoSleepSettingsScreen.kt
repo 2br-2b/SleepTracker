@@ -118,12 +118,32 @@ fun AutoSleepSettingsScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
+                // 1. Sleep Detection Mode
+                SectionHeader("Default template")
+                Text("When you start logging a new day, the app will provide a default template. This can either be automatically generated based on when you lock and unlock your phone or start as a template. Either way, you will be able to edit this before saving it to Health Connect.", style = MaterialTheme.typography.bodySmall)
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = detectionMode == SleepDetectionMode.AUTO,
+                            onClick = { scope.launch { userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.AUTO) } }
+                        )
+                        Text("Auto-detect")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = detectionMode == SleepDetectionMode.MANUAL,
+                            onClick = { scope.launch { userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.MANUAL) } }
+                        )
+                        Text("Template")
+                    }
+                }
+
                 // 0. Permission
                 SectionHeader("Sensors Permission")
                 Text("GrapheneOS requires the 'Other Sensors' permission for screen state detection.", style = MaterialTheme.typography.bodySmall)
                 if (hasOtherSensorsPermission) {
                     Button(
-                        onClick = {}, 
+                        onClick = {},
                         enabled = false,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -139,7 +159,7 @@ fun AutoSleepSettingsScreen(
                     ) {
                         Text("Request Sensors Permission")
                     }
-                    
+
                     OutlinedButton(
                         onClick = {
                             val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -155,27 +175,7 @@ fun AutoSleepSettingsScreen(
                     }
                 }
 
-                HorizontalDivider()
 
-                // 1. Sleep Detection Mode
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = detectionMode == SleepDetectionMode.AUTO,
-                            onClick = { scope.launch { userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.AUTO) } }
-                        )
-                        Text("Auto-detect (Phone interaction)")
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = detectionMode == SleepDetectionMode.MANUAL,
-                            onClick = { scope.launch { userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.MANUAL) } }
-                        )
-                        Text("Manual (Use template)")
-                    }
-                }
-
-                HorizontalDivider()
 
                 // 2. Bedtime Window
                 SectionHeader("Bedtime Window")
@@ -195,8 +195,6 @@ fun AutoSleepSettingsScreen(
                     )
                 }
 
-                HorizontalDivider()
-
                 // 3. Wakeup Window
                 SectionHeader("Wakeup Window")
                 Text("When you usually wake up. The first phone unlock in this range is your wakeup time.", style = MaterialTheme.typography.bodySmall)
@@ -215,10 +213,9 @@ fun AutoSleepSettingsScreen(
                     )
                 }
 
-                HorizontalDivider()
-
                 // 4. Awakenings
                 SectionHeader("Awakenings")
+                Text("If your phone unlocks during the Wakeup Window, but then locks again and later unlocks again in that period, the app will try to see if you woke up and went back to sleep or if you were already awake by comparing the time between when you last locked your phone and when you picked it up again. If it's less than this threshold, the app will assume you didn't go back to sleep, but if not, the app will assume you went to sleep then woke up again.", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(
                         checked = awakeningEnabled,
@@ -237,10 +234,9 @@ fun AutoSleepSettingsScreen(
                     )
                 }
 
-                HorizontalDivider()
-
                 // 5. Default Awake Period
                 SectionHeader("Before Falling Asleep")
+                Text("The default number of minutes from when you last lock your phone to when you fall asleep. You can change this day to day!", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = defaultAwakeToAsleep.toString(),
                     onValueChange = { val value = it.toIntOrNull() ?: 0
@@ -249,8 +245,6 @@ fun AutoSleepSettingsScreen(
                     label = { Text("Default awake in bed (minutes)") },
                     modifier = Modifier.fillMaxWidth()
                 )
-
-                HorizontalDivider()
 
                 // 6. Manual Template Editor
                 SectionHeader("Manual Sleep Template")

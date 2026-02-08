@@ -18,6 +18,11 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 class UserPreferencesRepository(private val context: Context) {
     
+    private val json = Json { 
+        ignoreUnknownKeys = true 
+        encodeDefaults = true
+    }
+
     private val SLEEP_STAGES_JSON_KEY = stringPreferencesKey("sleep_stages_json")
     private val ROLLOVER_HOUR_KEY = intPreferencesKey("rollover_hour")
     
@@ -72,7 +77,7 @@ class UserPreferencesRepository(private val context: Context) {
             val jsonString = preferences[MANUAL_SLEEP_TEMPLATE_JSON_KEY]
             if (jsonString != null) {
                 try {
-                    Json.decodeFromString<SleepLogTemplate>(jsonString)
+                    json.decodeFromString<SleepLogTemplate>(jsonString)
                 } catch (e: Exception) {
                     getDefaultTemplate()
                 }
@@ -86,12 +91,12 @@ class UserPreferencesRepository(private val context: Context) {
             val jsonString = preferences[SLEEP_STAGES_JSON_KEY]
             if (jsonString != null) {
                 try {
-                    Json.decodeFromString<List<SleepStageConfig>>(jsonString)
+                    json.decodeFromString<List<SleepStageConfig>>(jsonString)
                 } catch (e: Exception) {
-                    getDefaultSleepStages()
+                    codegito.xyz.healthconnector.data.getDefaultSleepStages()
                 }
             } else {
-                getDefaultSleepStages()
+                codegito.xyz.healthconnector.data.getDefaultSleepStages()
             }
         }
 
@@ -141,25 +146,16 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun saveManualTemplate(template: SleepLogTemplate) {
         context.dataStore.edit { preferences ->
-            preferences[MANUAL_SLEEP_TEMPLATE_JSON_KEY] = Json.encodeToString(template)
+            preferences[MANUAL_SLEEP_TEMPLATE_JSON_KEY] = json.encodeToString(template)
         }
     }
 
     suspend fun saveSleepStages(stages: List<SleepStageConfig>) {
         context.dataStore.edit { preferences ->
-            preferences[SLEEP_STAGES_JSON_KEY] = Json.encodeToString(stages)
+            preferences[SLEEP_STAGES_JSON_KEY] = json.encodeToString(stages)
         }
     }
 
-    private fun getDefaultSleepStages(): List<SleepStageConfig> {
-        return listOf(
-            SleepStageConfig("awake", "Awake", SleepSessionRecord.STAGE_TYPE_AWAKE, "💡", true),
-            SleepStageConfig("sleeping", "Light Sleep", SleepSessionRecord.STAGE_TYPE_SLEEPING, "🌙", true),
-            SleepStageConfig("deep", "Deep Sleep", SleepSessionRecord.STAGE_TYPE_DEEP, "💤", true),
-            SleepStageConfig("rem", "REM", SleepSessionRecord.STAGE_TYPE_REM, "🌈", true),
-            SleepStageConfig("out_of_bed", "Out of Bed", SleepSessionRecord.STAGE_TYPE_OUT_OF_BED, "🚶", false)
-        )
-    }
 
     private fun getDefaultTemplate(): SleepLogTemplate {
         return SleepLogTemplate(

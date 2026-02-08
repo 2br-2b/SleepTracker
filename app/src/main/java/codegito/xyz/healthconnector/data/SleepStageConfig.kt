@@ -5,20 +5,49 @@ import androidx.health.connect.client.records.SleepSessionRecord
 
 @Serializable
 data class SleepStageConfig(
-    val id: String, // Unique ID to track reordering
-    val name: String,
     val healthConnectType: Int, // Maps to SleepSessionRecord.STAGE_TYPE_*
-    val emoji: String,
+    val customEmoji: String? = null,
     val isEnabled: Boolean = true
-)
+) {
+    val name: String
+        get() = getStageName(healthConnectType)
 
-// Default Configuration
+    val emoji: String
+        get() = customEmoji ?: getStageEmoji(healthConnectType)
+
+    companion object {
+        fun getStageName(type: Int): String = when (type) {
+            SleepSessionRecord.STAGE_TYPE_AWAKE -> "Awake"
+            SleepSessionRecord.STAGE_TYPE_SLEEPING -> "Sleeping"
+            SleepSessionRecord.STAGE_TYPE_OUT_OF_BED -> "Awake out of bed"
+            SleepSessionRecord.STAGE_TYPE_LIGHT -> "Light sleep"
+            SleepSessionRecord.STAGE_TYPE_DEEP -> "Deep sleep"
+            SleepSessionRecord.STAGE_TYPE_REM -> "REM sleep"
+            SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED -> "Awake in bed"
+            else -> "Unknown"
+        }
+
+        fun getStageEmoji(type: Int): String = when (type) {
+            SleepSessionRecord.STAGE_TYPE_AWAKE -> "☀️"
+            SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED -> "🥱"
+            SleepSessionRecord.STAGE_TYPE_SLEEPING -> "🛌"
+            SleepSessionRecord.STAGE_TYPE_OUT_OF_BED -> "🚶"
+            SleepSessionRecord.STAGE_TYPE_LIGHT -> "🌙"
+            SleepSessionRecord.STAGE_TYPE_DEEP -> "💤"
+            SleepSessionRecord.STAGE_TYPE_REM -> "🌈"
+            else -> "❓"
+        }
+    }
+}
+
+// Default Configuration: Sleeping -> Awake -> Awake in Bed -> Out of Bed -> Unknown -> Light -> Deep -> REM
 fun getDefaultSleepStages(): List<SleepStageConfig> = listOf(
-    SleepStageConfig("sleeping", "Sleeping", SleepSessionRecord.STAGE_TYPE_SLEEPING, "😴"),
-    SleepStageConfig("awake", "Awake in bed", SleepSessionRecord.STAGE_TYPE_AWAKE, "☀️"),
-    SleepStageConfig("out_of_bed", "Awake out of bed", SleepSessionRecord.STAGE_TYPE_OUT_OF_BED, "🚶"),
-    SleepStageConfig("unknown", "Unknown", SleepSessionRecord.STAGE_TYPE_UNKNOWN, "❓"),
-    SleepStageConfig("light", "Light sleep", SleepSessionRecord.STAGE_TYPE_LIGHT, "🌙"),
-    SleepStageConfig("deep", "Deep sleep", SleepSessionRecord.STAGE_TYPE_DEEP, "💤"),
-    SleepStageConfig("rem", "REM sleep", SleepSessionRecord.STAGE_TYPE_REM, "👁️"),
+    SleepStageConfig(SleepSessionRecord.STAGE_TYPE_SLEEPING, isEnabled = true),
+    SleepStageConfig(SleepSessionRecord.STAGE_TYPE_AWAKE, isEnabled = false),
+    SleepStageConfig(SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED, isEnabled = true),
+    SleepStageConfig(SleepSessionRecord.STAGE_TYPE_OUT_OF_BED, isEnabled = true),
+    SleepStageConfig(SleepSessionRecord.STAGE_TYPE_UNKNOWN, isEnabled = true),
+    SleepStageConfig(SleepSessionRecord.STAGE_TYPE_LIGHT, isEnabled = false),
+    SleepStageConfig(SleepSessionRecord.STAGE_TYPE_DEEP, isEnabled = false),
+    SleepStageConfig(SleepSessionRecord.STAGE_TYPE_REM, isEnabled = false),
 )

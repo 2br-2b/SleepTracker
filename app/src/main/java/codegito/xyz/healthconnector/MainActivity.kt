@@ -312,6 +312,7 @@ fun SleepDayCard(
                 // Calculate asleep time
                 val asleepDuration = session.stages.sumOf { stage ->
                     if (stage.stage != SleepSessionRecord.STAGE_TYPE_AWAKE && 
+                        stage.stage != SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED && 
                         stage.stage != SleepSessionRecord.STAGE_TYPE_OUT_OF_BED &&
                         stage.stage != SleepSessionRecord.STAGE_TYPE_UNKNOWN) {
                         Duration.between(stage.startTime, stage.endTime).toMillis()

@@ -1,5 +1,6 @@
 package codegito.xyz.healthconnector.data.model
 
+import androidx.health.connect.client.records.SleepSessionRecord
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -22,8 +23,8 @@ fun getDefaultTemplate(): SleepLogTemplate = SleepLogTemplate(
     bedtimeOffsetMinutes = 0, // Midnight
     segments = listOf(
         // 0 to 15 mins: Awake in bed
-        TemplateSegment(0, 15, 1), // STAGE_TYPE_AWAKE
+        TemplateSegment(0, 15, SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED),
         // 15 to 480 mins (8 hours): Sleeping
-        TemplateSegment(15, 480, 2) // STAGE_TYPE_SLEEPING
+        TemplateSegment(15, 480, SleepSessionRecord.STAGE_TYPE_SLEEPING)
     )
 )

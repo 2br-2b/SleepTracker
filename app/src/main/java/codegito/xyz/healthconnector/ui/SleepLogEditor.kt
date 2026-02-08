@@ -178,6 +178,7 @@ fun SleepLogEditor(
                             val start = if (index == 0) bedtime else segments[index - 1].endTime
                             val mins = Duration.between(start, segment.endTime).toMinutes()
                             if (segment.sleepStage != SleepSessionRecord.STAGE_TYPE_AWAKE &&
+                                segment.sleepStage != SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED &&
                                 segment.sleepStage != SleepSessionRecord.STAGE_TYPE_OUT_OF_BED &&
                                 segment.sleepStage != SleepSessionRecord.STAGE_TYPE_UNKNOWN
                             ) mins else 0L
@@ -331,8 +332,8 @@ fun SleepSegmentCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val stageConfig = sleepStages.find { it.healthConnectType == segment.sleepStage }
-    val currentStage = stageConfig?.name ?: "Unknown"
-    val currentEmoji = stageConfig?.emoji ?: "❓"
+    val currentStage = stageConfig?.name ?: SleepStageConfig.getStageName(segment.sleepStage)
+    val currentEmoji = stageConfig?.emoji ?: SleepStageConfig.getStageEmoji(segment.sleepStage)
 
     Card(modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
