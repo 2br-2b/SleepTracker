@@ -14,9 +14,11 @@ Bedtime: 10:00 PM
 ├─ [Awake]          30 min → until 10:30 PM  [Remove]
 ├─ [Light Sleep]    2h 0min → until 12:30 AM [Remove]
 ├─ [Deep Sleep]     1h 30min → until 2:00 AM [Remove]
-└─ [REM Sleep]      (ongoing - no duration shown)
-[+ FAB to add timestamp]
+└─ [REM Sleep]      5h 30min → until 7:30 AM [Remove]
+[+ Add Timestamp] (button at bottom of list)
 ```
+
+**Note:** All durations and timestamps are clickable and editable.
 
 ## Data Model
 
@@ -62,29 +64,31 @@ fun SleepLogScreen(
     var bedtime by remember { mutableStateOf(...) }
     var segments by remember { mutableStateOf(...) }
     var showBedtimePicker by remember { mutableStateOf(false) }
-    var showAddSegmentPicker by remember { mutableStateOf(false) }
+    var editingSegmentIndex by remember { mutableStateOf<Int?>(null) }
+    var editingDurationIndex by remember { mutableStateOf<Int?>(null) }
+    var durationInputText by remember { mutableStateOf("") }
 
-    Scaffold(
-        floatingActionButton = { FloatingActionButton(...) }
-    ) { padding ->
+    Scaffold { padding ->
         Column {
             BedtimeCard(...)
-            LazyColumn { /* segments */ }
+            LazyColumn {
+                /* segments */
+                /* Add Timestamp button at bottom */
+            }
             Row { /* Cancel/Save buttons */ }
         }
     }
 
-    // Time picker dialogs
+    // Dialogs for editing time and duration
 }
 ```
 
 **Features:**
-- State management for bedtime and segments list
-- Scaffold with FAB for adding segments
+- State management for bedtime, segments, and editing state
 - Bedtime card at top
-- LazyColumn for scrollable segments list
+- LazyColumn for scrollable segments list with Add button at bottom
 - Action buttons (Cancel/Save) at bottom
-- Time picker dialogs for bedtime and new segments
+- Dialogs for editing time, duration, and bedtime
 
 ### 2. BedtimeCard Composable
 
@@ -115,19 +119,20 @@ Each segment in the LazyColumn:
 fun SleepSegmentCard(
     segment: SleepSegment,
     durationMinutes: Long,
-    isLast: Boolean,
     onStageChanged: (Int) -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onDurationClick: () -> Unit,
+    onTimestampClick: () -> Unit
 ) {
     Card {
         Column {
             Row {
                 ExposedDropdownMenuBox(...)  // Sleep stage selector
-                Text(if (isLast) "ongoing" else duration)
+                Text(duration, modifier = Modifier.clickable { onDurationClick() })
             }
             Row {
-                Text("→ until ${endTime}")
-                if (!isLast) TextButton("Remove")
+                Text("→ until ${endTime}", modifier = Modifier.clickable { onTimestampClick() })
+                TextButton("Remove")
             }
         }
     }
@@ -136,13 +141,13 @@ fun SleepSegmentCard(
 
 **Features:**
 - ExposedDropdownMenuBox for sleep stage selection
-- Duration display (or "ongoing" for last segment)
-- End time display
-- Remove button (hidden for last segment)
+- Clickable duration display - tap to edit minutes directly
+- Clickable timestamp display - tap to edit time
+- Remove button on all segments
 
 ### 4. TimePickerDialog Composable
 
-Reusable time picker dialog:
+Reusable time picker dialog for bedtime and timestamp editing:
 
 ```kotlin
 @Composable
@@ -161,6 +166,40 @@ fun TimePickerDialog(
     )
 }
 ```
+
+### 5. DurationInputDialog Composable
+
+Dialog for editing segment duration in minutes:
+
+```kotlin
+@Composable
+fun DurationInputDialog(
+    title: String,
+    initialValue: String,
+    onConfirm: (String) -> Unit,
+    onValueChange: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = initialValue,
+                onValueChange = onValueChange,
+                label = { Text("Minutes") },
+                singleLine = true
+            )
+        },
+        confirmButton = { ... },
+        dismissButton = { ... }
+    )
+}
+```
+
+**Features:**
+- Text field for numeric input (minutes)
+- Validates and recalculates end time on confirm
+- Shows error if duration exceeds next segment
 
 ## Sleep Stage Types
 
@@ -184,21 +223,26 @@ val sleepStages = listOf(
 
 ### Adding a New Timestamp
 
-1. User clicks the FAB (`+`) button
-2. TimePickerDialog appears with MaterialTimePicker
-3. User selects a time (must be after the last segment's end time)
-4. Validation: New timestamp must be chronologically after the previous one
-5. The previous "last segment" now has a calculated duration
-6. A new segment is created starting at this time with default sleep stage (Sleeping)
-7. The new segment becomes the ongoing segment (shows "ongoing" instead of duration)
+1. User clicks the "Add Timestamp" button at the bottom of the list
+2. A new segment is immediately created with:
+   - End time: Current time (`LocalDateTime.now()`)
+   - Sleep stage: "Sleeping" (default)
+3. Duration is automatically calculated from the previous segment's end time
+4. User can then edit the timestamp, duration, or sleep stage as needed
 
 **State Update:**
 ```kotlin
 segments = segments + SleepSegment(
-    endTime = newTime,
+    endTime = LocalDateTime.now(),
     sleepStage = SleepSessionRecord.STAGE_TYPE_SLEEPING
 )
 ```
+
+**Benefits:**
+- No time picker dialog interruption
+- Faster workflow for real-time logging
+- Current time is usually the desired value
+- Easy to adjust afterward if needed
 
 ### Removing a Timestamp
 
@@ -255,6 +299,42 @@ updated[index] = segment.copy(sleepStage = newStage)
 segments = updated
 ```
 
+### Editing Duration
+
+1. User clicks on the duration text (e.g., "2h 30min")
+2. DurationInputDialog appears with text field
+3. User enters new duration in minutes (e.g., "150")
+4. System recalculates end time by adding minutes to start time
+5. Validation: New end time must not exceed next segment's start time
+6. Duration and timestamp update automatically
+
+**State Update:**
+```kotlin
+val newEndTime = startTime.plusMinutes(durationMinutes)
+val updated = segments.toMutableList()
+updated[index] = segments[index].copy(endTime = newEndTime)
+segments = updated
+```
+
+**Use Case:** Quickly adjust sleep stage duration without calculating exact times.
+
+### Editing Timestamp
+
+1. User clicks on the timestamp text (e.g., "→ until 11:30 PM")
+2. TimePickerDialog appears with current time pre-selected
+3. User selects a new time
+4. Validation: Must be after previous segment and before next segment
+5. Duration recalculates automatically based on new end time
+
+**State Update:**
+```kotlin
+val updated = segments.toMutableList()
+updated[index] = segments[index].copy(endTime = newTime)
+segments = updated
+```
+
+**Use Case:** Set exact wake-up time or adjust segment boundary.
+
 ## State Management
 
 Compose's state system handles reactivity:
@@ -268,23 +348,26 @@ Compose's state system handles reactivity:
 
 1. **Continuous Timeline**: No gaps between segments - every minute is accounted for
 2. **Implicit Start Times**: Each segment's start is the previous segment's end
-3. **Last Segment Special**: The final segment represents "ongoing" sleep with no defined end
-4. **Remove Merges**: Removing a timestamp merges segments, doesn't create gaps
-5. **Bedtime as Anchor**: Bedtime is separate from segments and serves as the timeline's starting point
-6. **Chronological Validation**: All timestamps must be in chronological order
-7. **Reactive UI**: Compose state system ensures UI stays in sync with data
+3. **Editable Durations**: Click duration to enter minutes, system recalculates timestamp
+4. **Editable Timestamps**: Click timestamp to change time, system recalculates duration
+5. **Remove Merges**: Removing a timestamp merges segments, doesn't create gaps
+6. **Bedtime as Anchor**: Bedtime is separate from segments and serves as the timeline's starting point
+7. **Chronological Validation**: All timestamps must be in chronological order
+8. **Instant Add**: New timestamps default to current time for fast logging
+9. **Reactive UI**: Compose state system ensures UI stays in sync with data
 
 ## Material Design 3 Components
 
 Uses Material 3 (Material You) Compose components:
 
-- **Card**: For bedtime display and segment items
+- **Card**: For bedtime display, segment items, and Add Timestamp button
 - **ExposedDropdownMenuBox**: For sleep stage selection
-- **TimePicker** in **AlertDialog**: For time selection
-- **FloatingActionButton**: For adding new segments
+- **TimePicker** in **AlertDialog**: For time selection and timestamp editing
+- **OutlinedTextField** in **AlertDialog**: For duration editing (minutes input)
 - **TextButton** and **Button**: For actions
 - **LazyColumn**: For efficient scrolling list
-- **Scaffold**: For overall layout with FAB
+- **Scaffold**: For overall layout
+- **Clickable modifiers**: For interactive duration and timestamp editing
 
 ## Dependencies
 
@@ -337,14 +420,20 @@ fun SleepLog.toHealthConnectRecord(): SleepSessionRecord {
 ## Testing Considerations
 
 1. **Empty State**: Handle when no segments exist yet (initialize with one)
-2. **Single Segment**: Test with just one ongoing segment
+2. **Single Segment**: Test with just one segment
 3. **Multiple Segments**: Test with 5+ segments
-4. **Time Validation**: Ensure new timestamps must be after previous ones
-5. **Midnight Crossing**: Test segments that cross midnight boundary
-6. **Same-Day vs Multi-Day**: Handle sleep sessions that span multiple days
-7. **Remove First Segment**: Test removing the first segment
-8. **Duration Display**: Test various duration formats (minutes only, hours only, hours + minutes)
-9. **State Updates**: Verify all state changes trigger proper recomposition
+4. **Time Validation**: Ensure edited timestamps stay between adjacent segments
+5. **Duration Editing**: Test that entering minutes correctly recalculates end time
+6. **Duration Validation**: Verify duration doesn't exceed next segment boundary
+7. **Timestamp Editing**: Test that changing time correctly recalculates duration
+8. **Midnight Crossing**: Test segments that cross midnight boundary
+9. **Same-Day vs Multi-Day**: Handle sleep sessions that span multiple days
+10. **Remove First Segment**: Test removing the first segment
+11. **Remove Last Segment**: Test removing the last segment
+12. **Duration Display**: Test various duration formats (minutes only, hours only, hours + minutes)
+13. **State Updates**: Verify all state changes trigger proper recomposition
+14. **Add Timestamp**: Verify new timestamps default to current time
+15. **Invalid Input**: Test non-numeric duration input handling
 
 ## Implementation Benefits (Compose vs XML)
 
