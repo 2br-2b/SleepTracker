@@ -2,6 +2,7 @@ package codegito.xyz.healthconnector
 
 import java.time.Duration
 import java.time.LocalDateTime
+import java.util.UUID
 
 /**
  * Represents a complete sleep log with a bedtime and continuous segments.
@@ -18,6 +19,7 @@ data class SleepLog(
  * Only the end time is stored.
  */
 data class SleepSegment(
+    val id: String = UUID.randomUUID().toString(),
     val endTime: LocalDateTime,
     val sleepStage: Int  // Health Connect sleep stage constant
 )

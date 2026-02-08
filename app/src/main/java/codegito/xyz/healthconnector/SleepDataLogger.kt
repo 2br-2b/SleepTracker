@@ -5,10 +5,12 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +32,7 @@ import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Collections
 
 val SLEEP_STAGES = listOf(
     "Awake" to SleepSessionRecord.STAGE_TYPE_AWAKE,
@@ -41,26 +44,46 @@ val SLEEP_STAGES = listOf(
     "Unknown" to SleepSessionRecord.STAGE_TYPE_UNKNOWN
 )
 
+fun sleepStageIcon(stageType: Int): String = when (stageType) {
+    SleepSessionRecord.STAGE_TYPE_AWAKE -> "☀️"
+    SleepSessionRecord.STAGE_TYPE_SLEEPING -> "😴"
+    SleepSessionRecord.STAGE_TYPE_OUT_OF_BED -> "🚶"
+    SleepSessionRecord.STAGE_TYPE_LIGHT -> "🌙"
+    SleepSessionRecord.STAGE_TYPE_DEEP -> "💤"
+    SleepSessionRecord.STAGE_TYPE_REM -> "👁️"
+    else -> "❓"
+}
+
 class DragReorderState(
-    val lazyListState: androidx.compose.foundation.lazy.LazyListState
+    val lazyListState: LazyListState
 ) {
     var draggedIndex by mutableIntStateOf(-1)
     var draggedOffset by mutableFloatStateOf(0f)
+
+    val isDragging: Boolean get() = draggedIndex >= 0
 
     fun onDragStart(index: Int) {
         draggedIndex = index
         draggedOffset = 0f
     }
 
-    fun onDrag(deltaY: Float) {
+    fun onDrag(deltaY: Float, itemCount: Int, onSwap: (Int, Int) -> Unit) {
         draggedOffset += deltaY
-    }
 
-    fun calculateTargetIndex(itemCount: Int): Int {
-        if (draggedIndex < 0) return -1
-        val itemHeight = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: return draggedIndex
-        val offsetItems = (draggedOffset / itemHeight).toInt()
-        return (draggedIndex + offsetItems).coerceIn(0, itemCount - 1)
+        val itemHeight = lazyListState.layoutInfo.visibleItemsInfo
+            .firstOrNull()?.size?.toFloat() ?: return
+
+        if (draggedOffset > itemHeight * 0.5f && draggedIndex < itemCount - 1) {
+            val target = draggedIndex + 1
+            onSwap(draggedIndex, target)
+            draggedIndex = target
+            draggedOffset -= itemHeight
+        } else if (draggedOffset < -itemHeight * 0.5f && draggedIndex > 0) {
+            val target = draggedIndex - 1
+            onSwap(draggedIndex, target)
+            draggedIndex = target
+            draggedOffset += itemHeight
+        }
     }
 
     fun reset() {
@@ -73,6 +96,42 @@ class DragReorderState(
 fun rememberDragReorderState(): DragReorderState {
     val lazyListState = rememberLazyListState()
     return remember { DragReorderState(lazyListState) }
+}
+
+fun validateSleepLog(bedtime: LocalDateTime, segments: List<SleepSegment>): String? {
+    val now = LocalDateTime.now()
+    if (bedtime.isAfter(now)) {
+        return "Bedtime cannot be in the future."
+    }
+    if (segments.isEmpty()) return "No sleep segments added"
+
+    var previousTime = bedtime
+    for ((index, segment) in segments.withIndex()) {
+        if (segment.endTime.isAfter(now)) {
+            return "Segment ${index + 1} timestamp cannot be in the future."
+        }
+        val duration = Duration.between(previousTime, segment.endTime).toMinutes()
+        if (duration <= 0) {
+            return "Segment ${index + 1} timestamp must be after ${
+                previousTime.format(DateTimeFormatter.ofPattern("h:mm a"))
+            }. Check for midnight/noon crossings."
+        }
+        previousTime = segment.endTime
+    }
+
+    val totalInBed = Duration.between(bedtime, segments.last().endTime).toMinutes()
+    if (totalInBed <= 0) return "Total time in bed must be positive. Check that wake time is after bedtime."
+
+    val totalAsleep = segments.mapIndexed { index, segment ->
+        val start = if (index == 0) bedtime else segments[index - 1].endTime
+        val mins = Duration.between(start, segment.endTime).toMinutes()
+        if (segment.sleepStage != SleepSessionRecord.STAGE_TYPE_AWAKE &&
+            segment.sleepStage != SleepSessionRecord.STAGE_TYPE_OUT_OF_BED
+        ) mins else 0L
+    }.sum()
+    if (totalAsleep <= 0) return "Total time asleep must be positive. Mark at least one segment as a sleep stage."
+
+    return null
 }
 
 class SleepDataLogger : ComponentActivity() {
@@ -97,7 +156,7 @@ class SleepDataLogger : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SleepLogScreen(
     onSave: (SleepLog) -> Unit,
@@ -115,7 +174,8 @@ fun SleepLogScreen(
         )
     }
     val context = LocalContext.current
-    var showBedtimePicker by remember { mutableStateOf(false) }
+    var showBedtimeDatePicker by remember { mutableStateOf(false) }
+    var showBedtimeTimePicker by remember { mutableStateOf(false) }
     var editingSegmentIndex by remember { mutableStateOf<Int?>(null) }
     var editingDurationIndex by remember { mutableStateOf<Int?>(null) }
     var durationInputText by remember { mutableStateOf("") }
@@ -130,10 +190,10 @@ fun SleepLogScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            // Bedtime Card
+            // Bedtime Card — entire card is clickable
             BedtimeCard(
                 bedtime = bedtime,
-                onEditClick = { showBedtimePicker = true }
+                onEditClick = { showBedtimeDatePicker = true }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -144,7 +204,7 @@ fun SleepLogScreen(
                 state = dragReorderState.lazyListState,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                itemsIndexed(segments) { index, segment ->
+                itemsIndexed(segments, key = { _, item -> item.id }) { index, segment ->
                     val startTime = if (index == 0) bedtime else segments[index - 1].endTime
                     val duration = Duration.between(startTime, segment.endTime).toMinutes()
 
@@ -177,24 +237,17 @@ fun SleepLogScreen(
                                     scaleY = 1.02f
                                 }
                         } else {
-                            Modifier
+                            Modifier.animateItemPlacement()
                         },
                         onDragStart = { dragReorderState.onDragStart(index) },
-                        onDrag = { deltaY -> dragReorderState.onDrag(deltaY) },
-                        onDragEnd = {
-                            val targetIndex = dragReorderState.calculateTargetIndex(segments.size)
-                            if (targetIndex >= 0 && targetIndex != dragReorderState.draggedIndex) {
-                                val fromIndex = dragReorderState.draggedIndex
-                                // Swap only the sleep stages, keeping endTimes fixed
-                                val updated = segments.toMutableList()
-                                val fromStage = updated[fromIndex].sleepStage
-                                val toStage = updated[targetIndex].sleepStage
-                                updated[fromIndex] = updated[fromIndex].copy(sleepStage = toStage)
-                                updated[targetIndex] = updated[targetIndex].copy(sleepStage = fromStage)
-                                segments = updated
+                        onDrag = { deltaY ->
+                            dragReorderState.onDrag(deltaY, segments.size) { from, to ->
+                                val mutableSegments = segments.toMutableList()
+                                Collections.swap(mutableSegments, from, to)
+                                segments = mutableSegments
                             }
-                            dragReorderState.reset()
-                        }
+                        },
+                        onDragEnd = { dragReorderState.reset() }
                     )
                 }
 
@@ -256,7 +309,14 @@ fun SleepLogScreen(
                     Text("Cancel")
                 }
                 Button(
-                    onClick = { onSave(SleepLog(bedtime, segments)) },
+                    onClick = {
+                        val error = validateSleepLog(bedtime, segments)
+                        if (error != null) {
+                            Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                        } else {
+                            onSave(SleepLog(bedtime, segments))
+                        }
+                    },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Save")
@@ -265,16 +325,27 @@ fun SleepLogScreen(
         }
     }
 
-    // Bedtime Picker Dialog
-    if (showBedtimePicker) {
+    if (showBedtimeDatePicker) {
+        DatePickerDialog(
+            title = "Select Bedtime Date",
+            initialDate = bedtime,
+            onConfirm = { newDate ->
+                bedtime = newDate
+                showBedtimeDatePicker = false
+                showBedtimeTimePicker = true
+            },
+            onDismiss = { showBedtimeDatePicker = false }
+        )
+    }
+    if (showBedtimeTimePicker) {
         TimePickerDialog(
             title = "Select Bedtime",
             initialTime = bedtime,
             onConfirm = { newTime ->
                 bedtime = newTime
-                showBedtimePicker = false
+                showBedtimeTimePicker = false
             },
-            onDismiss = { showBedtimePicker = false }
+            onDismiss = { showBedtimeTimePicker = false }
         )
     }
 
@@ -284,22 +355,10 @@ fun SleepLogScreen(
             title = "Edit Timestamp",
             initialTime = segments[index].endTime,
             onConfirm = { newTime ->
-                val startTime = if (index == 0) bedtime else segments[index - 1].endTime
-                val nextTime = segments.getOrNull(index + 1)?.endTime
-
-                // Validate: must be after start time and before next timestamp
-                if (newTime.isAfter(startTime) && (nextTime == null || newTime.isBefore(nextTime))) {
-                    val updated = segments.toMutableList()
-                    updated[index] = segments[index].copy(endTime = newTime)
-                    segments = updated
-                    editingSegmentIndex = null
-                } else {
-                    Toast.makeText(
-                        context,
-                        "Timestamp must be between ${startTime.format(DateTimeFormatter.ofPattern("h:mm a"))} and ${nextTime?.format(DateTimeFormatter.ofPattern("h:mm a")) ?: "now"}",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
+                val updated = segments.toMutableList()
+                updated[index] = segments[index].copy(endTime = newTime)
+                segments = updated
+                editingSegmentIndex = null
             },
             onDismiss = { editingSegmentIndex = null }
         )
@@ -363,6 +422,7 @@ fun BedtimeCard(
     onEditClick: () -> Unit
 ) {
     Card(
+        onClick = onEditClick,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -381,7 +441,7 @@ fun BedtimeCard(
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    text = bedtime.format(DateTimeFormatter.ofPattern("h:mm a")),
+                    text = bedtime.format(DateTimeFormatter.ofPattern("MMM d, h:mm a")),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -403,8 +463,8 @@ fun SleepSegmentCard(
     onDurationClick: () -> Unit,
     onTimestampClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onDragStart: () -> Unit = {},
-    onDrag: (Float) -> Unit = {},
+    onDragStart: () -> Unit = { },
+    onDrag: (Float) -> Unit = { },
     onDragEnd: () -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -428,7 +488,7 @@ fun SleepSegmentCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     OutlinedTextField(
-                        value = currentStage,
+                        value = "${sleepStageIcon(segment.sleepStage)} $currentStage",
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("Sleep stage") },
@@ -441,7 +501,15 @@ fun SleepSegmentCard(
                     ) {
                         SLEEP_STAGES.forEach { (name, stage) ->
                             DropdownMenuItem(
-                                text = { Text(name) },
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(sleepStageIcon(stage))
+                                        Text(name)
+                                    }
+                                },
                                 onClick = {
                                     onStageChanged(stage)
                                     expanded = false
@@ -464,15 +532,12 @@ fun SleepSegmentCard(
                         .padding(vertical = 8.dp, horizontal = 8.dp)
                 )
 
-                // Drag Handle
-                Icon(
-                    imageVector = Icons.Default.Menu,
-                    contentDescription = "Drag to reorder",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                // Drag Handle — immediate drag, no long press
+                Box(
                     modifier = Modifier
-                        .padding(start = 8.dp)
+                        .size(48.dp)
                         .pointerInput(Unit) {
-                            detectDragGesturesAfterLongPress(
+                            detectDragGestures(
                                 onDragStart = { onDragStart() },
                                 onDrag = { change, offset ->
                                     change.consume()
@@ -481,8 +546,15 @@ fun SleepSegmentCard(
                                 onDragEnd = { onDragEnd() },
                                 onDragCancel = { onDragEnd() }
                             )
-                        }
-                )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = "Drag to reorder",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -502,7 +574,7 @@ fun SleepSegmentCard(
                         .padding(vertical = 8.dp, horizontal = 4.dp)
                 ) {
                     Text(
-                        text = "\u2192 until ${segment.endTime.format(DateTimeFormatter.ofPattern("h:mm a"))}",
+                        text = "→ until ${segment.endTime.format(DateTimeFormatter.ofPattern("h:mm a"))}",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -531,10 +603,14 @@ fun SleepStagePickerDialog(
                         onClick = { onStageSelected(stage) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = name,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(sleepStageIcon(stage), style = MaterialTheme.typography.titleMedium)
+                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                        }
                     }
                 }
             }
@@ -629,6 +705,49 @@ fun TimePickerDialog(
         }
     )
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DatePickerDialog(
+    title: String,
+    initialDate: LocalDateTime,
+    onConfirm: (LocalDateTime) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = initialDate.toEpochSecond(java.time.ZoneOffset.UTC) * 1000
+    )
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                datePickerState.selectedDateMillis?.let {
+                    val newDate = LocalDateTime.ofInstant(
+                        java.time.Instant.ofEpochMilli(it),
+                        java.time.ZoneId.systemDefault()
+                    )
+                    onConfirm(
+                        initialDate
+                            .withYear(newDate.year)
+                            .withMonth(newDate.monthValue)
+                            .withDayOfMonth(newDate.dayOfMonth)
+                    )
+                }
+            }) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    ) {
+        DatePicker(state = datePickerState)
+    }
+}
+
 
 @Composable
 fun DurationInputDialog(
