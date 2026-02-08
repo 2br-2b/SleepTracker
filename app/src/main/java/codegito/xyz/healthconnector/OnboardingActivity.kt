@@ -13,6 +13,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.PermissionController
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 
 class OnboardingActivity : ComponentActivity() {
@@ -36,7 +40,24 @@ class OnboardingActivity : ComponentActivity() {
             SleepTrackerTheme {
                 OnboardingScreen(
                     onGrantClick = {
+                        // 1. Health Connect
                         requestPermissions.launch(healthConnectManager.permissions)
+                        
+                        // 2. Notifications (Android 13+)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1002)
+                        }
+
+                        // 3. Exact Alarms (Android 12+)
+                        val alarmManager = getSystemService(android.app.AlarmManager::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            if (!alarmManager.canScheduleExactAlarms()) {
+                                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                    data = Uri.fromParts("package", packageName, null)
+                                }
+                                startActivity(intent)
+                            }
+                        }
                     },
                     onCancelClick = {
                         finish()
@@ -71,7 +92,7 @@ fun OnboardingScreen(
             )
             Spacer(modifier = Modifier.height(24.dp))
             Text(
-                text = "To track and visualize your sleep data, this app needs access to Health Connect. Please grant the necessary read and write permissions.",
+                text = "To track and visualize your sleep data, this app needs access to Health Connect, Notifications, and the ability to schedule alarms for reminders.",
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center
             )

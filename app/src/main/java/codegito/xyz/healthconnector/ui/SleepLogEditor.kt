@@ -106,11 +106,14 @@ fun SleepLogEditor(
                     val duration = Duration.between(startTime, segment.endTime).toMinutes()
 
                     val isDragged = dragReorderState.draggedIndex == index
+                    val validation = validateSleepLog(bedtime, segments)
+                    val isInvalid = validation.invalidIndices.contains(index)
 
                     SleepSegmentCard(
                         segment = segment,
                         durationMinutes = duration,
                         sleepStages = sleepStages,
+                        isInvalid = isInvalid,
                         onStageChanged = { newStage ->
                             val updated = segments.toMutableList()
                             updated[index] = segment.copy(sleepStage = newStage)
@@ -203,9 +206,9 @@ fun SleepLogEditor(
                 }
                 Button(
                     onClick = {
-                        val error = validateSleepLog(bedtime, segments)
-                        if (error != null) {
-                            Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                        val validation = validateSleepLog(bedtime, segments)
+                        if (!validation.isValid) {
+                            Toast.makeText(context, validation.errorMessage, Toast.LENGTH_LONG).show()
                         } else {
                             onSave(bedtime, segments)
                         }
@@ -321,6 +324,7 @@ fun SleepSegmentCard(
     segment: SleepSegment,
     durationMinutes: Long,
     sleepStages: List<SleepStageConfig>,
+    isInvalid: Boolean = false,
     onStageChanged: (Int) -> Unit,
     onRemove: () -> Unit,
     onDurationClick: () -> Unit,
@@ -335,7 +339,14 @@ fun SleepSegmentCard(
     val currentStage = stageConfig?.name ?: SleepStageConfig.getStageName(segment.sleepStage)
     val currentEmoji = stageConfig?.emoji ?: SleepStageConfig.getStageEmoji(segment.sleepStage)
 
-    Card(modifier = modifier.fillMaxWidth()) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isInvalid) MaterialTheme.colorScheme.errorContainer 
+                             else MaterialTheme.colorScheme.surfaceVariant
+        ),
+        border = if (isInvalid) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error) else null
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -543,18 +554,51 @@ fun DurationInputDialog(
     )
 }
 
-fun validateSleepLog(bedtime: LocalDateTime, segments: List<SleepSegment>): String? {
+data class ValidationResult(
+    val isValid: Boolean,
+    val errorMessage: String? = null,
+    val invalidIndices: Set<Int> = emptySet()
+)
+
+fun validateSleepLog(bedtime: LocalDateTime, segments: List<SleepSegment>): ValidationResult {
     val now = LocalDateTime.now()
-    if (bedtime.isAfter(now)) return "Bedtime cannot be in the future."
-    if (segments.isEmpty()) return "No sleep segments added"
+    val invalidIndices = mutableSetOf<Int>()
+    
+    if (bedtime.isAfter(now)) {
+        return ValidationResult(false, "Bedtime cannot be in the future.", emptySet())
+    }
+    
+    if (segments.isEmpty()) {
+        return ValidationResult(false, "No sleep segments added", emptySet())
+    }
+    
     var previousTime = bedtime
+    var firstErrorMessage: String? = null
+
     for ((index, segment) in segments.withIndex()) {
-        if (segment.endTime.isAfter(now)) return "Segment ${index + 1} timestamp cannot be in the future."
+        var segmentValid = true
+        
+        if (segment.endTime.isAfter(now)) {
+            segmentValid = false
+            if (firstErrorMessage == null) firstErrorMessage = "Segment ${index + 1} timestamp cannot be in the future."
+        }
+        
         val duration = Duration.between(previousTime, segment.endTime).toMinutes()
-        if (duration <= 0) return "Segment ${index + 1} timestamp must be after ${previousTime.format(DateTimeFormatter.ofPattern("h:mm a"))}."
+        if (duration <= 0) {
+            segmentValid = false
+            if (firstErrorMessage == null) firstErrorMessage = "Segment ${index + 1} timestamp must be after ${previousTime.format(DateTimeFormatter.ofPattern("h:mm a"))}."
+        }
+        
+        if (!segmentValid) {
+            invalidIndices.add(index)
+        }
         previousTime = segment.endTime
     }
+    
     val totalInBed = Duration.between(bedtime, segments.last().endTime).toMinutes()
-    if (totalInBed <= 0) return "Total time in bed must be positive."
-    return null
+    if (totalInBed <= 0) {
+        return ValidationResult(false, firstErrorMessage ?: "Total time in bed must be positive.", invalidIndices)
+    }
+    
+    return ValidationResult(invalidIndices.isEmpty(), firstErrorMessage, invalidIndices)
 }

@@ -42,6 +42,10 @@ fun AutoSleepSettingsScreen(
     val defaultAwakeToAsleep by userPreferencesRepository.defaultAwakeToAsleepMinutes.collectAsState(initial = 15)
     val manualTemplateState by userPreferencesRepository.manualSleepTemplate.collectAsState(initial = null)
     val sleepStages by userPreferencesRepository.sleepStages.collectAsState(initial = emptyList())
+    
+    val reminderFirstUnlock by userPreferencesRepository.reminderFirstUnlockEnabled.collectAsState(initial = true)
+    val reminderDeadlineLoud by userPreferencesRepository.reminderDeadlineLoudEnabled.collectAsState(initial = true)
+    val reminderDeadlineSilent by userPreferencesRepository.reminderDeadlineSilentEnabled.collectAsState(initial = true)
 
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -254,6 +258,57 @@ fun AutoSleepSettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Configure Manual Template")
+                }
+
+                HorizontalDivider()
+
+                // 7. Notifications
+                SectionHeader("Reminders")
+                Text("Get notified to log your sleep after waking up. You can manage channel-specific sounds and priority in System Settings.", style = MaterialTheme.typography.bodySmall)
+                
+                ListItem(
+                    headlineContent = { Text("First Unlock Reminder") },
+                    supportingContent = { Text("5 minutes after you first pick up your phone in the morning.") },
+                    trailingContent = {
+                        Switch(
+                            checked = reminderFirstUnlock,
+                            onCheckedChange = { scope.launch { userPreferencesRepository.setReminderFirstUnlockEnabled(it) } }
+                        )
+                    }
+                )
+
+                ListItem(
+                    headlineContent = { Text("Deadline Reminder (Loud)") },
+                    supportingContent = { Text("Alerts you at the end of the wakeup window if you've been active.") },
+                    trailingContent = {
+                        Switch(
+                            checked = reminderDeadlineLoud,
+                            onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineLoudEnabled(it) } }
+                        )
+                    }
+                )
+
+                ListItem(
+                    headlineContent = { Text("Deadline Reminder (Silent)") },
+                    supportingContent = { Text("Silent notification at the end of the window if you haven't unlocked your phone (assumes you might still be asleep).") },
+                    trailingContent = {
+                        Switch(
+                            checked = reminderDeadlineSilent,
+                            onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineSilentEnabled(it) } }
+                        )
+                    }
+                )
+
+                OutlinedButton(
+                    onClick = {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        }
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Open Notification Settings")
                 }
             }
         }

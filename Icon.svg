@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="512"
+   height="512"
+   viewBox="0 0 135.46666 135.46667"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="Icon.svg"
+   inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#999999"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="true"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="2.2716751"
+     inkscape:cx="214.15915"
+     inkscape:cy="286.35257"
+     inkscape:window-width="2560"
+     inkscape:window-height="1334"
+     inkscape:window-x="-11"
+     inkscape:window-y="1609"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1">
+    <rect
+       x="168.15785"
+       y="180.04335"
+       width="166.83724"
+       height="177.84233"
+       id="rect3" />
+  </defs>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:#ffffff;fill-opacity:1;stroke:#000000;stroke-width:4.55691875;stroke-dasharray:none"
+       id="rect1"
+       width="69.53698"
+       height="87.326118"
+       x="30.666466"
+       y="21.277752"
+       rx="1.738"
+       ry="2.1830001"
+       inkscape:label="Background Clipboard" />
+    <rect
+       style="fill:#ffffff;fill-opacity:1;stroke:#000000;stroke-width:4.55685;stroke-dasharray:none"
+       id="rect2"
+       width="25.495062"
+       height="16.909103"
+       x="52.687424"
+       y="22.537388"
+       rx="2.9933126"
+       ry="3.7597246" />
+    <rect
+       style="fill:#ffffff;fill-opacity:1;stroke:#000000;stroke-width:4.55692;stroke-dasharray:none"
+       id="rect1-8"
+       width="11.077954"
+       height="16.027721"
+       x="59.895977"
+       y="14.546057"
+       rx="0.27694884"
+       ry="0.40069294" />
+    <text
+       xml:space="preserve"
+       transform="matrix(1.5670808,0,0,1.5670808,-215.97863,-245.21823)"
+       id="text3"
+       style="font-size:40px;line-height:1.25;font-family:sans-serif;white-space:pre;shape-inside:url(#rect3)"><tspan
+         x="168.1582"
+         y="216.43798"
+         id="tspan1">Z</tspan></text>
+  </g>
+</svg>

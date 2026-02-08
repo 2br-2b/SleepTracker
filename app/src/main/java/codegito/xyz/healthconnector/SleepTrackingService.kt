@@ -10,10 +10,16 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import codegito.xyz.healthconnector.data.UserPreferencesRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class SleepTrackingService : Service() {
 
     private val screenStateReceiver = ScreenStateReceiver()
+    private val scope = CoroutineScope(Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
@@ -25,6 +31,16 @@ class SleepTrackingService : Service() {
             addAction(Intent.ACTION_USER_PRESENT)
         }
         registerReceiver(screenStateReceiver, filter)
+
+        // Create notification channels for reminders
+        NotificationHelper.createNotificationChannels(this)
+        
+        // Schedule deadline alarm
+        scope.launch {
+            val prefs = UserPreferencesRepository(this@SleepTrackingService)
+            val wakeupEnd = prefs.wakeupWindowEnd.first()
+            NotificationHelper.scheduleDeadlineAlarm(this@SleepTrackingService, wakeupEnd)
+        }
 
         // Start as foreground service
         if (Build.VERSION.SDK_INT >= 34) { // Android 14+

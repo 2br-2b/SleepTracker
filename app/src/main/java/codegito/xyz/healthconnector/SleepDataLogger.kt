@@ -73,19 +73,19 @@ class SleepDataLogger : ComponentActivity() {
                     val startBound = targetDate.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
                     val endBound = targetDate.plusDays(1).atTime(rolloverHour, 0).atZone(zoneId).toInstant()
                     
-                    val records = healthConnectManager.getSleepSessions(startBound, endBound)
-                    hcRecordsForDay = records
+                val recordsResult = healthConnectManager.getSleepSessions(startBound, endBound)
+                hcRecordsForDay = recordsResult.getOrDefault(emptyList())
 
-                    if (records.isNotEmpty()) {
-                        val firstSession = records.first()
-                        initialBedtime = LocalDateTime.ofInstant(firstSession.startTime, zoneId)
-                        initialSegments = firstSession.stages.map { stage ->
-                            SleepSegment(
-                                endTime = LocalDateTime.ofInstant(stage.endTime, zoneId),
-                                sleepStage = stage.stage
-                            )
-                        }
-                    } else if (detectionMode == SleepDetectionMode.AUTO) {
+                if (hcRecordsForDay.isNotEmpty()) {
+                    val firstSession = hcRecordsForDay.first()
+                    initialBedtime = LocalDateTime.ofInstant(firstSession.startTime, zoneId)
+                    initialSegments = firstSession.stages.map { stage ->
+                        SleepSegment(
+                            endTime = LocalDateTime.ofInstant(stage.endTime, zoneId),
+                            sleepStage = stage.stage
+                        )
+                    }
+                } else if (detectionMode == SleepDetectionMode.AUTO) {
                         val db = SleepEventDatabase.getDatabase(this@SleepDataLogger)
                         val eventStart = startBound.toEpochMilli() - 4 * 60 * 60 * 1000
                         val eventEnd = endBound.toEpochMilli() + 4 * 60 * 60 * 1000
@@ -160,44 +160,25 @@ class SleepDataLogger : ComponentActivity() {
                     val zoneId = ZoneId.systemDefault()
                     val startBound = targetDate.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
                     val endBound = targetDate.plusDays(1).atTime(rolloverHour, 0).atZone(zoneId).toInstant()
-                    healthConnectManager.deleteSleepSessions(startBound, endBound)
-                }
-
-                val zoneId = ZoneId.systemDefault()
-                val startInstant = bedtime.atZone(zoneId).toInstant()
-                val endInstant = segments.last().endTime.atZone(zoneId).toInstant()
-                
-                val stages = mutableListOf<androidx.health.connect.client.records.SleepSessionRecord.Stage>()
-                var currentStartTime = bedtime
-                
-                segments.forEach { segment ->
-                    val segmentStartInstant = currentStartTime.atZone(zoneId).toInstant()
-                    val segmentEndInstant = segment.endTime.atZone(zoneId).toInstant()
                     
-                    stages.add(
-                        androidx.health.connect.client.records.SleepSessionRecord.Stage(
-                            startTime = segmentStartInstant,
-                            endTime = segmentEndInstant,
-                            stage = segment.sleepStage
-                        )
-                    )
-                    currentStartTime = segment.endTime
+                    val deleteResult = healthConnectManager.deleteSleepSessions(startBound, endBound)
+                    if (deleteResult.isFailure) {
+                        Toast.makeText(this@SleepDataLogger, "Error deleting existing data: ${deleteResult.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                        return@launch
+                    }
                 }
 
-                val record = androidx.health.connect.client.records.SleepSessionRecord(
-                    startTime = startInstant,
-                    startZoneOffset = zoneId.rules.getOffset(startInstant),
-                    endTime = endInstant,
-                    endZoneOffset = zoneId.rules.getOffset(endInstant),
-                    stages = stages
-                )
-
-                healthConnectManager.writeSleepSession(record)
+                val result = healthConnectManager.writeSleepLog(bedtime, segments)
                 
-                Toast.makeText(this@SleepDataLogger, "Saved sleep data", Toast.LENGTH_SHORT).show()
-                finish()
+                if (result.isSuccess) {
+                    Toast.makeText(this@SleepDataLogger, "Saved sleep data", Toast.LENGTH_SHORT).show()
+                    finish()
+                } else {
+                    val error = result.exceptionOrNull()?.message ?: "Unknown error"
+                    Toast.makeText(this@SleepDataLogger, "Error saving data: $error", Toast.LENGTH_LONG).show()
+                }
             } catch (e: Exception) {
-                Toast.makeText(this@SleepDataLogger, "Error saving data: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@SleepDataLogger, "Unexpected error: ${e.message}", Toast.LENGTH_LONG).show()
                 e.printStackTrace()
             }
         }

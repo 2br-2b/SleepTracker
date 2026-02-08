@@ -63,6 +63,26 @@ class ScreenStateReceiver : BroadcastReceiver() {
             val db = SleepEventDatabase.getDatabase(context)
             db.screenEventDao().insert(ScreenEvent(timestampMillis = timestamp, type = type))
             Log.d("ScreenStateReceiver", "Inserted event $type into DB (Window active)")
+            
+            if (inWakeupWindow && (type == "UNLOCK" || type == "PRESENT")) {
+                handleFirstUnlockInWakeup(context, prefs)
+            }
+        }
+    }
+
+    private suspend fun handleFirstUnlockInWakeup(context: Context, prefs: UserPreferencesRepository) {
+        val sharedPrefs = context.getSharedPreferences("reminder_state", Context.MODE_PRIVATE)
+        val todayStr = java.time.LocalDate.now().toString()
+        val alreadyTracked = sharedPrefs.getString("last_unlock_tracked_date", "") == todayStr
+        
+        if (!alreadyTracked) {
+            sharedPrefs.edit()
+                .putString("last_unlock_tracked_date", todayStr)
+                .putBoolean("unlocked_in_window", true)
+                .apply()
+            
+            // Schedule the 5-minute reminder
+            NotificationHelper.scheduleFirstUnlockReminder(context, java.time.LocalDate.now().minusDays(1))
         }
     }
 

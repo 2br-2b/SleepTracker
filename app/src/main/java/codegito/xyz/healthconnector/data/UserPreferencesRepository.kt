@@ -36,6 +36,11 @@ class UserPreferencesRepository(private val context: Context) {
     private val AWAKENING_THRESHOLD_MINUTES_KEY = intPreferencesKey("awakening_threshold_minutes")
     private val DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY = intPreferencesKey("default_awake_to_asleep_minutes")
     private val MANUAL_SLEEP_TEMPLATE_JSON_KEY = stringPreferencesKey("manual_sleep_template_json")
+    
+    // Notifications
+    private val REMINDER_FIRST_UNLOCK_ENABLED_KEY = booleanPreferencesKey("reminder_first_unlock_enabled")
+    private val REMINDER_DEADLINE_LOUD_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_loud_enabled")
+    private val REMINDER_DEADLINE_SILENT_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_silent_enabled")
 
     val rolloverHour: Flow<Int> = context.dataStore.data
         .map { preferences ->
@@ -100,6 +105,15 @@ class UserPreferencesRepository(private val context: Context) {
             }
         }
 
+    val reminderFirstUnlockEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[REMINDER_FIRST_UNLOCK_ENABLED_KEY] ?: true }
+
+    val reminderDeadlineLoudEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[REMINDER_DEADLINE_LOUD_ENABLED_KEY] ?: true }
+
+    val reminderDeadlineSilentEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[REMINDER_DEADLINE_SILENT_ENABLED_KEY] ?: true }
+
     suspend fun setRolloverHour(hour: Int) {
         context.dataStore.edit { preferences ->
             preferences[ROLLOVER_HOUR_KEY] = hour
@@ -156,6 +170,18 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+
+    suspend fun setReminderFirstUnlockEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[REMINDER_FIRST_UNLOCK_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setReminderDeadlineLoudEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[REMINDER_DEADLINE_LOUD_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setReminderDeadlineSilentEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[REMINDER_DEADLINE_SILENT_ENABLED_KEY] = enabled }
+    }
 
     private fun getDefaultTemplate(): SleepLogTemplate {
         return SleepLogTemplate(

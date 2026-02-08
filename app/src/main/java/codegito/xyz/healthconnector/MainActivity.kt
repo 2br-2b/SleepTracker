@@ -1,6 +1,7 @@
 package codegito.xyz.healthconnector
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -191,6 +192,7 @@ fun HomeScreen(
     onDayClick: (LocalDate) -> Unit
 ) {
     var sleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
+    var hasPermissions by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -202,7 +204,14 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         val client = HealthConnectClient.getOrCreate(context)
         val granted = client.permissionController.getGrantedPermissions()
-        if (!granted.containsAll(healthConnectManager.permissions)) {
+        hasPermissions = granted.containsAll(healthConnectManager.permissions)
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val activity = context as? androidx.activity.ComponentActivity
+            activity?.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1002)
+        }
+        
+        if (!hasPermissions) {
             onManagePermissions()
         }
     }
@@ -214,7 +223,12 @@ fun HomeScreen(
                 scope.launch {
                     val endTime = Instant.now()
                     val startTime = endTime.minus(Duration.ofDays(7))
-                    sleepSessions = healthConnectManager.getSleepSessions(startTime, endTime)
+                    val result = healthConnectManager.getSleepSessions(startTime, endTime)
+                    sleepSessions = result.getOrDefault(emptyList())
+                    
+                    if (result.isFailure) {
+                        Toast.makeText(context, "Data error: ${result.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
