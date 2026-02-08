@@ -23,6 +23,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import kotlinx.coroutines.launch
@@ -102,13 +105,22 @@ fun SleepTrackerApp(
         }
     }
 
-    // Load data
-    LaunchedEffect(Unit) {
-        // Simple polling/loading logic. Ideally use a ViewModel.
-        scope.launch {
-            val endTime = Instant.now()
-            val startTime = endTime.minus(Duration.ofDays(7))
-            sleepSessions = healthConnectManager.getSleepSessions(startTime, endTime)
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Load data on resume
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scope.launch {
+                    val endTime = Instant.now()
+                    val startTime = endTime.minus(Duration.ofDays(7))
+                    sleepSessions = healthConnectManager.getSleepSessions(startTime, endTime)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
