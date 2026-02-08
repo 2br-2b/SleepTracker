@@ -22,6 +22,8 @@ import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import codegito.xyz.healthconnector.MainActivity
+import codegito.xyz.healthconnector.NotificationHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,6 +98,8 @@ fun AutoSleepSettingsScreen(
                 )
                 scope.launch {
                     userPreferencesRepository.saveManualTemplate(newTemplate)
+                    // Reschedule lifecycle and check if we should start/stop now
+                    NotificationHelper.refreshServiceState(context, userPreferencesRepository)
                 }
                 showTemplateEditor = false
             },
@@ -133,8 +137,8 @@ fun AutoSleepSettingsScreen(
                             onClick = { 
                                 scope.launch { 
                                     userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.AUTO)
-                                    val serviceIntent = android.content.Intent(context, codegito.xyz.healthconnector.SleepTrackingService::class.java)
-                                    context.startForegroundService(serviceIntent)
+                                    // Reschedule lifecycle and check if we should start/stop now
+                                    NotificationHelper.refreshServiceState(context, userPreferencesRepository)
                                 } 
                             }
                         )
@@ -146,9 +150,8 @@ fun AutoSleepSettingsScreen(
                             onClick = { 
                                 scope.launch { 
                                     userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.MANUAL)
-                                    // The service stops itself by observing preferences, but we can also be explicit
-                                    val serviceIntent = android.content.Intent(context, codegito.xyz.healthconnector.SleepTrackingService::class.java)
-                                    context.stopService(serviceIntent)
+                                    // Ensure service is stopped immediately
+                                    NotificationHelper.refreshServiceState(context, userPreferencesRepository)
                                 } 
                             }
                         )
@@ -336,6 +339,10 @@ fun AutoSleepSettingsScreen(
                 scope.launch {
                     if (isStart) userPreferencesRepository.setBedtimeWindow(mins, bedtimeEnd)
                     else userPreferencesRepository.setBedtimeWindow(bedtimeStart, mins)
+                    
+                    // Reschedule lifecycle and check if we should start/stop now
+                    // Reschedule lifecycle and check if we should start/stop now
+                    NotificationHelper.refreshServiceState(context, userPreferencesRepository)
                 }
                 showBedtimePicker = null
             },

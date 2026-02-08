@@ -11,6 +11,7 @@ import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.data.SleepStageConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -41,6 +42,7 @@ class UserPreferencesRepository(private val context: Context) {
     private val REMINDER_FIRST_UNLOCK_ENABLED_KEY = booleanPreferencesKey("reminder_first_unlock_enabled")
     private val REMINDER_DEADLINE_LOUD_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_loud_enabled")
     private val REMINDER_DEADLINE_SILENT_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_silent_enabled")
+    private val DEVELOPER_MODE_ENABLED_KEY = booleanPreferencesKey("developer_mode_enabled")
 
     val rolloverHour: Flow<Int> = context.dataStore.data
         .map { preferences ->
@@ -114,6 +116,9 @@ class UserPreferencesRepository(private val context: Context) {
     val reminderDeadlineSilentEnabled: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[REMINDER_DEADLINE_SILENT_ENABLED_KEY] ?: true }
 
+    val developerModeEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[DEVELOPER_MODE_ENABLED_KEY] ?: false }
+
     suspend fun setRolloverHour(hour: Int) {
         context.dataStore.edit { preferences ->
             preferences[ROLLOVER_HOUR_KEY] = hour
@@ -181,6 +186,10 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setReminderDeadlineSilentEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[REMINDER_DEADLINE_SILENT_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setDeveloperModeEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[DEVELOPER_MODE_ENABLED_KEY] = enabled }
     }
 
     suspend fun isAutoSleepDetectionActive(): Boolean {

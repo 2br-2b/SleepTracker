@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -14,13 +16,7 @@ class BootReceiver : BroadcastReceiver() {
             scope.launch {
                 try {
                     val prefs = codegito.xyz.healthconnector.data.UserPreferencesRepository(context)
-                    if (prefs.isAutoSleepDetectionActive()) {
-                        Log.d("BootReceiver", "Boot completed, starting SleepTrackingService")
-                        val serviceIntent = Intent(context, SleepTrackingService::class.java)
-                        context.startForegroundService(serviceIntent)
-                    } else {
-                        Log.d("BootReceiver", "Boot completed, but Auto mode is OFF")
-                    }
+                    NotificationHelper.refreshServiceState(context, prefs)
                 } finally {
                     pendingResult.finish()
                 }

@@ -45,6 +45,15 @@
             android:name=".ReminderReceiver"
             android:enabled="true"
             android:exported="false" />
+        <receiver
+            android:name=".ServiceSchedulerReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="START_SERVICE" />
+                <action android:name="STOP_SERVICE" />
+            </intent-filter>
+        </receiver>
         <activity
             android:name=".SleepDataLogger"
             android:exported="true" />

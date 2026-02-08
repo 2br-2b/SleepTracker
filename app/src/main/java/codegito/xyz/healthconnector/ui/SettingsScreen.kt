@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -28,6 +29,11 @@ import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import kotlinx.coroutines.launch
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import android.widget.Toast
+import android.app.ActivityManager
+import codegito.xyz.healthconnector.NotificationHelper
+import codegito.xyz.healthconnector.SleepTrackingService
+import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,7 +51,21 @@ fun SettingsScreen(
     var hasHealthConnectPermissions by remember { mutableStateOf(false) }
 
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
+    val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     var showRolloverTimePicker by remember { mutableStateOf(false) }
+    var versionTapCount by remember { mutableIntStateOf(0) }
+    
+    // Check if service is running
+    var isServiceActive by remember { mutableStateOf(false) }
+    
+    LaunchedEffect(Unit) {
+        scope.launch {
+            while (true) {
+                isServiceActive = isServiceRunning(context, SleepTrackingService::class.java)
+                kotlinx.coroutines.delay(2000) // Polling every 2s for debug info
+            }
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -151,6 +171,71 @@ fun SettingsScreen(
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
                 modifier = Modifier.clickable { onEditSleepStages() }
             )
+
+            if (developerModeEnabled) {
+                HorizontalDivider()
+                SectionHeader("Developer Tools")
+                
+                ListItem(
+                    headlineContent = { Text("Service Status") },
+                    supportingContent = { Text(if (isServiceActive) "Running (Foreground)" else "Stopped") },
+                    trailingContent = {
+                        val color = if (isServiceActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        Surface(
+                            modifier = Modifier.size(12.dp),
+                            shape = CircleShape,
+                            color = color
+                        ) {}
+                    }
+                )
+                
+                Button(
+                    onClick = {
+                        NotificationHelper.sendLogReminder(
+                            context,
+                            LocalDate.now().minusDays(1),
+                            NotificationHelper.REMINDER_CHANNEL_ID,
+                            title = "Test Notification",
+                            text = "This is a manually triggered developer reminder."
+                        )
+                        Toast.makeText(context, "Test notification sent", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Trigger Test Notification")
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        scope.launch { userPreferencesRepository.setDeveloperModeEnabled(false) }
+                        Toast.makeText(context, "Developer Mode Disabled", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Disable Developer Mode")
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+            
+            val appVersion = "1.0" // TODO: Get from BuildConfig if available
+            Text(
+                text = "Version $appVersion",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        versionTapCount++
+                        if (versionTapCount == 7) {
+                            scope.launch { userPreferencesRepository.setDeveloperModeEnabled(true) }
+                            Toast.makeText(context, "Developer Mode Enabled", Toast.LENGTH_SHORT).show()
+                            versionTapCount = 0
+                        }
+                    }
+                    .padding(vertical = 16.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 
@@ -166,6 +251,13 @@ fun SettingsScreen(
              onDismiss = { showRolloverTimePicker = false }
          )
     }
+}
+
+private fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
+    val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+    @Suppress("DEPRECATION")
+    return manager.getRunningServices(Int.MAX_VALUE)
+        .any { it.service.className == serviceClass.name }
 }
 
 @Composable

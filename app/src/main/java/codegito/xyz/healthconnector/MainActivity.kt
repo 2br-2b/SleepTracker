@@ -42,6 +42,7 @@ import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import kotlinx.coroutines.launch
 import java.time.*
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.flow.first
 
 class MainActivity : ComponentActivity() {
 
@@ -86,12 +87,7 @@ class MainActivity : ComponentActivity() {
 
     private fun ensureServiceRunning() {
         lifecycleScope.launch {
-            if (userPreferencesRepository.isAutoSleepDetectionActive()) {
-                if (!isServiceRunning(SleepTrackingService::class.java)) {
-                    val serviceIntent = Intent(this@MainActivity, SleepTrackingService::class.java)
-                    startForegroundService(serviceIntent)
-                }
-            }
+            NotificationHelper.refreshServiceState(this@MainActivity, userPreferencesRepository)
         }
     }
 
@@ -201,8 +197,9 @@ fun HomeScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Observe rollover hour
+    // Observe rollover hour and developer mode
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
+    val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
 
     // Request permissions on first launch
     LaunchedEffect(Unit) {
@@ -283,6 +280,8 @@ fun HomeScreen(
                         date = date,
                         isToday = isToday,
                         session = sessionForDate,
+                        developerModeEnabled = developerModeEnabled,
+                        rolloverHour = rolloverHour,
                         onClick = { onDayClick(date) }
                     )
                 }
@@ -296,6 +295,8 @@ fun SleepDayCard(
     date: LocalDate,
     isToday: Boolean,
     session: SleepSessionRecord?,
+    developerModeEnabled: Boolean = false,
+    rolloverHour: Int = 2,
     onClick: () -> Unit
 ) {
     val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
@@ -320,6 +321,20 @@ fun SleepDayCard(
                 color = if (isToday) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=0.5f) 
                         else MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            if (developerModeEnabled) {
+                val zoneId = ZoneId.systemDefault()
+                val debugStart = date.atTime(rolloverHour, 0).atZone(zoneId)
+                val debugEnd = date.plusDays(1).atTime(rolloverHour, 0).atZone(zoneId)
+                val timeFormatter = DateTimeFormatter.ofPattern("MMM d, h:mm a")
+                
+                Text(
+                    text = "Bounds: ${debugStart.format(timeFormatter)} - ${debugEnd.format(timeFormatter)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
             
             if (session != null) {
                 Spacer(modifier = Modifier.height(4.dp))

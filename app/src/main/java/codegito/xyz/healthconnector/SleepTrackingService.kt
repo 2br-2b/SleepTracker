@@ -10,11 +10,14 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import android.util.Log
+import codegito.xyz.healthconnector.data.UserPreferencesRepository
+import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 
 class SleepTrackingService : Service() {
 
@@ -44,7 +47,7 @@ class SleepTrackingService : Service() {
             val prefs = UserPreferencesRepository(this@SleepTrackingService)
             
             // Watch for mode or window changes
-            kotlinx.coroutines.combine(
+            kotlinx.coroutines.flow.combine(
                 prefs.sleepDetectionMode,
                 prefs.wakeupWindowEnd,
                 prefs.bedtimeWindowStart
@@ -57,6 +60,13 @@ class SleepTrackingService : Service() {
                 } else {
                     // Reschedule deadline alarm if settings change
                     NotificationHelper.scheduleDeadlineAlarm(this@SleepTrackingService, wakeupEnd)
+                    
+                    // Schedule next start/stop based on windows
+                    NotificationHelper.scheduleServiceLifecycle(
+                        this@SleepTrackingService,
+                        bedtimeStart,
+                        wakeupEnd
+                    )
                 }
             }
         }

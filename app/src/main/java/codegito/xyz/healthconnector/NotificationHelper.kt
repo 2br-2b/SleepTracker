@@ -9,7 +9,11 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
+import android.util.Log
+import codegito.xyz.healthconnector.data.UserPreferencesRepository
+import kotlinx.coroutines.flow.first
 
 object NotificationHelper {
 
@@ -114,6 +118,81 @@ object NotificationHelper {
                 pendingIntent
             )
         }
+    }
+
+    fun scheduleServiceLifecycle(context: Context, startTimeMinutes: Int, endTimeMinutes: Int) {
+        val alarmManager = context.getSystemService(android.app.AlarmManager::class.java)
+        
+        // Schedule Start
+        val startIntent = Intent(context, ServiceSchedulerReceiver::class.java).apply { action = "START_SERVICE" }
+        val startPending = PendingIntent.getBroadcast(context, 300, startIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        
+        val startTrigger = getNextOccurrence(startTimeMinutes)
+        alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, startTrigger, startPending)
+
+        // Schedule Stop
+        val stopIntent = Intent(context, ServiceSchedulerReceiver::class.java).apply { action = "STOP_SERVICE" }
+        val stopPending = PendingIntent.getBroadcast(context, 400, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        
+        val stopTrigger = getNextOccurrence(endTimeMinutes)
+        alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, stopTrigger, stopPending)
+    }
+
+    suspend fun refreshServiceState(context: Context, prefs: UserPreferencesRepository) {
+        if (!prefs.isAutoSleepDetectionActive()) {
+            Log.d("NotificationHelper", "Auto mode inactive, stopping service")
+            val stopIntent = Intent(context, SleepTrackingService::class.java)
+            context.stopService(stopIntent)
+            return
+        }
+
+        val bedtimeStart = prefs.bedtimeWindowStart.first()
+        val wakeupEnd = prefs.wakeupWindowEnd.first()
+
+        // Always ensure alarms are scheduled
+        scheduleServiceLifecycle(context, bedtimeStart, wakeupEnd)
+
+        // Then check if we should be running right now
+        val now = LocalTime.now()
+        val nowMins = now.hour * 60 + now.minute
+
+        val isCurrentlyActive = if (bedtimeStart <= wakeupEnd) {
+            nowMins in bedtimeStart..wakeupEnd
+        } else {
+            nowMins >= bedtimeStart || nowMins <= wakeupEnd
+        }
+
+        val serviceRunning = isServiceRunning(context, SleepTrackingService::class.java)
+
+        if (isCurrentlyActive) {
+            if (!serviceRunning) {
+                Log.d("NotificationHelper", "Inside window, starting service")
+                val serviceIntent = Intent(context, SleepTrackingService::class.java)
+                context.startForegroundService(serviceIntent)
+            }
+        } else {
+            if (serviceRunning) {
+                Log.d("NotificationHelper", "Outside window, stopping service")
+                val stopIntent = Intent(context, SleepTrackingService::class.java)
+                context.stopService(stopIntent)
+            }
+        }
+    }
+
+    private fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        @Suppress("DEPRECATION")
+        return manager.getRunningServices(Int.MAX_VALUE)
+            .any { it.service.className == serviceClass.name }
+    }
+
+    private fun getNextOccurrence(minutesOfDay: Int): Long {
+        val now = java.time.LocalDateTime.now()
+        var target = LocalDate.now().atTime(minutesOfDay / 60, minutesOfDay % 60)
+        if (now.isAfter(target)) {
+            target = target.plusDays(1)
+        }
+        return target.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
     }
 
     fun sendLogReminder(
