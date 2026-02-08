@@ -38,11 +38,29 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Ensure sleep tracking service is running
+        ensureServiceRunning()
+
         setContent {
             SleepTrackerTheme {
                 SleepTrackerApp()
             }
         }
+    }
+
+    private fun ensureServiceRunning() {
+        if (!isServiceRunning(SleepTrackingService::class.java)) {
+            val serviceIntent = Intent(this, SleepTrackingService::class.java)
+            startForegroundService(serviceIntent)
+        }
+    }
+
+    private fun isServiceRunning(serviceClass: Class<*>): Boolean {
+        val manager = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+        @Suppress("DEPRECATION")
+        return manager.getRunningServices(Int.MAX_VALUE)
+            .any { it.service.className == serviceClass.name }
     }
 }
 
