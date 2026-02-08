@@ -1,17 +1,19 @@
 package codegito.xyz.healthconnector
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountBox
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -29,6 +31,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
+import androidx.core.content.ContextCompat
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 
 class MainActivity : ComponentActivity() {
@@ -86,6 +89,26 @@ enum class AppDestinations(
 @Composable
 fun Greeting(name: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            Toast.makeText(context, "Permission Granted", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Permission Denied", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val permission = "android.permission.OTHER_SENSORS"
+    val shouldShowPermissionButton = try {
+        context.packageManager.getPermissionInfo(permission, 0)
+        // Permission exists, check if it's not granted
+        ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+    } catch (e: PackageManager.NameNotFoundException) {
+        // Permission doesn't exist on this device
+        false
+    }
+
     Column(
         modifier = modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
@@ -98,6 +121,13 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
             context.startActivity(Intent(context, SleepDataLogger::class.java))
         }) {
             Text("Log Sleep Data")
+        }
+        if (shouldShowPermissionButton) {
+            Button(onClick = {
+                launcher.launch(permission)
+            }) {
+                Text("Request OTHER_SENSORS")
+            }
         }
     }
 }
