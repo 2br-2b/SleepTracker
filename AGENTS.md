@@ -1,4 +1,8 @@
-This agent is designed to build a comprehensive Android application for tracking user sleep patterns, with a strong focus on automation, user privacy, and modern Android development practices.
+# SleepTracker Project Goals
+
+This document outlines the goals and objectives for building a comprehensive Android application for tracking user sleep patterns, with a strong focus on automation, user privacy, and modern Android development practices.
+
+**Note:** This describes the intended features and architecture goals, not necessarily the current implementation status.
 
 ### Core Goal: Automated Sleep Tracking
 
