@@ -1,4 +1,4 @@
-package codegito.xyz.sleeptracker.ui.theme
+package codegito.xyz.healthconnector.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

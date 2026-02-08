@@ -1,4 +1,4 @@
-package codegito.xyz.sleeptracker
+package codegito.xyz.healthconnector
 
 import org.junit.Test
 
