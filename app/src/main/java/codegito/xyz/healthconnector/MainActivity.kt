@@ -1,53 +1,71 @@
 package codegito.xyz.healthconnector
 
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.tooling.preview.PreviewScreenSizes
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.lifecycle.lifecycleScope
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
+import kotlinx.coroutines.launch
+import java.time.*
+import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity() {
+
+    private lateinit var healthConnectManager: HealthConnectManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        healthConnectManager = HealthConnectManager(this)
 
         // Ensure sleep tracking service is running
         ensureServiceRunning()
 
         setContent {
             SleepTrackerTheme {
-                SleepTrackerApp()
+                SleepTrackerApp(
+                    healthConnectManager = healthConnectManager,
+                    onManagePermissions = { requestPermissions.launch(healthConnectManager.permissions) },
+                    onDayClick = { date ->
+                        val intent = Intent(this, SleepDataLogger::class.java).apply {
+                            putExtra("target_date_millis", date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
+                        }
+                        startActivity(intent)
+                    }
+                )
             }
         }
     }
+
+    private val requestPermissions =
+        registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
+            if (granted.containsAll(healthConnectManager.permissions)) {
+                 // Check permissions again / Refresh UI
+            } else {
+                Toast.makeText(this, "Permissions not granted", Toast.LENGTH_SHORT).show()
+            }
+        }
 
     private fun ensureServiceRunning() {
         if (!isServiceRunning(SleepTrackingService::class.java)) {
@@ -64,96 +82,154 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@PreviewScreenSizes
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SleepTrackerApp() {
-    var currentDestination by rememberSaveable { mutableStateOf(AppDestinations.HOME) }
+fun SleepTrackerApp(
+    healthConnectManager: HealthConnectManager,
+    onManagePermissions: () -> Unit,
+    onDayClick: (LocalDate) -> Unit
+) {
+    var sleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
-    NavigationSuiteScaffold(
-        navigationSuiteItems = {
-            AppDestinations.entries.forEach {
-                item(
-                    icon = {
-                        Icon(
-                            it.icon,
-                            contentDescription = it.label
-                        )
-                    },
-                    label = { Text(it.label) },
-                    selected = it == currentDestination,
-                    onClick = { currentDestination = it }
-                )
-            }
+    // Request permissions on first launch
+    LaunchedEffect(Unit) {
+        val client = HealthConnectClient.getOrCreate(context)
+        val granted = client.permissionController.getGrantedPermissions()
+        if (!granted.containsAll(healthConnectManager.permissions)) {
+            onManagePermissions()
         }
-    ) {
-        Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-            Greeting(
-                name = "Android",
-                modifier = Modifier.padding(innerPadding)
+    }
+
+    // Load data
+    LaunchedEffect(Unit) {
+        // Simple polling/loading logic. Ideally use a ViewModel.
+        scope.launch {
+            val endTime = Instant.now()
+            val startTime = endTime.minus(Duration.ofDays(7))
+            sleepSessions = healthConnectManager.getSleepSessions(startTime, endTime)
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Sleep Tracker") },
+                actions = {
+                    IconButton(onClick = {
+                        val intent = Intent(healthConnectManager.context, OnboardingActivity::class.java)
+                        healthConnectManager.context.startActivity(intent)
+                    }) {
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Permissions")
+                    }
+                }
             )
         }
-    }
-}
+    ) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding)) {
+            val today = LocalDate.now()
+            val weekDays = (0..6).map { today.minusDays(it.toLong()) }
 
-enum class AppDestinations(
-    val label: String,
-    val icon: ImageVector,
-) {
-    HOME("Home", Icons.Default.Home),
-//    FAVORITES("Favorites", Icons.Default.Favorite),
-//    PROFILE("Profile", Icons.Default.AccountBox),
-}
+            LazyColumn(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(weekDays) { date ->
+                    val isToday = date == today
+                    
+                    // Filter sessions that started on this date (or ended next morning)
+                    // Heuristic: Session belongs to "Night of [Date]" if it starts between [Date 12:00] and [Date+1 12:00]
+                    // Or simpler: Starts on [Date] PM or [Date+1] AM before noon.
+                    val zoneId = ZoneId.systemDefault()
+                    val sessionForDate = sleepSessions.find { session ->
+                        val sessionDate = session.startTime.atZone(zoneId).toLocalDate()
+                        val sessionTime = session.startTime.atZone(zoneId).toLocalTime()
+                        
+                        // Example logic: if session started on date (PM) or date+1 (AM < 12)
+                        // Actually, simplified: check if session start is within [Date 12:00, Date+1 12:00]
+                        val startBound = date.atTime(2, 0).atZone(zoneId).toInstant()
+                        val endBound = date.plusDays(1).atTime(2, 0).atZone(zoneId).toInstant()
+                        
+                        session.startTime.isAfter(startBound) && session.startTime.isBefore(endBound)
+                    }
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            Toast.makeText(context, "Permission Granted", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "Permission Denied", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    val permission = "android.permission.OTHER_SENSORS"
-    val shouldShowPermissionButton = try {
-        context.packageManager.getPermissionInfo(permission, 0)
-        // Permission exists, check if it's not granted
-        ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
-    } catch (e: PackageManager.NameNotFoundException) {
-        // Permission doesn't exist on this device
-        false
-    }
-
-    Column(
-        modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "Hello $name!"
-        )
-        Button(onClick = {
-            context.startActivity(Intent(context, SleepDataLogger::class.java))
-        }) {
-            Text("Log Sleep Data")
-        }
-        if (shouldShowPermissionButton) {
-            Button(onClick = {
-                launcher.launch(permission)
-            }) {
-                Text("Request OTHER_SENSORS")
+                    SleepDayCard(
+                        date = date,
+                        isToday = isToday,
+                        session = sessionForDate,
+                        onClick = { onDayClick(date) }
+                    )
+                }
             }
         }
     }
 }
 
-@Preview(showBackground = true)
 @Composable
-fun GreetingPreview() {
-    SleepTrackerTheme {
-        Greeting("Android")
+fun SleepDayCard(
+    date: LocalDate,
+    isToday: Boolean,
+    session: SleepSessionRecord?,
+    onClick: () -> Unit
+) {
+    val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
+    val dateString = date.format(formatter)
+    
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !isToday) { onClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = if (isToday) MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.5f) 
+                             else MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Night of $dateString",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (isToday) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=0.5f) 
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            if (session != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                val duration = Duration.between(session.startTime, session.endTime)
+                val hours = duration.toHours()
+                val minutes = duration.toMinutesPart()
+                
+                // Calculate asleep time
+                val asleepDuration = session.stages.sumOf { stage ->
+                    if (stage.stage != SleepSessionRecord.STAGE_TYPE_AWAKE && 
+                        stage.stage != SleepSessionRecord.STAGE_TYPE_OUT_OF_BED &&
+                        stage.stage != SleepSessionRecord.STAGE_TYPE_UNKNOWN) {
+                        Duration.between(stage.startTime, stage.endTime).toMillis()
+                    } else {
+                        0L
+                    }
+                }
+                val asleepHours = Duration.ofMillis(asleepDuration).toHours()
+                val asleepMinutes = Duration.ofMillis(asleepDuration).toMinutesPart()
+
+                Text(
+                    text = "${hours}h ${minutes}m in bed • ${asleepHours}h ${asleepMinutes}m asleep",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            } else {
+                 if (!isToday) {
+                     Spacer(modifier = Modifier.height(4.dp))
+                     Text(
+                        text = "No data",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=0.6f)
+                     )
+                 }
+            }
+        }
     }
 }

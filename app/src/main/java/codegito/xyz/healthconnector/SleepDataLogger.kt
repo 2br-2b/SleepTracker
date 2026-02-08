@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,10 +28,19 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.lifecycle.lifecycleScope
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
+import kotlinx.coroutines.launch
 import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Collections
 
@@ -135,17 +145,41 @@ fun validateSleepLog(bedtime: LocalDateTime, segments: List<SleepSegment>): Stri
 }
 
 class SleepDataLogger : ComponentActivity() {
+
+    private val permissions = setOf(
+        HealthPermission.getWritePermission(SleepSessionRecord::class),
+        HealthPermission.getReadPermission(SleepSessionRecord::class)
+    )
+
+    private val requestPermissions =
+        registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
+            if (granted.containsAll(permissions)) {
+                pendingSleepLog?.let { saveToHealthConnect(it) }
+            } else {
+                Toast.makeText(this, "Permissions not granted", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    private var pendingSleepLog: SleepLog? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        val targetDateMillis = intent.getLongExtra("target_date_millis", -1L)
+        val targetDate = if (targetDateMillis != -1L) {
+            LocalDate.ofInstant(Instant.ofEpochMilli(targetDateMillis), ZoneId.systemDefault())
+        } else {
+            LocalDate.now().minusDays(1)
+        }
+
         setContent {
             SleepTrackerTheme {
                 SleepLogScreen(
+                    targetNightDate = targetDate,
                     onSave = { sleepLog ->
-                        // TODO: Save to Health Connect
-                        Toast.makeText(this, "Saved sleep data", Toast.LENGTH_SHORT).show()
-                        finish()
+                        pendingSleepLog = sleepLog
+                        checkPermissionsAndSave(sleepLog)
                     },
                     onCancel = {
                         finish()
@@ -154,20 +188,89 @@ class SleepDataLogger : ComponentActivity() {
             }
         }
     }
+
+    private fun checkPermissionsAndSave(sleepLog: SleepLog) {
+        lifecycleScope.launch {
+            try {
+                val client = HealthConnectClient.getOrCreate(applicationContext)
+                val granted = client.permissionController.getGrantedPermissions()
+                if (granted.containsAll(permissions)) {
+                    saveToHealthConnect(sleepLog)
+                } else {
+                    requestPermissions.launch(permissions)
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@SleepDataLogger, "Error checking permissions: ${e.message}", Toast.LENGTH_LONG).show()
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun saveToHealthConnect(sleepLog: SleepLog) {
+        lifecycleScope.launch {
+            try {
+                val client = HealthConnectClient.getOrCreate(applicationContext)
+                
+                // Convert SleepLog to SleepSessionRecord
+                val zoneId = ZoneId.systemDefault()
+                val startInstant = sleepLog.bedtime.atZone(zoneId).toInstant()
+                val endInstant = sleepLog.segments.last().endTime.atZone(zoneId).toInstant()
+                
+                // Calculate stages
+                val stages = mutableListOf<SleepSessionRecord.Stage>()
+                var currentStartTime = sleepLog.bedtime
+                
+                sleepLog.segments.forEach { segment ->
+                    val segmentStartInstant = currentStartTime.atZone(zoneId).toInstant()
+                    val segmentEndInstant = segment.endTime.atZone(zoneId).toInstant()
+                    
+                    stages.add(
+                        SleepSessionRecord.Stage(
+                            startTime = segmentStartInstant,
+                            endTime = segmentEndInstant,
+                            stage = segment.sleepStage
+                        )
+                    )
+                    
+                    currentStartTime = segment.endTime
+                }
+
+                val record = SleepSessionRecord(
+                    startTime = startInstant,
+                    startZoneOffset = zoneId.rules.getOffset(startInstant),
+                    endTime = endInstant,
+                    endZoneOffset = zoneId.rules.getOffset(endInstant),
+                    stages = stages
+                )
+
+                client.insertRecords(listOf(record))
+                
+                Toast.makeText(this@SleepDataLogger, "Saved sleep data to Health Connect", Toast.LENGTH_SHORT).show()
+                finish()
+            } catch (e: Exception) {
+                Toast.makeText(this@SleepDataLogger, "Error saving data: ${e.message}", Toast.LENGTH_LONG).show()
+                e.printStackTrace()
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SleepLogScreen(
+    targetNightDate: LocalDate,
     onSave: (SleepLog) -> Unit,
     onCancel: () -> Unit
 ) {
-    var bedtime by remember { mutableStateOf(LocalDateTime.now().minusHours(8)) }
+    // Bedtime defaults to 10 PM on the target date
+    var bedtime by remember { mutableStateOf(targetNightDate.atTime(22, 0)) }
+    
+    // First segment defaults to waking up at 7 AM next day
     var segments by remember {
         mutableStateOf(
             listOf(
                 SleepSegment(
-                    endTime = LocalDateTime.now(),
+                    endTime = targetNightDate.plusDays(1).atTime(7, 0),
                     sleepStage = SleepSessionRecord.STAGE_TYPE_SLEEPING
                 )
             )
@@ -190,10 +293,19 @@ fun SleepLogScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
+            Text(
+                text = "Logging for Night of ${targetNightDate.format(DateTimeFormatter.ofPattern("MMM d"))}",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
             // Bedtime Card — entire card is clickable
             BedtimeCard(
                 bedtime = bedtime,
-                onEditClick = { showBedtimeDatePicker = true }
+                onEditClick = { 
+                    // We only allow editing Time, date is fixed to the night context mostly
+                    showBedtimeTimePicker = true 
+                }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -325,22 +437,11 @@ fun SleepLogScreen(
         }
     }
 
-    if (showBedtimeDatePicker) {
-        DatePickerDialog(
-            title = "Select Bedtime Date",
-            initialDate = bedtime,
-            onConfirm = { newDate ->
-                bedtime = newDate
-                showBedtimeDatePicker = false
-                showBedtimeTimePicker = true
-            },
-            onDismiss = { showBedtimeDatePicker = false }
-        )
-    }
     if (showBedtimeTimePicker) {
         TimePickerDialog(
             title = "Select Bedtime",
             initialTime = bedtime,
+            targetNightDate = targetNightDate,
             onConfirm = { newTime ->
                 bedtime = newTime
                 showBedtimeTimePicker = false
@@ -354,6 +455,7 @@ fun SleepLogScreen(
         TimePickerDialog(
             title = "Edit Timestamp",
             initialTime = segments[index].endTime,
+            targetNightDate = targetNightDate,
             onConfirm = { newTime ->
                 val updated = segments.toMutableList()
                 updated[index] = segments[index].copy(endTime = newTime)
@@ -405,8 +507,10 @@ fun SleepLogScreen(
     if (showAddSegmentDialog) {
         SleepStagePickerDialog(
             onStageSelected = { stage ->
+                // Default new segment to endTime of last segment + 1 hour or similar
+                val lastTime = segments.lastOrNull()?.endTime ?: bedtime
                 segments = segments + SleepSegment(
-                    endTime = LocalDateTime.now(),
+                    endTime = lastTime.plusMinutes(60), // Add 1h by default
                     sleepStage = stage
                 )
                 showAddSegmentDialog = false
@@ -673,6 +777,7 @@ fun SleepSummaryRow(
 fun TimePickerDialog(
     title: String,
     initialTime: LocalDateTime,
+    targetNightDate: LocalDate,
     onConfirm: (LocalDateTime) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -690,9 +795,23 @@ fun TimePickerDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                val newTime = initialTime
-                    .withHour(timePickerState.hour)
-                    .withMinute(timePickerState.minute)
+                // Heuristic:
+                // We want to map the picked time to either targetNightDate (evening) or targetNightDate + 1 (morning).
+                // If picked hour is 0..11 (AM), assume next day (targetNightDate + 1).
+                // If picked hour is 12..23 (PM), assume current day (targetNightDate).
+                // This logic correctly handles the user's requirement that "Night of [Date]" includes 
+                // early morning hours (e.g. 1 AM) of the next day, up to the 2 AM cutoff defined in MainActivity.
+                
+                val pickedHour = timePickerState.hour
+                val pickedMinute = timePickerState.minute
+                
+                val datePart = if (pickedHour < 12) {
+                    targetNightDate.plusDays(1)
+                } else {
+                    targetNightDate
+                }
+                
+                val newTime = LocalDateTime.of(datePart, LocalTime.of(pickedHour, pickedMinute))
                 onConfirm(newTime)
             }) {
                 Text("OK")
@@ -714,6 +833,9 @@ fun DatePickerDialog(
     onConfirm: (LocalDateTime) -> Unit,
     onDismiss: () -> Unit
 ) {
+   // Deprecated/Unused in new flow but kept to avoid compilation errors if referenced elsewhere, 
+   // although we removed references in SleepLogScreen.
+   // We can keep it minimal or remove if sure.
     val datePickerState = rememberDatePickerState(
         initialSelectedDateMillis = initialDate.toEpochSecond(java.time.ZoneOffset.UTC) * 1000
     )
