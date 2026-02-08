@@ -42,4 +42,13 @@ class HealthConnectManager(val context: Context) {
             healthConnectClient.insertRecords(listOf(record))
         }
     }
+
+    suspend fun deleteSleepSessions(start: Instant, end: Instant) {
+        if (hasPermissions()) {
+            healthConnectClient.deleteRecords(
+                recordType = SleepSessionRecord::class,
+                timeRangeFilter = TimeRangeFilter.between(start, end)
+            )
+        }
+    }
 }

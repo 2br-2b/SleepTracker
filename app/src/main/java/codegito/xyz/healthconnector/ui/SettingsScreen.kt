@@ -32,32 +32,27 @@ import java.time.format.DateTimeFormatter
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    healthConnectManager: HealthConnectManager, // Pass healthConnectManager
-    userPreferencesRepository: UserPreferencesRepository, // Pass UserPreferencesRepository
+    healthConnectManager: HealthConnectManager,
+    userPreferencesRepository: UserPreferencesRepository,
     onManagePermissions: () -> Unit,
-    onEditSleepStages: () -> Unit
+    onEditSleepStages: () -> Unit,
+    onAutoSleepSettings: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // State for permissions
     var hasHealthConnectPermissions by remember { mutableStateOf(false) }
-    var hasOtherSensorsPermission by remember { mutableStateOf(false) }
 
-    // State for rollover time
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     var showRolloverTimePicker by remember { mutableStateOf(false) }
 
-    // Check permissions on resume
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                  scope.launch {
                     hasHealthConnectPermissions = healthConnectManager.hasPermissions()
                 }
-                val permissionState = ContextCompat.checkSelfPermission(context, "android.permission.OTHER_SENSORS")
-                hasOtherSensorsPermission = permissionState == PermissionChecker.PERMISSION_GRANTED
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -104,7 +99,6 @@ fun SettingsScreen(
                     if (intent.resolveActivity(context.packageManager) != null) {
                         context.startActivity(intent)
                     } else {
-                        // Fallback to open app store or simpler settings
                          val settingsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                             data = Uri.fromParts("package", context.packageName, null)
                         }
@@ -116,41 +110,17 @@ fun SettingsScreen(
                 Text("Open Health Connect App")
             }
 
-            // GrapheneOS OTHER_SENSORS
-            if (hasOtherSensorsPermission) {
-               Button(
-                   onClick = {}, 
-                   enabled = false,
-                   modifier = Modifier.fillMaxWidth()
-               ) {
-                   Text("Sensors Permission Granted")
-               }
-            } else {
-                Button(
-                    onClick = {
-                        val activity = context as? Activity
-                        activity?.requestPermissions(arrayOf("android.permission.OTHER_SENSORS"), 1001)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Request Sensors Permission")
-                }
-                
-                // Fallback for GrapheneOS manual toggle or if request doesn't work
-                OutlinedButton(
-                    onClick = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.fromParts("package", context.packageName, null)
-                        }
-                        context.startActivity(intent)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Open App Info (Toggle Sensors)")
-                }
-            }
+            HorizontalDivider()
+
+            // Automation Section
+            SectionHeader("Automation")
+
+            ListItem(
+                headlineContent = { Text("Auto-Detect Sleep") },
+                supportingContent = { Text("Configure windows, thresholds, and manual template") },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                modifier = Modifier.clickable { onAutoSleepSettings() }
+            )
 
             HorizontalDivider()
 

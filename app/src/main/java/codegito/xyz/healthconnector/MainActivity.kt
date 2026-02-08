@@ -32,6 +32,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
+import codegito.xyz.healthconnector.data.model.SleepLogTemplate
+import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.ui.AutoSleepSettingsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.SettingsScreen
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
@@ -144,13 +147,9 @@ fun MainApp(
                 }
             }
         }
-    ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = "home",
-            modifier = Modifier.padding(innerPadding)
-        ) {
-            composable("home") {
+    ) { paddingValues ->
+        NavHost(navController, startDestination = Screen.Home.route, modifier = Modifier.padding(paddingValues)) {
+            composable(Screen.Home.route) {
                 HomeScreen(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
@@ -158,16 +157,23 @@ fun MainApp(
                     onDayClick = onDayClick
                 )
             }
-            composable("settings") {
+            composable(Screen.Settings.route) {
                 SettingsScreen(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
                     onManagePermissions = onManagePermissions,
-                    onEditSleepStages = { navController.navigate("edit_sleep_stages") }
+                    onEditSleepStages = { navController.navigate(Screen.EditSleepStages.route) },
+                    onAutoSleepSettings = { navController.navigate(Screen.AutoSleepSettings.route) }
                 )
             }
-            composable("edit_sleep_stages") {
+            composable(Screen.EditSleepStages.route) {
                 EditSleepStagesScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.AutoSleepSettings.route) {
+                AutoSleepSettingsScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onBack = { navController.popBackStack() }
                 )
@@ -333,4 +339,11 @@ fun SleepDayCard(
             }
         }
     }
+}
+
+sealed class Screen(val route: String) {
+    object Home : Screen("home")
+    object Settings : Screen("settings")
+    object EditSleepStages : Screen("edit_sleep_stages")
+    object AutoSleepSettings : Screen("auto_sleep_settings")
 }

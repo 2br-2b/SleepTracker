@@ -2,11 +2,13 @@ package codegito.xyz.healthconnector.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.health.connect.client.records.SleepSessionRecord
+import codegito.xyz.healthconnector.data.model.SleepDetectionMode
+import codegito.xyz.healthconnector.data.model.SleepLogTemplate
+import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.data.SleepStageConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
@@ -16,17 +18,67 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 class UserPreferencesRepository(private val context: Context) {
     
-    private val ROLLOVER_HOUR_KEY = intPreferencesKey("rollover_hour")
     private val SLEEP_STAGES_JSON_KEY = stringPreferencesKey("sleep_stages_json")
-
-    // Default rollover hour: 2 AM - Sleep sessions starting after 2 AM belong to the current day,
-    // while sessions before 2 AM (late night) belong to the previous day's "Night of".
-    // This allows for a more natural representation of sleep sessions.
-    // Let's stick to a simple integer hour (0-23).
+    private val ROLLOVER_HOUR_KEY = intPreferencesKey("rollover_hour")
     
+    // Auto Sleep Detection Settings
+    private val SLEEP_DETECTION_MODE_KEY = stringPreferencesKey("sleep_detection_mode")
+    private val BEDTIME_WINDOW_START_KEY = intPreferencesKey("bedtime_window_start")
+    private val BEDTIME_WINDOW_END_KEY = intPreferencesKey("bedtime_window_end")
+    private val WAKEUP_WINDOW_START_KEY = intPreferencesKey("wakeup_window_start")
+    private val WAKEUP_WINDOW_END_KEY = intPreferencesKey("wakeup_window_end")
+    private val AWAKENING_LOGGING_ENABLED_KEY = booleanPreferencesKey("awakening_logging_enabled")
+    private val AWAKENING_THRESHOLD_MINUTES_KEY = intPreferencesKey("awakening_threshold_minutes")
+    private val DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY = intPreferencesKey("default_awake_to_asleep_minutes")
+    private val MANUAL_SLEEP_TEMPLATE_JSON_KEY = stringPreferencesKey("manual_sleep_template_json")
+
     val rolloverHour: Flow<Int> = context.dataStore.data
         .map { preferences ->
             preferences[ROLLOVER_HOUR_KEY] ?: 2 // Default to 2 AM
+        }
+
+    val sleepDetectionMode: Flow<SleepDetectionMode> = context.dataStore.data
+        .map { preferences ->
+            try {
+                SleepDetectionMode.valueOf(preferences[SLEEP_DETECTION_MODE_KEY] ?: SleepDetectionMode.AUTO.name)
+            } catch (e: Exception) {
+                SleepDetectionMode.AUTO
+            }
+        }
+
+    val bedtimeWindowStart: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[BEDTIME_WINDOW_START_KEY] ?: (21 * 60) } // Default 9 PM
+    
+    val bedtimeWindowEnd: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[BEDTIME_WINDOW_END_KEY] ?: (2 * 60) } // Default 2 AM (next day handle later)
+
+    val wakeupWindowStart: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[WAKEUP_WINDOW_START_KEY] ?: (5 * 60) } // Default 5 AM
+    
+    val wakeupWindowEnd: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[WAKEUP_WINDOW_END_KEY] ?: (12 * 60) } // Default 12 PM
+
+    val awakeningLoggingEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[AWAKENING_LOGGING_ENABLED_KEY] ?: true }
+
+    val awakeningThresholdMinutes: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[AWAKENING_THRESHOLD_MINUTES_KEY] ?: 60 } // Default 1 hour
+
+    val defaultAwakeToAsleepMinutes: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY] ?: 15 }
+
+    val manualSleepTemplate: Flow<SleepLogTemplate> = context.dataStore.data
+        .map { preferences ->
+            val jsonString = preferences[MANUAL_SLEEP_TEMPLATE_JSON_KEY]
+            if (jsonString != null) {
+                try {
+                    Json.decodeFromString<SleepLogTemplate>(jsonString)
+                } catch (e: Exception) {
+                    getDefaultTemplate()
+                }
+            } else {
+                getDefaultTemplate()
+            }
         }
 
     val sleepStages: Flow<List<SleepStageConfig>> = context.dataStore.data
@@ -49,9 +101,72 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun setSleepDetectionMode(mode: SleepDetectionMode) {
+        context.dataStore.edit { preferences ->
+            preferences[SLEEP_DETECTION_MODE_KEY] = mode.name
+        }
+    }
+
+    suspend fun setBedtimeWindow(startMinutes: Int, endMinutes: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[BEDTIME_WINDOW_START_KEY] = startMinutes
+            preferences[BEDTIME_WINDOW_END_KEY] = endMinutes
+        }
+    }
+
+    suspend fun setWakeupWindow(startMinutes: Int, endMinutes: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[WAKEUP_WINDOW_START_KEY] = startMinutes
+            preferences[WAKEUP_WINDOW_END_KEY] = endMinutes
+        }
+    }
+
+    suspend fun setAwakeningLoggingEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[AWAKENING_LOGGING_ENABLED_KEY] = enabled
+        }
+    }
+
+    suspend fun setAwakeningThreshold(minutes: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[AWAKENING_THRESHOLD_MINUTES_KEY] = minutes
+        }
+    }
+
+    suspend fun setDefaultAwakeToAsleepMinutes(minutes: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY] = minutes
+        }
+    }
+
+    suspend fun saveManualTemplate(template: SleepLogTemplate) {
+        context.dataStore.edit { preferences ->
+            preferences[MANUAL_SLEEP_TEMPLATE_JSON_KEY] = Json.encodeToString(template)
+        }
+    }
+
     suspend fun saveSleepStages(stages: List<SleepStageConfig>) {
         context.dataStore.edit { preferences ->
             preferences[SLEEP_STAGES_JSON_KEY] = Json.encodeToString(stages)
         }
+    }
+
+    private fun getDefaultSleepStages(): List<SleepStageConfig> {
+        return listOf(
+            SleepStageConfig("awake", "Awake", SleepSessionRecord.STAGE_TYPE_AWAKE, "💡", true),
+            SleepStageConfig("sleeping", "Light Sleep", SleepSessionRecord.STAGE_TYPE_SLEEPING, "🌙", true),
+            SleepStageConfig("deep", "Deep Sleep", SleepSessionRecord.STAGE_TYPE_DEEP, "💤", true),
+            SleepStageConfig("rem", "REM", SleepSessionRecord.STAGE_TYPE_REM, "🌈", true),
+            SleepStageConfig("out_of_bed", "Out of Bed", SleepSessionRecord.STAGE_TYPE_OUT_OF_BED, "🚶", false)
+        )
+    }
+
+    private fun getDefaultTemplate(): SleepLogTemplate {
+        return SleepLogTemplate(
+            bedtimeOffsetMinutes = 22 * 60, // 10 PM
+            segments = listOf(
+                TemplateSegment(0, 8 * 60, SleepSessionRecord.STAGE_TYPE_SLEEPING) // 8 hours later
+            )
+        )
     }
 }
