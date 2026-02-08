@@ -96,6 +96,8 @@ fun SleepLogEditor(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            val validation = remember(bedtime, segments) { validateSleepLog(bedtime, segments) }
+
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 state = dragReorderState.lazyListState,
@@ -106,7 +108,6 @@ fun SleepLogEditor(
                     val duration = Duration.between(startTime, segment.endTime).toMinutes()
 
                     val isDragged = dragReorderState.draggedIndex == index
-                    val validation = validateSleepLog(bedtime, segments)
                     val isInvalid = validation.invalidIndices.contains(index)
 
                     SleepSegmentCard(
@@ -206,7 +207,6 @@ fun SleepLogEditor(
                 }
                 Button(
                     onClick = {
-                        val validation = validateSleepLog(bedtime, segments)
                         if (!validation.isValid) {
                             Toast.makeText(context, validation.errorMessage, Toast.LENGTH_LONG).show()
                         } else {

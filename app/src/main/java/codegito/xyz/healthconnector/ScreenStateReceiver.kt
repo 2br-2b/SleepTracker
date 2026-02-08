@@ -39,7 +39,7 @@ class ScreenStateReceiver : BroadcastReceiver() {
     }
 
     private suspend fun processEvent(context: Context, type: String, timestamp: Long) {
-        val prefs = UserPreferencesRepository(context)
+        val prefs = UserPreferencesRepository.getInstance(context)
         val mode = prefs.sleepDetectionMode.first()
         if (mode != SleepDetectionMode.AUTO) return
 

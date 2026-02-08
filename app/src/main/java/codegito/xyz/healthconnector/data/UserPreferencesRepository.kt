@@ -17,10 +17,21 @@ import kotlinx.serialization.json.Json
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_preferences")
 
-class UserPreferencesRepository(private val context: Context) {
-    
-    private val json = Json { 
-        ignoreUnknownKeys = true 
+class UserPreferencesRepository private constructor(private val context: Context) {
+
+    companion object {
+        @Volatile
+        private var INSTANCE: UserPreferencesRepository? = null
+
+        fun getInstance(context: Context): UserPreferencesRepository {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: UserPreferencesRepository(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+    }
+
+    private val json = Json {
+        ignoreUnknownKeys = true
         encodeDefaults = true
     }
 

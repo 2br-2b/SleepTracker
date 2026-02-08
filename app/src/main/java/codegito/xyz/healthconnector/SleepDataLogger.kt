@@ -39,7 +39,7 @@ class SleepDataLogger : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        userPreferencesRepository = UserPreferencesRepository(this)
+        userPreferencesRepository = UserPreferencesRepository.getInstance(this)
         healthConnectManager = HealthConnectManager(this)
 
         val targetDateMillis = intent.getLongExtra("target_date_millis", -1L)

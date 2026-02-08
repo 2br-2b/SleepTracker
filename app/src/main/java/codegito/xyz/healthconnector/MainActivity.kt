@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         healthConnectManager = HealthConnectManager(this)
-        userPreferencesRepository = UserPreferencesRepository(this)
+        userPreferencesRepository = UserPreferencesRepository.getInstance(this)
 
         // Ensure sleep tracking service is running
         ensureServiceRunning()

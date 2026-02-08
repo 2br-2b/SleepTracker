@@ -25,7 +25,7 @@ class ReminderReceiver : BroadcastReceiver() {
         val targetDate = Instant.ofEpochMilli(targetDateMillis).atZone(ZoneId.systemDefault()).toLocalDate()
 
         scope.launch {
-            val prefs = UserPreferencesRepository(context)
+            val prefs = UserPreferencesRepository.getInstance(context)
             val healthManager = HealthConnectManager(context)
             val rolloverHour = prefs.rolloverHour.first()
             

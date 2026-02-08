@@ -44,7 +44,7 @@ class SleepTrackingService : Service() {
 
         // Monitor settings for changes
         settingsJob = scope.launch {
-            val prefs = UserPreferencesRepository(this@SleepTrackingService)
+            val prefs = UserPreferencesRepository.getInstance(this@SleepTrackingService)
             
             // Watch for mode or window changes
             kotlinx.coroutines.flow.combine(

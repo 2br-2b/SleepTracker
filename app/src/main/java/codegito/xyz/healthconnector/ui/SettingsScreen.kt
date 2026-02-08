@@ -58,12 +58,11 @@ fun SettingsScreen(
     // Check if service is running
     var isServiceActive by remember { mutableStateOf(false) }
     
-    LaunchedEffect(Unit) {
-        scope.launch {
-            while (true) {
-                isServiceActive = isServiceRunning(context, SleepTrackingService::class.java)
-                kotlinx.coroutines.delay(2000) // Polling every 2s for debug info
-            }
+    LaunchedEffect(developerModeEnabled) {
+        if (!developerModeEnabled) return@LaunchedEffect
+        while (true) {
+            isServiceActive = isServiceRunning(context, SleepTrackingService::class.java)
+            kotlinx.coroutines.delay(2000)
         }
     }
 

@@ -15,7 +15,7 @@ class BootReceiver : BroadcastReceiver() {
             
             scope.launch {
                 try {
-                    val prefs = codegito.xyz.healthconnector.data.UserPreferencesRepository(context)
+                    val prefs = codegito.xyz.healthconnector.data.UserPreferencesRepository.getInstance(context)
                     NotificationHelper.refreshServiceState(context, prefs)
                 } finally {
                     pendingResult.finish()
