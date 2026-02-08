@@ -10,14 +10,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,6 +30,8 @@ import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.lifecycle.lifecycleScope
+import codegito.xyz.healthconnector.data.SleepStageConfig
+import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -44,112 +43,14 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Collections
 
-val SLEEP_STAGES = listOf(
-    "Awake" to SleepSessionRecord.STAGE_TYPE_AWAKE,
-    "Sleeping" to SleepSessionRecord.STAGE_TYPE_SLEEPING,
-    "Out of Bed" to SleepSessionRecord.STAGE_TYPE_OUT_OF_BED,
-    "Light Sleep" to SleepSessionRecord.STAGE_TYPE_LIGHT,
-    "Deep Sleep" to SleepSessionRecord.STAGE_TYPE_DEEP,
-    "REM Sleep" to SleepSessionRecord.STAGE_TYPE_REM,
-    "Unknown" to SleepSessionRecord.STAGE_TYPE_UNKNOWN
-)
-
-fun sleepStageIcon(stageType: Int): String = when (stageType) {
-    SleepSessionRecord.STAGE_TYPE_AWAKE -> "☀️"
-    SleepSessionRecord.STAGE_TYPE_SLEEPING -> "😴"
-    SleepSessionRecord.STAGE_TYPE_OUT_OF_BED -> "🚶"
-    SleepSessionRecord.STAGE_TYPE_LIGHT -> "🌙"
-    SleepSessionRecord.STAGE_TYPE_DEEP -> "💤"
-    SleepSessionRecord.STAGE_TYPE_REM -> "👁️"
-    else -> "❓"
-}
-
-class DragReorderState(
-    val lazyListState: LazyListState
-) {
-    var draggedIndex by mutableIntStateOf(-1)
-    var draggedOffset by mutableFloatStateOf(0f)
-
-    val isDragging: Boolean get() = draggedIndex >= 0
-
-    fun onDragStart(index: Int) {
-        draggedIndex = index
-        draggedOffset = 0f
-    }
-
-    fun onDrag(deltaY: Float, itemCount: Int, onSwap: (Int, Int) -> Unit) {
-        draggedOffset += deltaY
-
-        val itemHeight = lazyListState.layoutInfo.visibleItemsInfo
-            .firstOrNull()?.size?.toFloat() ?: return
-
-        if (draggedOffset > itemHeight * 0.5f && draggedIndex < itemCount - 1) {
-            val target = draggedIndex + 1
-            onSwap(draggedIndex, target)
-            draggedIndex = target
-            draggedOffset -= itemHeight
-        } else if (draggedOffset < -itemHeight * 0.5f && draggedIndex > 0) {
-            val target = draggedIndex - 1
-            onSwap(draggedIndex, target)
-            draggedIndex = target
-            draggedOffset += itemHeight
-        }
-    }
-
-    fun reset() {
-        draggedIndex = -1
-        draggedOffset = 0f
-    }
-}
-
-@Composable
-fun rememberDragReorderState(): DragReorderState {
-    val lazyListState = rememberLazyListState()
-    return remember { DragReorderState(lazyListState) }
-}
-
-fun validateSleepLog(bedtime: LocalDateTime, segments: List<SleepSegment>): String? {
-    val now = LocalDateTime.now()
-    if (bedtime.isAfter(now)) {
-        return "Bedtime cannot be in the future."
-    }
-    if (segments.isEmpty()) return "No sleep segments added"
-
-    var previousTime = bedtime
-    for ((index, segment) in segments.withIndex()) {
-        if (segment.endTime.isAfter(now)) {
-            return "Segment ${index + 1} timestamp cannot be in the future."
-        }
-        val duration = Duration.between(previousTime, segment.endTime).toMinutes()
-        if (duration <= 0) {
-            return "Segment ${index + 1} timestamp must be after ${
-                previousTime.format(DateTimeFormatter.ofPattern("h:mm a"))
-            }. Check for midnight/noon crossings."
-        }
-        previousTime = segment.endTime
-    }
-
-    val totalInBed = Duration.between(bedtime, segments.last().endTime).toMinutes()
-    if (totalInBed <= 0) return "Total time in bed must be positive. Check that wake time is after bedtime."
-
-    val totalAsleep = segments.mapIndexed { index, segment ->
-        val start = if (index == 0) bedtime else segments[index - 1].endTime
-        val mins = Duration.between(start, segment.endTime).toMinutes()
-        if (segment.sleepStage != SleepSessionRecord.STAGE_TYPE_AWAKE &&
-            segment.sleepStage != SleepSessionRecord.STAGE_TYPE_OUT_OF_BED
-        ) mins else 0L
-    }.sum()
-    if (totalAsleep <= 0) return "Total time asleep must be positive. Mark at least one segment as a sleep stage."
-
-    return null
-}
-
 class SleepDataLogger : ComponentActivity() {
 
     private val permissions = setOf(
         HealthPermission.getWritePermission(SleepSessionRecord::class),
         HealthPermission.getReadPermission(SleepSessionRecord::class)
     )
+
+    private lateinit var userPreferencesRepository: UserPreferencesRepository
 
     private val requestPermissions =
         registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
@@ -166,6 +67,8 @@ class SleepDataLogger : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        userPreferencesRepository = UserPreferencesRepository(this)
+
         val targetDateMillis = intent.getLongExtra("target_date_millis", -1L)
         val targetDate = if (targetDateMillis != -1L) {
             LocalDate.ofInstant(Instant.ofEpochMilli(targetDateMillis), ZoneId.systemDefault())
@@ -175,16 +78,25 @@ class SleepDataLogger : ComponentActivity() {
 
         setContent {
             SleepTrackerTheme {
-                SleepLogScreen(
-                    targetNightDate = targetDate,
-                    onSave = { sleepLog ->
-                        pendingSleepLog = sleepLog
-                        checkPermissionsAndSave(sleepLog)
-                    },
-                    onCancel = {
-                        finish()
+                val sleepStages by userPreferencesRepository.sleepStages.collectAsState(initial = emptyList())
+
+                if (sleepStages.isNotEmpty()) {
+                    SleepLogScreen(
+                        targetNightDate = targetDate,
+                        sleepStages = sleepStages,
+                        onSave = { sleepLog ->
+                            pendingSleepLog = sleepLog
+                            checkPermissionsAndSave(sleepLog)
+                        },
+                        onCancel = {
+                            finish()
+                        }
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
                     }
-                )
+                }
             }
         }
     }
@@ -211,12 +123,10 @@ class SleepDataLogger : ComponentActivity() {
             try {
                 val client = HealthConnectClient.getOrCreate(applicationContext)
                 
-                // Convert SleepLog to SleepSessionRecord
                 val zoneId = ZoneId.systemDefault()
                 val startInstant = sleepLog.bedtime.atZone(zoneId).toInstant()
                 val endInstant = sleepLog.segments.last().endTime.atZone(zoneId).toInstant()
                 
-                // Calculate stages
                 val stages = mutableListOf<SleepSessionRecord.Stage>()
                 var currentStartTime = sleepLog.bedtime
                 
@@ -259,13 +169,12 @@ class SleepDataLogger : ComponentActivity() {
 @Composable
 fun SleepLogScreen(
     targetNightDate: LocalDate,
+    sleepStages: List<SleepStageConfig>,
     onSave: (SleepLog) -> Unit,
     onCancel: () -> Unit
 ) {
-    // Bedtime defaults to 10 PM on the target date
     var bedtime by remember { mutableStateOf(targetNightDate.atTime(22, 0)) }
     
-    // First segment defaults to waking up at 7 AM next day
     var segments by remember {
         mutableStateOf(
             listOf(
@@ -277,7 +186,6 @@ fun SleepLogScreen(
         )
     }
     val context = LocalContext.current
-    var showBedtimeDatePicker by remember { mutableStateOf(false) }
     var showBedtimeTimePicker by remember { mutableStateOf(false) }
     var editingSegmentIndex by remember { mutableStateOf<Int?>(null) }
     var editingDurationIndex by remember { mutableStateOf<Int?>(null) }
@@ -299,18 +207,15 @@ fun SleepLogScreen(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
-            // Bedtime Card — entire card is clickable
             BedtimeCard(
                 bedtime = bedtime,
                 onEditClick = { 
-                    // We only allow editing Time, date is fixed to the night context mostly
                     showBedtimeTimePicker = true 
                 }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Segments List with Add button at bottom
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 state = dragReorderState.lazyListState,
@@ -325,6 +230,7 @@ fun SleepLogScreen(
                     SleepSegmentCard(
                         segment = segment,
                         durationMinutes = duration,
+                        sleepStages = sleepStages,
                         onStageChanged = { newStage ->
                             val updated = segments.toMutableList()
                             updated[index] = segment.copy(sleepStage = newStage)
@@ -349,6 +255,7 @@ fun SleepLogScreen(
                                     scaleY = 1.02f
                                 }
                         } else {
+                            @Suppress("DEPRECATION")
                             Modifier.animateItemPlacement()
                         },
                         onDragStart = { dragReorderState.onDragStart(index) },
@@ -363,7 +270,6 @@ fun SleepLogScreen(
                     )
                 }
 
-                // Add Segment Button at bottom of list
                 item {
                     Card(
                         modifier = Modifier
@@ -386,7 +292,6 @@ fun SleepLogScreen(
                     }
                 }
 
-                // Sleep Summary
                 if (segments.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(8.dp))
@@ -395,7 +300,8 @@ fun SleepLogScreen(
                             val start = if (index == 0) bedtime else segments[index - 1].endTime
                             val mins = Duration.between(start, segment.endTime).toMinutes()
                             if (segment.sleepStage != SleepSessionRecord.STAGE_TYPE_AWAKE &&
-                                segment.sleepStage != SleepSessionRecord.STAGE_TYPE_OUT_OF_BED
+                                segment.sleepStage != SleepSessionRecord.STAGE_TYPE_OUT_OF_BED &&
+                                segment.sleepStage != SleepSessionRecord.STAGE_TYPE_UNKNOWN
                             ) mins else 0L
                         }.sum()
 
@@ -409,7 +315,6 @@ fun SleepLogScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -450,7 +355,6 @@ fun SleepLogScreen(
         )
     }
 
-    // Edit Timestamp Dialog
     editingSegmentIndex?.let { index ->
         TimePickerDialog(
             title = "Edit Timestamp",
@@ -466,7 +370,6 @@ fun SleepLogScreen(
         )
     }
 
-    // Edit Duration Dialog
     editingDurationIndex?.let { index ->
         val startTime = if (index == 0) bedtime else segments[index - 1].endTime
 
@@ -480,7 +383,6 @@ fun SleepLogScreen(
                         val newEndTime = startTime.plusMinutes(durationMinutes)
                         val nextTime = segments.getOrNull(index + 1)?.endTime
 
-                        // Validate: new end time must be before next timestamp
                         if (nextTime == null || newEndTime.isBefore(nextTime)) {
                             val updated = segments.toMutableList()
                             updated[index] = segments[index].copy(endTime = newEndTime)
@@ -503,14 +405,13 @@ fun SleepLogScreen(
         )
     }
 
-    // Sleep Stage Picker Dialog (for adding new segments)
     if (showAddSegmentDialog) {
         SleepStagePickerDialog(
+            sleepStages = sleepStages,
             onStageSelected = { stage ->
-                // Default new segment to endTime of last segment + 1 hour or similar
                 val lastTime = segments.lastOrNull()?.endTime ?: bedtime
                 segments = segments + SleepSegment(
-                    endTime = lastTime.plusMinutes(60), // Add 1h by default
+                    endTime = lastTime.plusMinutes(60),
                     sleepStage = stage
                 )
                 showAddSegmentDialog = false
@@ -562,6 +463,7 @@ fun BedtimeCard(
 fun SleepSegmentCard(
     segment: SleepSegment,
     durationMinutes: Long,
+    sleepStages: List<SleepStageConfig>,
     onStageChanged: (Int) -> Unit,
     onRemove: () -> Unit,
     onDurationClick: () -> Unit,
@@ -572,7 +474,9 @@ fun SleepSegmentCard(
     onDragEnd: () -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val currentStage = SLEEP_STAGES.find { it.second == segment.sleepStage }?.first ?: "Unknown"
+    val stageConfig = sleepStages.find { it.healthConnectType == segment.sleepStage }
+    val currentStage = stageConfig?.name ?: "Unknown"
+    val currentEmoji = stageConfig?.emoji ?: "❓"
 
     Card(
         modifier = modifier.fillMaxWidth()
@@ -580,7 +484,6 @@ fun SleepSegmentCard(
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-            // Sleep Stage Dropdown, Duration, and Drag Handle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -592,7 +495,7 @@ fun SleepSegmentCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     OutlinedTextField(
-                        value = "${sleepStageIcon(segment.sleepStage)} $currentStage",
+                        value = "$currentEmoji $currentStage",
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("Sleep stage") },
@@ -603,19 +506,19 @@ fun SleepSegmentCard(
                         expanded = expanded,
                         onDismissRequest = { expanded = false }
                     ) {
-                        SLEEP_STAGES.forEach { (name, stage) ->
+                        sleepStages.filter { it.isEnabled }.forEach { config ->
                             DropdownMenuItem(
                                 text = {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Text(sleepStageIcon(stage))
-                                        Text(name)
+                                        Text(config.emoji)
+                                        Text(config.name)
                                     }
                                 },
                                 onClick = {
-                                    onStageChanged(stage)
+                                    onStageChanged(config.healthConnectType)
                                     expanded = false
                                 }
                             )
@@ -625,7 +528,6 @@ fun SleepSegmentCard(
 
                 Spacer(modifier = Modifier.width(16.dp))
 
-                // Clickable Duration with bigger touch target
                 Text(
                     text = durationMinutes.formatDuration(),
                     style = MaterialTheme.typography.titleLarge,
@@ -636,7 +538,6 @@ fun SleepSegmentCard(
                         .padding(vertical = 8.dp, horizontal = 8.dp)
                 )
 
-                // Drag Handle — immediate drag, no long press
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -663,13 +564,11 @@ fun SleepSegmentCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // End Time and Remove Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Clickable Timestamp with bigger touch target and larger text
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -694,6 +593,7 @@ fun SleepSegmentCard(
 
 @Composable
 fun SleepStagePickerDialog(
+    sleepStages: List<SleepStageConfig>,
     onStageSelected: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -702,9 +602,9 @@ fun SleepStagePickerDialog(
         title = { Text("Select Sleep Stage") },
         text = {
             Column {
-                SLEEP_STAGES.forEach { (name, stage) ->
+                sleepStages.filter { it.isEnabled }.forEach { config ->
                     TextButton(
-                        onClick = { onStageSelected(stage) },
+                        onClick = { onStageSelected(config.healthConnectType) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -712,8 +612,8 @@ fun SleepStagePickerDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Text(sleepStageIcon(stage), style = MaterialTheme.typography.titleMedium)
-                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                            Text(config.emoji, style = MaterialTheme.typography.titleMedium)
+                            Text(config.name, style = MaterialTheme.typography.bodyLarge)
                         }
                     }
                 }
@@ -726,6 +626,43 @@ fun SleepStagePickerDialog(
             }
         }
     )
+}
+
+fun validateSleepLog(bedtime: LocalDateTime, segments: List<SleepSegment>): String? {
+    val now = LocalDateTime.now()
+    if (bedtime.isAfter(now)) {
+        return "Bedtime cannot be in the future."
+    }
+    if (segments.isEmpty()) return "No sleep segments added"
+
+    var previousTime = bedtime
+    for ((index, segment) in segments.withIndex()) {
+        if (segment.endTime.isAfter(now)) {
+            return "Segment ${index + 1} timestamp cannot be in the future."
+        }
+        val duration = Duration.between(previousTime, segment.endTime).toMinutes()
+        if (duration <= 0) {
+            return "Segment ${index + 1} timestamp must be after ${
+                previousTime.format(DateTimeFormatter.ofPattern("h:mm a"))
+            }. Check for midnight/noon crossings."
+        }
+        previousTime = segment.endTime
+    }
+
+    val totalInBed = Duration.between(bedtime, segments.last().endTime).toMinutes()
+    if (totalInBed <= 0) return "Total time in bed must be positive. Check that wake time is after bedtime."
+
+    val totalAsleep = segments.mapIndexed { index, segment ->
+        val start = if (index == 0) bedtime else segments[index - 1].endTime
+        val mins = Duration.between(start, segment.endTime).toMinutes()
+        if (segment.sleepStage != SleepSessionRecord.STAGE_TYPE_AWAKE &&
+            segment.sleepStage != SleepSessionRecord.STAGE_TYPE_OUT_OF_BED &&
+            segment.sleepStage != SleepSessionRecord.STAGE_TYPE_UNKNOWN
+        ) mins else 0L
+    }.sum()
+    if (totalAsleep <= 0) return "Total time asleep must be positive. Mark at least one segment as a sleep stage."
+
+    return null
 }
 
 @Composable
@@ -795,13 +732,6 @@ fun TimePickerDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                // Heuristic:
-                // We want to map the picked time to either targetNightDate (evening) or targetNightDate + 1 (morning).
-                // If picked hour is 0..11 (AM), assume next day (targetNightDate + 1).
-                // If picked hour is 12..23 (PM), assume current day (targetNightDate).
-                // This logic correctly handles the user's requirement that "Night of [Date]" includes 
-                // early morning hours (e.g. 1 AM) of the next day, up to the 2 AM cutoff defined in MainActivity.
-                
                 val pickedHour = timePickerState.hour
                 val pickedMinute = timePickerState.minute
                 
@@ -824,52 +754,6 @@ fun TimePickerDialog(
         }
     )
 }
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DatePickerDialog(
-    title: String,
-    initialDate: LocalDateTime,
-    onConfirm: (LocalDateTime) -> Unit,
-    onDismiss: () -> Unit
-) {
-   // Deprecated/Unused in new flow but kept to avoid compilation errors if referenced elsewhere, 
-   // although we removed references in SleepLogScreen.
-   // We can keep it minimal or remove if sure.
-    val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = initialDate.toEpochSecond(java.time.ZoneOffset.UTC) * 1000
-    )
-
-    DatePickerDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = {
-                datePickerState.selectedDateMillis?.let {
-                    val newDate = LocalDateTime.ofInstant(
-                        java.time.Instant.ofEpochMilli(it),
-                        java.time.ZoneId.systemDefault()
-                    )
-                    onConfirm(
-                        initialDate
-                            .withYear(newDate.year)
-                            .withMonth(newDate.monthValue)
-                            .withDayOfMonth(newDate.dayOfMonth)
-                    )
-                }
-            }) {
-                Text("OK")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    ) {
-        DatePicker(state = datePickerState)
-    }
-}
-
 
 @Composable
 fun DurationInputDialog(
