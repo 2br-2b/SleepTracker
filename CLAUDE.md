@@ -70,10 +70,26 @@ SleepTracker is an Android application for automated sleep tracking that integra
 - Currently logs events with timestamps; intended to trigger sleep detection logic
 
 **SleepDataLogger.kt**
-- Activity for confirming detected sleep sessions
-- Receives sleep date via intent extras (key: "SLEEP_DATE_KEY")
-- Presents UI for confirming/editing sleep start and end times
-- Will write confirmed data to Health Connect (to be implemented)
+- Jetpack Compose activity for logging detailed sleep sessions to Health Connect
+- Implements continuous timeline architecture (bedtime + sleep segments with no gaps)
+- Features:
+  - BedtimeCard for editing sleep start time
+  - LazyColumn of SleepSegmentCards for managing sleep stages
+  - FloatingActionButton for adding new timestamps
+  - TimePickerDialog for time selection
+  - Sleep stage dropdown (Awake, Light, Deep, REM, etc.)
+  - Duration calculations for each segment
+  - Last segment shows "ongoing" until wake time added
+- See "Sleep Logger UI Architecture.md" for detailed architecture documentation
+
+**SleepLog.kt**
+- Data models for sleep logging:
+  - `SleepLog`: Contains bedtime + list of segments
+  - `SleepSegment`: End time + sleep stage (start time is implicit)
+  - `SleepSegmentWithDuration`: Display model with calculated duration
+- Extension functions:
+  - `SleepLog.calculateDurations()`: Calculates duration for each segment
+  - `Long.formatDuration()`: Formats minutes as "2h 30min", "45min", etc.
 
 ### Sleep Detection Flow
 
@@ -83,10 +99,28 @@ SleepTracker is an Android application for automated sleep tracking that integra
 4. User will be presented with `SleepDataLogger` confirmation screen
 5. Upon confirmation, sleep data will be written to Health Connect via `HealthConnectManager` (to be implemented)
 
+### Sleep Logger Architecture
+
+The Sleep Logger uses a **continuous timeline** approach where:
+- Sleep sessions consist of a bedtime and multiple segments
+- Each segment has an end time and sleep stage (start time is implicit)
+- No gaps exist between segments - every minute is accounted for
+- The last segment is "ongoing" until a wake time is added
+
+**Key Features:**
+- Add timestamps to create new segments
+- Remove timestamps to merge segments
+- Edit bedtime to adjust entire timeline
+- Select sleep stages from Health Connect types (Awake, Light, Deep, REM, etc.)
+- Automatic duration calculation and formatting
+
+See "Sleep Logger UI Architecture.md" for complete architecture documentation.
+
 ### Technology Stack
 
 - **UI:** Jetpack Compose with Material 3
 - **Theme:** Adaptive navigation suite for multi-form factor support
+- **Health Data:** Health Connect client library (androidx.health.connect:connect-client:1.1.0-alpha10)
 - **Min SDK:** 28 (Android 9.0)
 - **Target SDK:** 36
 - **Java Version:** 11
@@ -106,11 +140,8 @@ SleepTracker is an Android application for automated sleep tracking that integra
 - `android.permission.FOREGROUND_SERVICE_SPECIAL_USE` - Required for Android 14+ (API 34+)
 - `android.permission.POST_NOTIFICATIONS` - Required for foreground service notification
 - `android.permission.RECEIVE_BOOT_COMPLETED` - Allows BootReceiver to auto-start service
-
-**To Be Added:**
-- Health Connect permissions:
-  - `READ_SLEEP`
-  - `WRITE_SLEEP`
+- `android.permission.health.READ_SLEEP` - Read sleep data from Health Connect
+- `android.permission.health.WRITE_SLEEP` - Write sleep data to Health Connect
 
 ## Navigation Structure
 
