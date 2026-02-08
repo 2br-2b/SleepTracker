@@ -209,13 +209,13 @@ Health Connect sleep stage constants used in the app:
 import androidx.health.connect.client.records.SleepSessionRecord
 
 val sleepStages = listOf(
-    "Awake" to SleepSessionRecord.STAGE_TYPE_AWAKE,
     "Sleeping" to SleepSessionRecord.STAGE_TYPE_SLEEPING,
-    "Out of Bed" to SleepSessionRecord.STAGE_TYPE_OUT_OF_BED,
-    "Light Sleep" to SleepSessionRecord.STAGE_TYPE_LIGHT,
-    "Deep Sleep" to SleepSessionRecord.STAGE_TYPE_DEEP,
-    "REM Sleep" to SleepSessionRecord.STAGE_TYPE_REM,
+    "Awake in bed" to SleepSessionRecord.STAGE_TYPE_AWAKE,
+    "Awake out of bed" to SleepSessionRecord.STAGE_TYPE_OUT_OF_BED,
     "Unknown" to SleepSessionRecord.STAGE_TYPE_UNKNOWN
+    "Light sleep" to SleepSessionRecord.STAGE_TYPE_LIGHT,
+    "Deep sleep" to SleepSessionRecord.STAGE_TYPE_DEEP,
+    "REM sleep" to SleepSessionRecord.STAGE_TYPE_REM,
 )
 ```
 

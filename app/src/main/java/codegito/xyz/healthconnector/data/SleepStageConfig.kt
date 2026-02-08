@@ -14,11 +14,11 @@ data class SleepStageConfig(
 
 // Default Configuration
 fun getDefaultSleepStages(): List<SleepStageConfig> = listOf(
-    SleepStageConfig("awake", "Awake", SleepSessionRecord.STAGE_TYPE_AWAKE, "☀️"),
     SleepStageConfig("sleeping", "Sleeping", SleepSessionRecord.STAGE_TYPE_SLEEPING, "😴"),
-    SleepStageConfig("out_of_bed", "Out of Bed", SleepSessionRecord.STAGE_TYPE_OUT_OF_BED, "🚶"),
-    SleepStageConfig("light", "Light Sleep", SleepSessionRecord.STAGE_TYPE_LIGHT, "🌙"),
-    SleepStageConfig("deep", "Deep Sleep", SleepSessionRecord.STAGE_TYPE_DEEP, "💤"),
-    SleepStageConfig("rem", "REM Sleep", SleepSessionRecord.STAGE_TYPE_REM, "👁️"),
-    SleepStageConfig("unknown", "Unknown", SleepSessionRecord.STAGE_TYPE_UNKNOWN, "❓")
+    SleepStageConfig("awake", "Awake in bed", SleepSessionRecord.STAGE_TYPE_AWAKE, "☀️"),
+    SleepStageConfig("out_of_bed", "Awake out of bed", SleepSessionRecord.STAGE_TYPE_OUT_OF_BED, "🚶"),
+    SleepStageConfig("unknown", "Unknown", SleepSessionRecord.STAGE_TYPE_UNKNOWN, "❓"),
+    SleepStageConfig("light", "Light sleep", SleepSessionRecord.STAGE_TYPE_LIGHT, "🌙"),
+    SleepStageConfig("deep", "Deep sleep", SleepSessionRecord.STAGE_TYPE_DEEP, "💤"),
+    SleepStageConfig("rem", "REM sleep", SleepSessionRecord.STAGE_TYPE_REM, "👁️"),
 )
