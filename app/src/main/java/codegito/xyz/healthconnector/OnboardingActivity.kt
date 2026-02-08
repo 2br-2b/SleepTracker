@@ -12,13 +12,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
-import androidx.health.connect.client.permission.HealthPermission
-import androidx.health.connect.client.records.SleepSessionRecord
-import androidx.lifecycle.lifecycleScope
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
-import kotlinx.coroutines.launch
 
 class OnboardingActivity : ComponentActivity() {
 
@@ -41,33 +36,7 @@ class OnboardingActivity : ComponentActivity() {
             SleepTrackerTheme {
                 OnboardingScreen(
                     onGrantClick = {
-                        val PERMISSIONS =
-                            setOf(
-                                HealthPermission.getReadPermission(SleepSessionRecord::class),
-                                HealthPermission.getWritePermission(SleepSessionRecord::class)
-                            )
-
-                        // Create the permissions launcher
-                        val requestPermissionActivityContract = PermissionController.createRequestPermissionResultContract()
-
-                        val requestPermissions = registerForActivityResult(requestPermissionActivityContract) { granted ->
-                            if (granted.containsAll(PERMISSIONS)) {
-                                Toast.makeText(this, "Permissions granted! Yay!", Toast.LENGTH_SHORT).show()
-                                // Permissions successfully granted
-                            } else {
-                                Toast.makeText(this, "de-NIED!!!!! GET REKT LOL", Toast.LENGTH_SHORT).show()
-                                // Lack of required permissions
-                            }
-                        }
-
-//                        suspend fun checkPermissionsAndRun(healthConnectClient: HealthConnectClient) {
-//                            val granted = healthConnectClient.permissionController.getGrantedPermissions()
-//                            if (granted.containsAll(PERMISSIONS)) {
-//                                // Permissions already granted; proceed with inserting or reading data
-//                            } else {
-//                                requestPermissions.launch(PERMISSIONS)
-//                            }
-//                        }
+                        requestPermissions.launch(healthConnectManager.permissions)
                     },
                     onCancelClick = {
                         finish()
