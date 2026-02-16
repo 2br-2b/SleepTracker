@@ -9,12 +9,15 @@ android {
     namespace = "codegito.xyz.healthconnector"
     compileSdk = 35
 
+    val ciVersionCode = providers.gradleProperty("ciVersionCode").orNull?.toIntOrNull()
+    val ciVersionName = providers.gradleProperty("ciVersionName").orNull
+
     defaultConfig {
         applicationId = "codegito.xyz.healthconnector"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = ciVersionCode ?: 1
+        versionName = ciVersionName ?: "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
