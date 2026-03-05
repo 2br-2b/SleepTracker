@@ -56,13 +56,13 @@ object NotificationHelper {
         notificationManager.createNotificationChannels(listOf(reminderChannel, deadlineChannel, silentChannel))
     }
 
-    fun scheduleFirstUnlockReminder(context: Context, targetDate: LocalDate) {
+    fun scheduleFirstUnlockReminder(context: Context, targetDate: LocalDate, delayMinutes: Int = 5) {
         val alarmManager = context.getSystemService(android.app.AlarmManager::class.java)
         val intent = Intent(context, ReminderReceiver::class.java).apply {
             putExtra("reminder_type", "FIRST_UNLOCK")
             putExtra("target_date_millis", targetDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
         }
-        
+
         val pendingIntent = PendingIntent.getBroadcast(
             context,
             100,
@@ -70,8 +70,7 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // 5 minutes from now
-        val triggerTime = Instant.now().plusSeconds(5 * 60).toEpochMilli()
+        val triggerTime = Instant.now().plusSeconds(delayMinutes * 60L).toEpochMilli()
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
             alarmManager.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
