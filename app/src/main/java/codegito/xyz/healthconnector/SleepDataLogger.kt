@@ -88,7 +88,15 @@ class SleepDataLogger : ComponentActivity() {
                 } else if (detectionMode == SleepDetectionMode.AUTO) {
                         val db = SleepEventDatabase.getDatabase(this@SleepDataLogger)
                         val eventStart = startBound.toEpochMilli() - 4 * 60 * 60 * 1000
-                        val eventEnd = endBound.toEpochMilli() + 4 * 60 * 60 * 1000
+                        // Extend end to cover the full wakeup window (endBound is rollover hour, typically 2 AM;
+                        // adding only 4h cuts off at 6 AM which misses wakeups later in the morning)
+                        val wakeupWindowEndInstant = targetDate.plusDays(1)
+                            .atTime(wakeupEnd / 60, wakeupEnd % 60)
+                            .atZone(zoneId).toInstant()
+                        val eventEnd = maxOf(
+                            endBound.toEpochMilli() + 4 * 60 * 60 * 1000,
+                            wakeupWindowEndInstant.toEpochMilli()
+                        )
                         val events = db.screenEventDao().getEventsInRange(eventStart, eventEnd).first()
                         
                         val detected = SleepDetectionEngine.detectSleep(
