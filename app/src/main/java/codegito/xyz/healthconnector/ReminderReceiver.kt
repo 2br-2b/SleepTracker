@@ -44,6 +44,10 @@ class ReminderReceiver : BroadcastReceiver() {
                         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
                         if (pm.isInteractive) {
                             NotificationHelper.sendLogReminder(context, targetDate, NotificationHelper.REMINDER_CHANNEL_ID)
+                        } else {
+                            // User went back to sleep; reset so the next true wakeup can schedule a new reminder
+                            val sharedPrefs = context.getSharedPreferences("reminder_state", Context.MODE_PRIVATE)
+                            sharedPrefs.edit().remove("last_unlock_tracked_date").apply()
                         }
                     }
                 }

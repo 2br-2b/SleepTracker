@@ -76,8 +76,9 @@ class ScreenStateReceiver : BroadcastReceiver() {
                 .putBoolean("unlocked_in_window", true)
                 .apply()
             
-            // Schedule the 5-minute reminder
-            NotificationHelper.scheduleFirstUnlockReminder(context, java.time.LocalDate.now().minusDays(1))
+            // Schedule reminder after the awakening threshold so brief wake-ups don't fire it prematurely
+            val thresholdMinutes = prefs.awakeningThresholdMinutes.first()
+            NotificationHelper.scheduleFirstUnlockReminder(context, java.time.LocalDate.now().minusDays(1), thresholdMinutes)
         }
     }
 
