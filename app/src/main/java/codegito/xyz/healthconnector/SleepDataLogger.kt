@@ -1,5 +1,6 @@
 package codegito.xyz.healthconnector
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -172,6 +173,13 @@ class SleepDataLogger : ComponentActivity() {
                 
                 if (result.isSuccess) {
                     Toast.makeText(this@SleepDataLogger, "Saved sleep data", Toast.LENGTH_SHORT).show()
+                    val mode = userPreferencesRepository.sleepDetectionMode.first()
+                    if (mode == SleepDetectionMode.AUTO) {
+                        val stopIntent = Intent(this@SleepDataLogger, SleepTrackingService::class.java).apply {
+                            action = "STOP_SERVICE"
+                        }
+                        startService(stopIntent)
+                    }
                     finish()
                 } else {
                     val error = result.exceptionOrNull()?.message ?: "Unknown error"
