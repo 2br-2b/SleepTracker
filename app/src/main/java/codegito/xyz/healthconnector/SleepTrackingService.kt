@@ -74,10 +74,12 @@ class SleepTrackingService : Service() {
         // Periodic maintenance (database cleanup)
         scope.launch {
             try {
+                val prefs = UserPreferencesRepository.getInstance(this@SleepTrackingService)
+                val retentionDays = prefs.dataRetentionDays.first()
                 val timestamp = System.currentTimeMillis()
                 val db = codegito.xyz.healthconnector.data.db.SleepEventDatabase.getDatabase(this@SleepTrackingService)
-                db.screenEventDao().deleteOldEvents(timestamp - 7 * 24 * 60 * 60 * 1000)
-                Log.d("SleepTrackingService", "Cleaned up old events")
+                db.screenEventDao().deleteOldEvents(timestamp - retentionDays * 24 * 60 * 60 * 1000L)
+                Log.d("SleepTrackingService", "Cleaned up events older than $retentionDays days")
             } catch (e: Exception) {
                 Log.e("SleepTrackingService", "Cleanup failed", e)
             }

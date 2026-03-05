@@ -35,6 +35,7 @@ import androidx.navigation.compose.rememberNavController
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.ui.AdvancedSleepSettingsScreen
 import codegito.xyz.healthconnector.ui.AutoSleepSettingsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.SettingsScreen
@@ -176,6 +177,13 @@ fun MainApp(
             composable(Screen.AutoSleepSettings.route) {
                 AutoSleepSettingsScreen(
                     userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() },
+                    onAdvancedSettings = { navController.navigate(Screen.AdvancedSleepSettings.route) }
+                )
+            }
+            composable(Screen.AdvancedSleepSettings.route) {
+                AdvancedSleepSettingsScreen(
+                    userPreferencesRepository = userPreferencesRepository,
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -197,9 +205,10 @@ fun HomeScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Observe rollover hour and developer mode
+    // Observe rollover hour, developer mode, and history display days
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
+    val historyDisplayDays by userPreferencesRepository.historyDisplayDays.collectAsState(initial = 7)
 
     // Request permissions on first launch
     LaunchedEffect(Unit) {
@@ -223,7 +232,7 @@ fun HomeScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 scope.launch {
                     val endTime = Instant.now()
-                    val startTime = endTime.minus(Duration.ofDays(7))
+                    val startTime = endTime.minus(Duration.ofDays(historyDisplayDays.toLong()))
                     val result = healthConnectManager.getSleepSessions(startTime, endTime)
                     sleepSessions = result.getOrDefault(emptyList())
                     
@@ -248,7 +257,7 @@ fun HomeScreen(
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding)) {
             val today = LocalDate.now()
-            val weekDays = (0..6).map { today.minusDays(it.toLong()) }
+            val weekDays = (0 until historyDisplayDays).map { today.minusDays(it.toLong()) }
 
             LazyColumn(
                 contentPadding = PaddingValues(16.dp),
@@ -380,4 +389,5 @@ sealed class Screen(val route: String) {
     object Settings : Screen("settings")
     object EditSleepStages : Screen("edit_sleep_stages")
     object AutoSleepSettings : Screen("auto_sleep_settings")
+    object AdvancedSleepSettings : Screen("advanced_sleep_settings")
 }

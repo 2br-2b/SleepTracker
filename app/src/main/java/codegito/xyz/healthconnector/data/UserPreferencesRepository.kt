@@ -54,6 +54,8 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val REMINDER_DEADLINE_LOUD_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_loud_enabled")
     private val REMINDER_DEADLINE_SILENT_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_silent_enabled")
     private val DEVELOPER_MODE_ENABLED_KEY = booleanPreferencesKey("developer_mode_enabled")
+    private val DATA_RETENTION_DAYS_KEY = intPreferencesKey("data_retention_days")
+    private val HISTORY_DISPLAY_DAYS_KEY = intPreferencesKey("history_display_days")
 
     val rolloverHour: Flow<Int> = context.dataStore.data
         .map { preferences ->
@@ -130,6 +132,12 @@ class UserPreferencesRepository private constructor(private val context: Context
     val developerModeEnabled: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[DEVELOPER_MODE_ENABLED_KEY] ?: false }
 
+    val dataRetentionDays: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[DATA_RETENTION_DAYS_KEY] ?: 7 }
+
+    val historyDisplayDays: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[HISTORY_DISPLAY_DAYS_KEY] ?: 7 }
+
     suspend fun setRolloverHour(hour: Int) {
         context.dataStore.edit { preferences ->
             preferences[ROLLOVER_HOUR_KEY] = hour
@@ -201,6 +209,14 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setDeveloperModeEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[DEVELOPER_MODE_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setDataRetentionDays(days: Int) {
+        context.dataStore.edit { preferences -> preferences[DATA_RETENTION_DAYS_KEY] = days }
+    }
+
+    suspend fun setHistoryDisplayDays(days: Int) {
+        context.dataStore.edit { preferences -> preferences[HISTORY_DISPLAY_DAYS_KEY] = days }
     }
 
     suspend fun isAutoSleepDetectionActive(): Boolean {

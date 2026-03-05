@@ -29,7 +29,8 @@ import codegito.xyz.healthconnector.NotificationHelper
 @Composable
 fun AutoSleepSettingsScreen(
     userPreferencesRepository: UserPreferencesRepository,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAdvancedSettings: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
@@ -285,7 +286,7 @@ fun AutoSleepSettingsScreen(
                 
                 ListItem(
                     headlineContent = { Text("First Unlock Reminder") },
-                    supportingContent = { Text("5 minutes after you first pick up your phone in the morning.") },
+                    supportingContent = { Text("Fires after your awakening threshold has passed since you first pick up your phone in the morning.") },
                     trailingContent = {
                         Switch(
                             checked = reminderFirstUnlock,
@@ -326,6 +327,16 @@ fun AutoSleepSettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Open Notification Settings")
+                }
+
+                HorizontalDivider()
+
+                SectionHeader("Advanced")
+                OutlinedButton(
+                    onClick = onAdvancedSettings,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Advanced Settings")
                 }
             }
         }
