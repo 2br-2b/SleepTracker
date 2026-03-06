@@ -41,13 +41,11 @@ fun SleepLogEditor(
     sleepStages: List<SleepStageConfig>,
     onSave: (LocalDateTime, List<SleepSegment>) -> Unit,
     onCancel: () -> Unit,
-    showOverwriteOption: Boolean = false,
-    onOverwriteChanged: (Boolean) -> Unit = {}
+    showNapBanner: Boolean = false
 ) {
     var bedtime by remember { mutableStateOf(initialBedtime) }
     var segments by remember { mutableStateOf(initialSegments) }
-    var overwriteEnabled by remember { mutableStateOf(false) }
-    
+
     val context = LocalContext.current
     var showBedtimeTimePicker by remember { mutableStateOf(false) }
     var editingSegmentIndex by remember { mutableStateOf<Int?>(null) }
@@ -56,7 +54,7 @@ fun SleepLogEditor(
     var showAddSegmentDialog by remember { mutableStateOf(false) }
 
     val dragReorderState = rememberDragReorderState()
-    val targetNightDate = bedtime.toLocalDate().let { 
+    val targetNightDate = bedtime.toLocalDate().let {
         if (bedtime.hour < 12) it.minusDays(1) else it
     }
 
@@ -73,19 +71,27 @@ fun SleepLogEditor(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
-            if (showOverwriteOption) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                ) {
-                    Checkbox(
-                        checked = overwriteEnabled,
-                        onCheckedChange = { 
-                            overwriteEnabled = it
-                            onOverwriteChanged(it)
-                        }
+            if (showNapBanner) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
                     )
-                    Text("Overwrite existing Health Connect data")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("💤", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = "Editing a nap. Please wait for tomorrow to log your sleep for tonight!",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
                 }
             }
 
