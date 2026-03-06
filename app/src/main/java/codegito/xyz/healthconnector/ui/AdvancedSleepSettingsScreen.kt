@@ -23,6 +23,7 @@ fun AdvancedSleepSettingsScreen(
 
     val dataRetentionDays by userPreferencesRepository.dataRetentionDays.collectAsState(initial = 7)
     val historyDisplayDays by userPreferencesRepository.historyDisplayDays.collectAsState(initial = 7)
+    val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 60)
 
     Scaffold(
         topBar = {
@@ -58,6 +59,23 @@ fun AdvancedSleepSettingsScreen(
                     }
                 },
                 label = { Text("History display days") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            SectionHeader("Awakenings")
+            Text(
+                "If you unlock, lock, and unlock again in your wakeup window, this threshold helps decide whether you stayed awake or went back to sleep.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            OutlinedTextField(
+                value = awakeningThreshold.toString(),
+                onValueChange = { raw ->
+                    val value = raw.toIntOrNull()
+                    if (value != null && value >= 0) {
+                        scope.launch { userPreferencesRepository.setAwakeningThreshold(value) }
+                    }
+                },
+                label = { Text("Awakening threshold (minutes)") },
                 modifier = Modifier.fillMaxWidth()
             )
 
