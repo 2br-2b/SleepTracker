@@ -56,6 +56,7 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val DEVELOPER_MODE_ENABLED_KEY = booleanPreferencesKey("developer_mode_enabled")
     private val DATA_RETENTION_DAYS_KEY = intPreferencesKey("data_retention_days")
     private val HISTORY_DISPLAY_DAYS_KEY = intPreferencesKey("history_display_days")
+    private val ONBOARDING_COMPLETED_KEY = booleanPreferencesKey("onboarding_completed")
 
     val rolloverHour: Flow<Int> = context.dataStore.data
         .map { preferences ->
@@ -138,6 +139,9 @@ class UserPreferencesRepository private constructor(private val context: Context
     val historyDisplayDays: Flow<Int> = context.dataStore.data
         .map { preferences -> preferences[HISTORY_DISPLAY_DAYS_KEY] ?: 7 }
 
+    val onboardingCompleted: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[ONBOARDING_COMPLETED_KEY] ?: false }
+
     suspend fun setRolloverHour(hour: Int) {
         context.dataStore.edit { preferences ->
             preferences[ROLLOVER_HOUR_KEY] = hour
@@ -217,6 +221,10 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setHistoryDisplayDays(days: Int) {
         context.dataStore.edit { preferences -> preferences[HISTORY_DISPLAY_DAYS_KEY] = days }
+    }
+
+    suspend fun setOnboardingCompleted(completed: Boolean) {
+        context.dataStore.edit { preferences -> preferences[ONBOARDING_COMPLETED_KEY] = completed }
     }
 
     suspend fun isAutoSleepDetectionActive(): Boolean {
