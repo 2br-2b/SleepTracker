@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -50,6 +51,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var healthConnectManager: HealthConnectManager
     private lateinit var userPreferencesRepository: UserPreferencesRepository
 
+    private val launchOnboarding =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            ensureServiceRunning()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -57,8 +63,13 @@ class MainActivity : ComponentActivity() {
         healthConnectManager = HealthConnectManager(this)
         userPreferencesRepository = UserPreferencesRepository.getInstance(this)
 
-        // Ensure sleep tracking service is running
-        ensureServiceRunning()
+        lifecycleScope.launch {
+            val onboardingDone = userPreferencesRepository.onboardingCompleted.first()
+            if (!onboardingDone) {
+                launchOnboarding.launch(Intent(this@MainActivity, OnboardingActivity::class.java))
+            }
+            ensureServiceRunning()
+        }
 
         setContent {
             SleepTrackerTheme {
@@ -210,20 +221,10 @@ fun HomeScreen(
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     val historyDisplayDays by userPreferencesRepository.historyDisplayDays.collectAsState(initial = 7)
 
-    // Request permissions on first launch
     LaunchedEffect(Unit) {
         val client = HealthConnectClient.getOrCreate(context)
         val granted = client.permissionController.getGrantedPermissions()
         hasPermissions = granted.containsAll(healthConnectManager.permissions)
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val activity = context as? androidx.activity.ComponentActivity
-            activity?.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1002)
-        }
-        
-        if (!hasPermissions) {
-            onManagePermissions()
-        }
     }
 
     // Load data on resume
