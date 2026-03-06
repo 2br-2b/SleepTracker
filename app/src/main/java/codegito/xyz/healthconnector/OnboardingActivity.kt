@@ -50,6 +50,7 @@ import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.ui.SleepLogEditor
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -85,7 +86,7 @@ class OnboardingActivity : ComponentActivity() {
                             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                         if (shouldShowOtherSensorsPermission()) {
-                            requestOtherSensorsPermission.launch(Manifest.permission.OTHER_SENSORS)
+                            requestOtherSensorsPermission.launch("android.permission.OTHER_SENSORS")
                         }
                     },
                     onFinish = {
@@ -183,7 +184,7 @@ private fun OnboardingFlow(
         }.getOrElse { false }
 
         hasSensorsPermission = if (showSensorsPermission) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.OTHER_SENSORS) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, "android.permission.OTHER_SENSORS") == PackageManager.PERMISSION_GRANTED
         } else {
             true
         }
