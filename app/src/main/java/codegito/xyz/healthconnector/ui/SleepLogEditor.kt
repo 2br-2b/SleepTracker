@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -41,7 +43,9 @@ fun SleepLogEditor(
     sleepStages: List<SleepStageConfig>,
     onSave: (LocalDateTime, List<SleepSegment>) -> Unit,
     onCancel: () -> Unit,
-    showNapBanner: Boolean = false
+    showNapBanner: Boolean = false,
+    showEditingHeader: Boolean = false,
+    onDeleteSession: (() -> Unit)? = null
 ) {
     var bedtime by remember { mutableStateOf(initialBedtime) }
     var segments by remember { mutableStateOf(initialSegments) }
@@ -65,11 +69,39 @@ fun SleepLogEditor(
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (showEditingHeader) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Editing sleep session"
+                        )
+                    }
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+
+                if (onDeleteSession != null) {
+                    IconButton(onClick = onDeleteSession) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete sleep session"
+                        )
+                    }
+                }
+            }
 
             if (showNapBanner) {
                 Card(
