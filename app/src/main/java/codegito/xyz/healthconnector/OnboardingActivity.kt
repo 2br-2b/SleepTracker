@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -80,11 +81,13 @@ class OnboardingActivity : ComponentActivity() {
                     userPreferencesRepository = userPreferencesRepository,
                     healthConnectManager = healthConnectManager,
                     onInstallHealthConnect = { openHealthConnectInstall() },
-                    onRequestPermissions = {
-                        requestHealthPermissions.launch(healthConnectManager.permissions)
+                    onRequestHealthPermissions = { requestHealthPermissions.launch(healthConnectManager.permissions) },
+                    onRequestNotificationPermission = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
+                    },
+                    onRequestOtherSensorsPermission = {
                         if (shouldShowOtherSensorsPermission()) {
                             requestOtherSensorsPermission.launch("android.permission.OTHER_SENSORS")
                         }
@@ -137,7 +140,9 @@ private fun OnboardingFlow(
     userPreferencesRepository: UserPreferencesRepository,
     healthConnectManager: HealthConnectManager,
     onInstallHealthConnect: () -> Unit,
-    onRequestPermissions: () -> Unit,
+    onRequestHealthPermissions: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onRequestOtherSensorsPermission: () -> Unit,
     onFinish: () -> Unit
 ) {
     val context = LocalContext.current
@@ -283,9 +288,28 @@ private fun OnboardingFlow(
 
                 OnboardingStep.AutoDetectionExplanation -> {
                     Text("How auto sleep detection works", style = MaterialTheme.typography.headlineMedium)
-                    Text("SleepTracker watches screen lock and unlock events in your sleep window.")
-                    Text("The last phone lock in your bedtime range is treated as bedtime.")
-                    Text("The first unlock before your wake-up limit is treated as wake-up.")
+
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                "When Auto Tracking is on, SleepTracker watches for screen lock/unlock patterns " +
+                                    "during your sleep window and builds a suggested sleep session for that day."
+                            )
+                            Text(
+                                "It keeps tracking until you log sleep for that day, so if you wake up, " +
+                                    "go back to sleep, or have a rough night, it can still help build a useful draft."
+                            )
+                            Text(
+                                "Nothing is written to Health Connect automatically. You review and confirm " +
+                                    "the times first, then we save exactly what you approve."
+                            )
+                        }
+                    }
+
+                    Text("In short: helpful automation, but you're always in control.")
 
                     Button(onClick = { step = OnboardingStep.LoggingMode }, modifier = Modifier.fillMaxWidth()) {
                         Text("Continue")
@@ -408,39 +432,49 @@ private fun OnboardingFlow(
 
                 OnboardingStep.Permissions -> {
                     Text("Permissions", style = MaterialTheme.typography.headlineMedium)
-                    Text("Tap request permissions, then return here to confirm all permissions are granted.")
+                    Text("Grant only the permissions you need. You can request each one below.")
 
                     PermissionRow(
                         title = "Health Connect read/write",
                         reason = "Needed to read your sleep history and save confirmed sessions.",
-                        granted = hasHealthPermissions
+                        granted = hasHealthPermissions,
+                        onRequest = {
+                            onRequestHealthPermissions()
+                            refreshPermissionState()
+                        }
                     )
 
                     PermissionRow(
                         title = "Notifications",
                         reason = "Needed to run reliable background tracking reminders.",
-                        granted = hasNotificationPermission
+                        granted = hasNotificationPermission,
+                        onRequest = {
+                            onRequestNotificationPermission()
+                            refreshPermissionState()
+                        }
                     )
 
                     if (showSensorsPermission) {
                         PermissionRow(
                             title = "Sensors (GrapheneOS)",
                             reason = "Needed on this device profile for detection reliability.",
-                            granted = hasSensorsPermission
+                            granted = hasSensorsPermission,
+                            onRequest = {
+                                onRequestOtherSensorsPermission()
+                                refreshPermissionState()
+                            }
                         )
                     }
 
-                    Button(
-                        onClick = {
-                            onRequestPermissions()
-                            refreshPermissionState()
-                        },
+                    val allRequiredGranted = hasHealthPermissions && hasNotificationPermission && (!showSensorsPermission || hasSensorsPermission)
+
+                    OutlinedButton(
+                        onClick = { refreshPermissionState() },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Request permissions")
+                        Text("Refresh permission status")
                     }
 
-                    val allRequiredGranted = hasHealthPermissions && hasNotificationPermission && (!showSensorsPermission || hasSensorsPermission)
                     Button(
                         onClick = { step = OnboardingStep.Completion },
                         enabled = allRequiredGranted,
@@ -477,13 +511,22 @@ private fun OnboardingFlow(
 private fun PermissionRow(
     title: String,
     reason: String,
-    granted: Boolean
+    granted: Boolean,
+    onRequest: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
             Text(reason, style = MaterialTheme.typography.bodyMedium)
             Text(if (granted) "Granted" else "Not granted")
+            if (!granted) {
+                Button(
+                    onClick = onRequest,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Grant")
+                }
+            }
         }
     }
 }
