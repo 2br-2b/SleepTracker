@@ -69,6 +69,7 @@ class SleepDataLogger : ComponentActivity() {
                 val defaultAwakeToAsleep by userPreferencesRepository.defaultAwakeToAsleepMinutes.collectAsState(initial = 15)
 
                 var isLoading by remember { mutableStateOf(true) }
+                var showDeleteConfirmation by remember { mutableStateOf(false) }
 
                 LaunchedEffect(targetDate, sleepStages, rolloverHour, detectionMode) {
                     if (sleepStages.isEmpty()) return@LaunchedEffect
@@ -181,10 +182,12 @@ class SleepDataLogger : ComponentActivity() {
                 }
 
                 if (!isLoading && sleepStages.isNotEmpty()) {
-                    val editorTitle = if (isNap) {
-                        "Logging Nap for ${targetDate.format(DateTimeFormatter.ofPattern("MMM d"))}"
-                    } else {
-                        "Logging for Night of ${targetDate.format(DateTimeFormatter.ofPattern("MMM d"))}"
+                    val formattedDate = targetDate.format(DateTimeFormatter.ofPattern("MMM d"))
+                    val isEditingExistingSession = editingSessionId != null
+                    val editorTitle = when {
+                        isEditingExistingSession -> "Editing a sleep for $formattedDate"
+                        isNap -> "Logging Nap for $formattedDate"
+                        else -> "Logging for Night of $formattedDate"
                     }
 
                     SleepLogEditor(
@@ -193,11 +196,40 @@ class SleepDataLogger : ComponentActivity() {
                         initialSegments = initialSegments!!,
                         sleepStages = sleepStages,
                         showNapBanner = isNap,
+                        showEditingHeader = isEditingExistingSession,
+                        onDeleteSession = if (isEditingExistingSession) {
+                            { showDeleteConfirmation = true }
+                        } else {
+                            null
+                        },
                         onSave = { bedtime, segments ->
                             saveSleepLog(bedtime, segments, isNap, rolloverHour)
                         },
                         onCancel = { finish() }
                     )
+
+                    if (showDeleteConfirmation && editingSessionId != null) {
+                        AlertDialog(
+                            onDismissRequest = { showDeleteConfirmation = false },
+                            title = { Text("Delete sleep session?") },
+                            text = { Text("This will permanently remove this sleep session from Health Connect.") },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        showDeleteConfirmation = false
+                                        deleteSleepSession()
+                                    }
+                                ) {
+                                    Text("Delete")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showDeleteConfirmation = false }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        )
+                    }
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
@@ -250,6 +282,20 @@ class SleepDataLogger : ComponentActivity() {
             } catch (e: Exception) {
                 Toast.makeText(this@SleepDataLogger, "Unexpected error: ${e.message}", Toast.LENGTH_LONG).show()
                 e.printStackTrace()
+            }
+        }
+    }
+
+    private fun deleteSleepSession() {
+        val sessionId = editingSessionId ?: return
+        lifecycleScope.launch {
+            val deleteResult = healthConnectManager.deleteSleepSession(sessionId)
+            if (deleteResult.isSuccess) {
+                Toast.makeText(this@SleepDataLogger, "Deleted sleep data", Toast.LENGTH_SHORT).show()
+                finish()
+            } else {
+                val error = deleteResult.exceptionOrNull()?.message ?: "Unknown error"
+                Toast.makeText(this@SleepDataLogger, "Error deleting data: $error", Toast.LENGTH_LONG).show()
             }
         }
     }
