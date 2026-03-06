@@ -47,3 +47,15 @@ This repository does not include a license file. Add one if you intend to open-s
 
 ----
 Generated README briefly documents build/run and project purpose. For more details, see `AGENTS.md`.
+
+## Nutrition dataset and indexing
+- Upload the **unzipped** Open Nutrition dataset files into `app/src/main/assets/nutrition/opennutrition-dataset-2025.1/` (see `README_UPLOAD_HERE.md` in that folder).
+- Build-time index generation is handled by `app/scripts/build_nutrition_index.py` and wired into Gradle `preBuild` via the `generateNutritionIndex` task. The script supports either the extracted folder or the legacy zip path if present.
+- Generated assets:
+  - `app/src/main/assets/nutrition/index.jsonl`
+  - `app/src/main/assets/nutrition/metadata.json`
+
+### Licensing notes
+- Nutrition dataset usage may include redistribution/attribution restrictions.
+- Keep dataset provenance and attribution visible in-app (Settings) and in repository docs.
+- If redistribution rights change, replace the bundled archive with a compliant source artifact before release.

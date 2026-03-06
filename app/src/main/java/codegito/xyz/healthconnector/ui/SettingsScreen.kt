@@ -53,14 +53,22 @@ fun SettingsScreen(
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     val amoledPitchBlackEnabled by userPreferencesRepository.amoledPitchBlackEnabled.collectAsState(initial = false)
+    val nutritionRangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
+    val nutritionMealDuration by userPreferencesRepository.nutritionMealDurationMinutes.collectAsState(initial = 30)
+    val nutritionSnackDuration by userPreferencesRepository.nutritionSnackDurationMinutes.collectAsState(initial = 10)
     var showRolloverTimePicker by remember { mutableStateOf(false) }
     var versionTapCount by remember { mutableIntStateOf(0) }
     
     // Check if service is running
     var isServiceActive by remember { mutableStateOf(false) }
+    var nutritionMetadataSummary by remember { mutableStateOf("Unavailable") }
     
     LaunchedEffect(developerModeEnabled) {
         if (!developerModeEnabled) return@LaunchedEffect
+        nutritionMetadataSummary = runCatching {
+            context.assets.open("nutrition/metadata.json").bufferedReader().use { it.readText() }
+                .let { json -> org.json.JSONObject(json).let { "records=" + it.optInt("recordCount", 0) + ", version=" + it.optString("version", "unknown") } }
+        }.getOrDefault("Unavailable")
         while (true) {
             isServiceActive = isServiceRunning(context, SleepTrackingService::class.java)
             kotlinx.coroutines.delay(2000)
@@ -177,6 +185,66 @@ fun SettingsScreen(
                 modifier = Modifier.clickable { showRolloverTimePicker = true }
             )
 
+
+            HorizontalDivider()
+            SectionHeader("Nutrition")
+
+            ListItem(
+                headlineContent = { Text("Past date range") },
+                supportingContent = { Text("$nutritionRangeDays days selectable in Food tab") },
+                trailingContent = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            val next = (nutritionRangeDays - 1).coerceAtLeast(1)
+                            scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays(next) }
+                        }) { Text("-") }
+                        OutlinedButton(onClick = {
+                            val next = (nutritionRangeDays + 1).coerceAtMost(365)
+                            scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays(next) }
+                        }) { Text("+") }
+                    }
+                }
+            )
+
+            ListItem(
+                headlineContent = { Text("Meal entry duration") },
+                supportingContent = { Text("$nutritionMealDuration minutes backfilled from time eaten") },
+                trailingContent = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            scope.launch { userPreferencesRepository.setNutritionMealDurationMinutes((nutritionMealDuration - 5).coerceAtLeast(5)) }
+                        }) { Text("-") }
+                        OutlinedButton(onClick = {
+                            scope.launch { userPreferencesRepository.setNutritionMealDurationMinutes((nutritionMealDuration + 5).coerceAtMost(180)) }
+                        }) { Text("+") }
+                    }
+                }
+            )
+
+            ListItem(
+                headlineContent = { Text("Snack entry duration") },
+                supportingContent = { Text("$nutritionSnackDuration minutes backfilled from time eaten") },
+                trailingContent = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            scope.launch { userPreferencesRepository.setNutritionSnackDurationMinutes((nutritionSnackDuration - 5).coerceAtLeast(1)) }
+                        }) { Text("-") }
+                        OutlinedButton(onClick = {
+                            scope.launch { userPreferencesRepository.setNutritionSnackDurationMinutes((nutritionSnackDuration + 5).coerceAtMost(120)) }
+                        }) { Text("+") }
+                    }
+                }
+            )
+
+            ListItem(
+                headlineContent = { Text("Nutrition Dataset License") },
+                supportingContent = { Text("Open the bundled dataset attribution and licensing notes") },
+                leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
+                modifier = Modifier.clickable {
+                    Toast.makeText(context, "See README + bundled metadata for nutrition dataset licensing.", Toast.LENGTH_LONG).show()
+                }
+            )
+
             HorizontalDivider()
 
             // Sleep Stages Section
@@ -204,6 +272,11 @@ fun SettingsScreen(
                             color = color
                         ) {}
                     }
+                )
+
+                ListItem(
+                    headlineContent = { Text("Nutrition index") },
+                    supportingContent = { Text(nutritionMetadataSummary) }
                 )
                 
                 Button(

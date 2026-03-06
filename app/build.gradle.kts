@@ -76,3 +76,14 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
+
+
+val generateNutritionIndex by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Generate nutrition search index from bundled dataset zip"
+    commandLine("python3", "${projectDir}/scripts/build_nutrition_index.py")
+}
+
+tasks.named("preBuild") {
+    dependsOn(generateNutritionIndex)
+}

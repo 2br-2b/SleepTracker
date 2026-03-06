@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,6 +27,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -131,7 +133,7 @@ fun MainApp(
             val currentDestination = navBackStackEntry?.destination
 
              // Only show bottom bar on top-level screens
-            val topLevelRoutes = listOf("home", "settings")
+            val topLevelRoutes = listOf("home", "nutrition", "settings")
             if (currentDestination?.route in topLevelRoutes) {
                 NavigationBar {
                     NavigationBarItem(
@@ -140,6 +142,20 @@ fun MainApp(
                         selected = currentDestination?.route == "home",
                         onClick = {
                             navController.navigate("home") {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Restaurant, contentDescription = "Food") },
+                        label = { Text("Food") },
+                        selected = currentDestination?.route == "nutrition",
+                        onClick = {
+                            navController.navigate("nutrition") {
                                 popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
                                 }
@@ -173,6 +189,12 @@ fun MainApp(
                     userPreferencesRepository = userPreferencesRepository,
                     onManagePermissions = onManagePermissions,
                     onOpenSession = onOpenSession
+                )
+            }
+            composable(Screen.Nutrition.route) {
+                NutritionDayRouter(
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository
                 )
             }
             composable(Screen.Settings.route) {
@@ -570,8 +592,81 @@ fun SleepDayCard(
     }
 }
 
+
+@Composable
+fun NutritionDayRouter(
+    healthConnectManager: HealthConnectManager,
+    userPreferencesRepository: UserPreferencesRepository
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var selectedDate by remember { mutableStateOf(LocalDate.now()) }
+    var entries by remember { mutableStateOf<List<NutritionRecord>>(emptyList()) }
+    val rangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
+
+    LaunchedEffect(selectedDate) {
+        scope.launch {
+            val zone = ZoneId.systemDefault()
+            val dayStart = selectedDate.atStartOfDay(zone).toInstant()
+            val dayEnd = selectedDate.plusDays(1).atStartOfDay(zone).toInstant()
+            val request = androidx.health.connect.client.request.ReadRecordsRequest(
+                recordType = NutritionRecord::class,
+                timeRangeFilter = androidx.health.connect.client.time.TimeRangeFilter.between(dayStart, dayEnd)
+            )
+            entries = runCatching {
+                healthConnectManager.healthConnectClient.readRecords(request).records
+            }.getOrElse {
+                Toast.makeText(context, "Unable to load nutrition entries", Toast.LENGTH_SHORT).show()
+                emptyList()
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("Food tracking") }) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = {
+                Toast.makeText(context, "Food search/manual entry coming next", Toast.LENGTH_SHORT).show()
+            }) {
+                Icon(Icons.Default.Add, contentDescription = "Add food")
+            }
+        }
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Selected day: $selectedDate")
+            Text("Past date range from settings: $rangeDays days")
+            OutlinedButton(onClick = {
+                selectedDate = selectedDate.minusDays(1)
+                val oldest = LocalDate.now().minusDays(rangeDays.toLong())
+                if (selectedDate.isBefore(oldest)) selectedDate = oldest
+            }) { Text("Previous day") }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Daily summary", style = MaterialTheme.typography.titleMedium)
+                    Text("Nutrition entries tracked: ${entries.size}")
+                    Text("Configure summary fields in settings (planned)")
+                }
+            }
+            Text("Entries (${entries.size})", style = MaterialTheme.typography.titleMedium)
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(entries.sortedBy { it.endTime }) { item ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("Logged food")
+                            Text(item.endTime.toString(), style = MaterialTheme.typography.bodySmall)
+                            Text(item.metadata.id, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
 sealed class Screen(val route: String) {
     object Home : Screen("home")
+    object Nutrition : Screen("nutrition")
     object Settings : Screen("settings")
     object EditSleepStages : Screen("edit_sleep_stages")
     object AutoSleepSettings : Screen("auto_sleep_settings")
