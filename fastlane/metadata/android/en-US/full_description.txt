@@ -1,0 +1,15 @@
+SleepTracker automatically detects your sleep by monitoring screen lock and unlock events within configurable bedtime and wake-up windows. When you wake up, it prompts you to review and confirm the detected session before saving it to Health Connect.
+
+Features:
+- Automatic sleep detection using screen on/off events and time-window heuristics
+- Configurable bedtime and wake-up windows
+- Tracks awakenings during the night (screen unlocks and re-locks)
+- Manual logging mode — set a daily template and adjust each morning
+- Review and edit detected sessions before saving
+- Writes SleepSessionRecord with sleep stages to Health Connect
+- 7-day sleep history on the home screen
+- Customisable sleep stage labels and emoji
+- Reminder notifications to prompt morning review
+- No tracking, no analytics, no accounts required
+
+Requires Health Connect (built into Android 14+; available separately on Android 9–13).
