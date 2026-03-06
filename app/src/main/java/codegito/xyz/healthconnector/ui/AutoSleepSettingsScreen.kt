@@ -41,7 +41,6 @@ fun AutoSleepSettingsScreen(
     val wakeupStart by userPreferencesRepository.wakeupWindowStart.collectAsState(initial = 5 * 60)
     val wakeupEnd by userPreferencesRepository.wakeupWindowEnd.collectAsState(initial = 12 * 60)
     val awakeningEnabled by userPreferencesRepository.awakeningLoggingEnabled.collectAsState(initial = true)
-    val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 60)
     val defaultAwakeToAsleep by userPreferencesRepository.defaultAwakeToAsleepMinutes.collectAsState(initial = 15)
     val manualTemplateState by userPreferencesRepository.manualSleepTemplate.collectAsState(initial = null)
     val sleepStages by userPreferencesRepository.sleepStages.collectAsState(initial = emptyList())
@@ -199,83 +198,77 @@ fun AutoSleepSettingsScreen(
 
 
 
-                // 2. Bedtime Window
-                SectionHeader("Bedtime Window")
-                Text("When you usually go to bed. The last phone lock in this range is your bedtime.", style = MaterialTheme.typography.bodySmall)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    WindowTimeButton(
-                        label = "Start",
-                        minutes = bedtimeStart,
-                        modifier = Modifier.weight(1f),
-                        onClick = { showBedtimePicker = true }
-                    )
-                    WindowTimeButton(
-                        label = "End",
-                        minutes = bedtimeEnd,
-                        modifier = Modifier.weight(1f),
-                        onClick = { showBedtimePicker = false }
-                    )
-                }
+                if (detectionMode == SleepDetectionMode.AUTO) {
+                    // 2. Bedtime Window
+                    SectionHeader("Bedtime Window")
+                    Text("When you usually go to bed. The last phone lock in this range is your bedtime.", style = MaterialTheme.typography.bodySmall)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        WindowTimeButton(
+                            label = "Start",
+                            minutes = bedtimeStart,
+                            modifier = Modifier.weight(1f),
+                            onClick = { showBedtimePicker = true }
+                        )
+                        WindowTimeButton(
+                            label = "End",
+                            minutes = bedtimeEnd,
+                            modifier = Modifier.weight(1f),
+                            onClick = { showBedtimePicker = false }
+                        )
+                    }
 
-                // 3. Wakeup Window
-                SectionHeader("Wakeup Window")
-                Text("When you usually wake up. The first phone unlock in this range is your wakeup time.", style = MaterialTheme.typography.bodySmall)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    WindowTimeButton(
-                        label = "Start",
-                        minutes = wakeupStart,
-                        modifier = Modifier.weight(1f),
-                        onClick = { showWakeupPicker = true }
-                    )
-                    WindowTimeButton(
-                        label = "End",
-                        minutes = wakeupEnd,
-                        modifier = Modifier.weight(1f),
-                        onClick = { showWakeupPicker = false }
-                    )
-                }
+                    // 3. Wakeup Window
+                    SectionHeader("Wakeup Window")
+                    Text("When you usually wake up. The first phone unlock in this range is your wakeup time.", style = MaterialTheme.typography.bodySmall)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        WindowTimeButton(
+                            label = "Start",
+                            minutes = wakeupStart,
+                            modifier = Modifier.weight(1f),
+                            onClick = { showWakeupPicker = true }
+                        )
+                        WindowTimeButton(
+                            label = "End",
+                            minutes = wakeupEnd,
+                            modifier = Modifier.weight(1f),
+                            onClick = { showWakeupPicker = false }
+                        )
+                    }
 
-                // 4. Awakenings
-                SectionHeader("Awakenings")
-                Text("If your phone unlocks during the Wakeup Window, but then locks again and later unlocks again in that period, the app will try to see if you woke up and went back to sleep or if you were already awake by comparing the time between when you last locked your phone and when you picked it up again. If it's less than this threshold, the app will assume you didn't go back to sleep, but if not, the app will assume you went to sleep then woke up again.", style = MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = awakeningEnabled,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setAwakeningLoggingEnabled(it) } }
-                    )
-                    Text("Log awakenings in bed")
-                }
-                if (awakeningEnabled) {
+                    // 4. Awakenings
+                    SectionHeader("Awakenings")
+                    Text("Log when you briefly wake up and use your phone during the wakeup window.", style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = awakeningEnabled,
+                            onCheckedChange = { scope.launch { userPreferencesRepository.setAwakeningLoggingEnabled(it) } }
+                        )
+                        Text("Log awakenings in bed")
+                    }
+
+                    // 5. Default Awake Period
+                    SectionHeader("Before Falling Asleep")
+                    Text("The default number of minutes from when you last lock your phone to when you fall asleep. You can change this day to day!", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(
-                        value = awakeningThreshold.toString(),
+                        value = defaultAwakeToAsleep.toString(),
                         onValueChange = { val value = it.toIntOrNull() ?: 0
-                            scope.launch { userPreferencesRepository.setAwakeningThreshold(value) }
+                            scope.launch { userPreferencesRepository.setDefaultAwakeToAsleepMinutes(value) }
                         },
-                        label = { Text("Awakening threshold (minutes)") },
+                        label = { Text("Default awake in bed (minutes)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
 
-                // 5. Default Awake Period
-                SectionHeader("Before Falling Asleep")
-                Text("The default number of minutes from when you last lock your phone to when you fall asleep. You can change this day to day!", style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = defaultAwakeToAsleep.toString(),
-                    onValueChange = { val value = it.toIntOrNull() ?: 0
-                        scope.launch { userPreferencesRepository.setDefaultAwakeToAsleepMinutes(value) }
-                    },
-                    label = { Text("Default awake in bed (minutes)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // 6. Manual Template Editor
-                SectionHeader("Manual Sleep Template")
-                Text("Default sleep structure when no auto-data is available.", style = MaterialTheme.typography.bodySmall)
-                Button(
-                    onClick = { showTemplateEditor = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Configure Manual Template")
+                if (detectionMode == SleepDetectionMode.MANUAL) {
+                    // 6. Manual Template Editor
+                    SectionHeader("Manual Sleep Template")
+                    Text("Default sleep structure when no auto-data is available.", style = MaterialTheme.typography.bodySmall)
+                    Button(
+                        onClick = { showTemplateEditor = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Configure Manual Template")
+                    }
                 }
 
                 HorizontalDivider()

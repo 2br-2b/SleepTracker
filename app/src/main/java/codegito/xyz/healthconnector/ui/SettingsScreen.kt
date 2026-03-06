@@ -48,10 +48,11 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    var hasHealthConnectPermissions by remember { mutableStateOf(false) }
+    var hasHealthConnectPermissions by remember { mutableStateOf<Boolean?>(null) }
 
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
+    val amoledPitchBlackEnabled by userPreferencesRepository.amoledPitchBlackEnabled.collectAsState(initial = false)
     var showRolloverTimePicker by remember { mutableStateOf(false) }
     var versionTapCount by remember { mutableIntStateOf(0) }
     
@@ -96,7 +97,7 @@ fun SettingsScreen(
             // Permissions Section
             SectionHeader("Permissions")
             
-            if (!hasHealthConnectPermissions) {
+            if (hasHealthConnectPermissions == false) {
                 Button(
                     onClick = onManagePermissions,
                     modifier = Modifier.fillMaxWidth()
@@ -139,6 +140,23 @@ fun SettingsScreen(
                 supportingContent = { Text("Configure windows, thresholds, and manual template") },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
                 modifier = Modifier.clickable { onAutoSleepSettings() }
+            )
+
+            HorizontalDivider()
+
+            // Appearance Section
+            SectionHeader("Appearance")
+            ListItem(
+                headlineContent = { Text("Pitch black (AMOLED)") },
+                supportingContent = { Text("Use pure black backgrounds in dark mode.") },
+                trailingContent = {
+                    Switch(
+                        checked = amoledPitchBlackEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { userPreferencesRepository.setAmoledPitchBlackEnabled(enabled) }
+                        }
+                    )
+                }
             )
 
             HorizontalDivider()

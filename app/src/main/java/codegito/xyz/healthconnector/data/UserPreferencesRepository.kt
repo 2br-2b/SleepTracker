@@ -57,6 +57,7 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val DATA_RETENTION_DAYS_KEY = intPreferencesKey("data_retention_days")
     private val HISTORY_DISPLAY_DAYS_KEY = intPreferencesKey("history_display_days")
     private val ONBOARDING_COMPLETED_KEY = booleanPreferencesKey("onboarding_completed")
+    private val AMOLED_PITCH_BLACK_KEY = booleanPreferencesKey("amoled_pitch_black")
 
     val rolloverHour: Flow<Int> = context.dataStore.data
         .map { preferences ->
@@ -142,6 +143,9 @@ class UserPreferencesRepository private constructor(private val context: Context
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[ONBOARDING_COMPLETED_KEY] ?: false }
 
+    val amoledPitchBlackEnabled: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[AMOLED_PITCH_BLACK_KEY] ?: false }
+
     suspend fun setRolloverHour(hour: Int) {
         context.dataStore.edit { preferences ->
             preferences[ROLLOVER_HOUR_KEY] = hour
@@ -225,6 +229,10 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setOnboardingCompleted(completed: Boolean) {
         context.dataStore.edit { preferences -> preferences[ONBOARDING_COMPLETED_KEY] = completed }
+    }
+
+    suspend fun setAmoledPitchBlackEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences -> preferences[AMOLED_PITCH_BLACK_KEY] = enabled }
     }
 
     suspend fun isAutoSleepDetectionActive(): Boolean {

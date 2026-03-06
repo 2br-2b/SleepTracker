@@ -74,7 +74,8 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            SleepTrackerTheme {
+            val amoledPitchBlackEnabled by userPreferencesRepository.amoledPitchBlackEnabled.collectAsState(initial = false)
+            SleepTrackerTheme(amoledPitchBlack = amoledPitchBlackEnabled) {
                 MainApp(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
