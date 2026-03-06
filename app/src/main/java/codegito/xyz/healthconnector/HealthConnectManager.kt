@@ -3,6 +3,7 @@ package codegito.xyz.healthconnector
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
@@ -14,7 +15,9 @@ class HealthConnectManager(val context: Context) {
 
     val permissions = setOf(
         HealthPermission.getWritePermission(SleepSessionRecord::class),
-        HealthPermission.getReadPermission(SleepSessionRecord::class)
+        HealthPermission.getReadPermission(SleepSessionRecord::class),
+        HealthPermission.getWritePermission(NutritionRecord::class),
+        HealthPermission.getReadPermission(NutritionRecord::class)
     )
 
     suspend fun hasPermissions(): Boolean {

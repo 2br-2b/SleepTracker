@@ -254,7 +254,7 @@ private fun OnboardingFlow(
             when (step) {
                 OnboardingStep.HealthConnect -> {
                     Text("Welcome to SleepTracker", style = MaterialTheme.typography.headlineMedium)
-                    Text("SleepTracker uses Health Connect to save and read your confirmed sleep sessions.")
+                    Text("SleepTracker uses Health Connect to save and read your confirmed sleep and nutrition logs.")
 
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -436,7 +436,7 @@ private fun OnboardingFlow(
 
                     PermissionRow(
                         title = "Health Connect read/write",
-                        reason = "Needed to read your sleep history and save confirmed sessions.",
+                        reason = "Needed to read/write your sleep sessions and nutrition records.",
                         granted = hasHealthPermissions,
                         onRequest = {
                             onRequestHealthPermissions()
