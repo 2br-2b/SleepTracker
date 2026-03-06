@@ -98,14 +98,16 @@ class OnboardingActivity : ComponentActivity() {
     }
 
     private fun openHealthConnectInstall() {
-        val marketIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata"))
-        val webIntent = Intent(
-            Intent.ACTION_VIEW,
-            Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.apps.healthdata")
-        )
+        val isPlayStoreInstalled = runCatching {
+            packageManager.getPackageInfo("com.android.vending", 0)
+            true
+        }.getOrDefault(false)
 
-        runCatching { startActivity(marketIntent) }
-            .onFailure { startActivity(webIntent) }
+        if (isPlayStoreInstalled) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata")))
+        } else {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.apps.healthdata")))
+        }
     }
 
     private fun shouldShowOtherSensorsPermission(): Boolean {
@@ -163,6 +165,8 @@ private fun OnboardingFlow(
     fun refreshHealthConnectStatus() {
         isHealthConnectInstalled = runCatching {
             context.packageManager.getPackageInfo("com.google.android.apps.healthdata", 0)
+        }.isSuccess || runCatching {
+            context.packageManager.getPackageInfo("com.google.android.healthconnect.controller", 0)
         }.isSuccess
     }
 
