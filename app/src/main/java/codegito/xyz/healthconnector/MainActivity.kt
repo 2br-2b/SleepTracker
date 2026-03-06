@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -40,6 +39,7 @@ import androidx.navigation.compose.rememberNavController
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.ui.AdvancedSleepSettingsScreen
 import codegito.xyz.healthconnector.ui.AutoSleepSettingsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
@@ -151,7 +151,7 @@ fun MainApp(
                         }
                     )
                     NavigationBarItem(
-                        icon = { Icon(Icons.Default.Restaurant, contentDescription = "Food") },
+                        icon = { Icon(Icons.Default.Add, contentDescription = "Food") },
                         label = { Text("Food") },
                         selected = currentDestination?.route == "nutrition",
                         onClick = {
@@ -593,6 +593,7 @@ fun SleepDayCard(
 }
 
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NutritionDayRouter(
     healthConnectManager: HealthConnectManager,
@@ -600,8 +601,31 @@ fun NutritionDayRouter(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val nutritionIndexBuildManager = remember(context) {
+        NutritionIndexBuildManager(context)
+    }
     var selectedDate by remember { mutableStateOf(LocalDate.now()) }
     var entries by remember { mutableStateOf<List<NutritionRecord>>(emptyList()) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var isBuildingIndex by remember { mutableStateOf(false) }
+    val downloadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            isBuildingIndex = true
+            statusMessage = "Building nutrition index from selected ZIP..."
+            val result = nutritionIndexBuildManager.buildFromUri(uri)
+            result.onSuccess { build ->
+                statusMessage = "Nutrition index ready (${build.recordCount} foods)"
+            }.onFailure {
+                statusMessage = "Index build failed: ${it.message ?: "unknown error"}"
+            }
+            isBuildingIndex = false
+        }
+    }
+
+    val hasBundledZip by produceState<Boolean?>(initialValue = null) {
+        value = nutritionIndexBuildManager.hasBundledZip()
+    }
     val rangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
 
     LaunchedEffect(selectedDate) {
@@ -623,7 +647,36 @@ fun NutritionDayRouter(
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Food tracking") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Food tracking") },
+                actions = {
+                    TextButton(
+                        enabled = !isBuildingIndex && hasBundledZip != null,
+                        onClick = {
+                            val bundled = hasBundledZip == true
+                            if (bundled) {
+                                scope.launch {
+                                    isBuildingIndex = true
+                                    statusMessage = "Building nutrition index from bundled ZIP..."
+                                    val result = nutritionIndexBuildManager.buildFromBundledZip()
+                                    result.onSuccess { build ->
+                                        statusMessage = "Nutrition index ready (${build.recordCount} foods)"
+                                    }.onFailure {
+                                        statusMessage = "Index build failed: ${it.message ?: "unknown error"}"
+                                    }
+                                    isBuildingIndex = false
+                                }
+                            } else {
+                                downloadLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                            }
+                        }
+                    ) {
+                        Text(if (hasBundledZip == true) "Build index" else "Select ZIP")
+                    }
+                }
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = {
                 Toast.makeText(context, "Food search/manual entry coming next", Toast.LENGTH_SHORT).show()
@@ -633,6 +686,27 @@ fun NutritionDayRouter(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (isBuildingIndex) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            if (hasBundledZip == false) {
+                Text(
+                    text = "Dataset ZIP is not bundled in this build. Select a ZIP from your phone.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                TextButton(onClick = {
+                    val linkIntent = Intent(
+                        Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://downloads.opennutrition.app/opennutrition-dataset-2025.1.zip")
+                    )
+                    context.startActivity(linkIntent)
+                }) {
+                    Text("Download Open Nutrition dataset")
+                }
+            }
+            statusMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
             Text("Selected day: $selectedDate")
             Text("Past date range from settings: $rangeDays days")
             OutlinedButton(onClick = {
