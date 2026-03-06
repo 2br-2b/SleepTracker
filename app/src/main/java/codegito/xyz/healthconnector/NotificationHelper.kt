@@ -127,14 +127,23 @@ object NotificationHelper {
         val startPending = PendingIntent.getBroadcast(context, 300, startIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         
         val startTrigger = getNextOccurrence(startTimeMinutes)
-        alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, startTrigger, startPending)
+        val canScheduleExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()
+        if (canScheduleExact) {
+            alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, startTrigger, startPending)
+        } else {
+            alarmManager.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, startTrigger, startPending)
+        }
 
         // Schedule Stop
         val stopIntent = Intent(context, ServiceSchedulerReceiver::class.java).apply { action = "STOP_SERVICE" }
         val stopPending = PendingIntent.getBroadcast(context, 400, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        
+
         val stopTrigger = getNextOccurrence(endTimeMinutes)
-        alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, stopTrigger, stopPending)
+        if (canScheduleExact) {
+            alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, stopTrigger, stopPending)
+        } else {
+            alarmManager.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, stopTrigger, stopPending)
+        }
     }
 
     suspend fun refreshServiceState(context: Context, prefs: UserPreferencesRepository) {
