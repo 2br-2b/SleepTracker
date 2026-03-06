@@ -312,13 +312,13 @@ fun HomeScreen(
                                     // No sessions: open overnight editor
                                     onOpenSession(date, null, false)
                                 }
+                                overnightSessions.isEmpty() -> {
+                                    // Only naps (1 or more): offer to edit a nap or add overnight sleep
+                                    napOrOvernightDate = date
+                                }
                                 sessionsForDate.size == 1 -> {
                                     val session = sessionsForDate.first()
                                     onOpenSession(date, session.metadata.id, session.title == SleepDataLogger.NAP_TITLE)
-                                }
-                                overnightSessions.isEmpty() -> {
-                                    // Only naps: offer to edit a nap or add overnight sleep
-                                    napOrOvernightDate = date
                                 }
                                 else -> {
                                     // Mixed sessions or multiple overnights: show picker
