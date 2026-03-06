@@ -32,7 +32,8 @@ class SleepDataLogger : ComponentActivity() {
     private lateinit var userPreferencesRepository: UserPreferencesRepository
     private lateinit var healthConnectManager: HealthConnectManager
 
-    private var overwriteExisting = false
+    // ID of the specific existing session being edited (null if creating new)
+    private var editingSessionId: String? = null
     private var initialBedtime: LocalDateTime? = null
     private var initialSegments: List<SleepSegment>? = null
 
@@ -50,11 +51,14 @@ class SleepDataLogger : ComponentActivity() {
             LocalDate.now().minusDays(1)
         }
 
+        val isNap = intent.getBooleanExtra("is_nap", false)
+        val sessionId = intent.getStringExtra("session_id")
+
         setContent {
             SleepTrackerTheme {
                 val sleepStages by userPreferencesRepository.sleepStages.collectAsState(initial = emptyList())
                 val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
-                
+
                 val detectionMode by userPreferencesRepository.sleepDetectionMode.collectAsState(initial = SleepDetectionMode.AUTO)
                 val manualTemplate by userPreferencesRepository.manualSleepTemplate.collectAsState(initial = null)
                 val bedtimeStart by userPreferencesRepository.bedtimeWindowStart.collectAsState(initial = 21 * 60)
@@ -65,93 +69,132 @@ class SleepDataLogger : ComponentActivity() {
                 val defaultAwakeToAsleep by userPreferencesRepository.defaultAwakeToAsleepMinutes.collectAsState(initial = 15)
 
                 var isLoading by remember { mutableStateOf(true) }
-                var hcRecordsForDay by remember { mutableStateOf<List<androidx.health.connect.client.records.SleepSessionRecord>>(emptyList()) }
 
                 LaunchedEffect(targetDate, sleepStages, rolloverHour, detectionMode) {
                     if (sleepStages.isEmpty()) return@LaunchedEffect
-                    
-                    val zoneId = ZoneId.systemDefault()
-                    val startBound = targetDate.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
-                    val endBound = targetDate.plusDays(1).atTime(rolloverHour, 0).atZone(zoneId).toInstant()
-                    
-                val recordsResult = healthConnectManager.getSleepSessions(startBound, endBound)
-                hcRecordsForDay = recordsResult.getOrDefault(emptyList())
 
-                if (hcRecordsForDay.isNotEmpty()) {
-                    val firstSession = hcRecordsForDay.first()
-                    initialBedtime = LocalDateTime.ofInstant(firstSession.startTime, zoneId)
-                    initialSegments = firstSession.stages.map { stage ->
-                        SleepSegment(
-                            endTime = LocalDateTime.ofInstant(stage.endTime, zoneId),
-                            sleepStage = stage.stage
-                        )
-                    }
-                } else if (detectionMode == SleepDetectionMode.AUTO) {
-                        val db = SleepEventDatabase.getDatabase(this@SleepDataLogger)
-                        // Start at bedtime window start (on the previous calendar day for overnight windows)
-                        // so early bedtimes aren't cut off by a hardcoded buffer.
-                        val bedtimeDay = if (bedtimeStart > rolloverHour * 60) targetDate.minusDays(1) else targetDate
-                        val bedtimeWindowStartInstant = bedtimeDay
-                            .atTime(bedtimeStart / 60, bedtimeStart % 60)
-                            .atZone(zoneId).toInstant()
-                        val eventStart = bedtimeWindowStartInstant.toEpochMilli()
-                        // Extend end to cover the full wakeup window so late wakeups aren't missed.
-                        val wakeupWindowEndInstant = targetDate.plusDays(1)
-                            .atTime(wakeupEnd / 60, wakeupEnd % 60)
-                            .atZone(zoneId).toInstant()
-                        val eventEnd = wakeupWindowEndInstant.toEpochMilli()
-                        val events = db.screenEventDao().getEventsInRange(eventStart, eventEnd).first()
-                        
-                        val detected = SleepDetectionEngine.detectSleep(
-                            events = events,
-                            bedtimeWindowStart = bedtimeStart,
-                            bedtimeWindowEnd = bedtimeEnd,
-                            wakeupWindowStart = wakeupStart,
-                            wakeupWindowEnd = wakeupEnd,
-                            awakeningThresholdMinutes = awakeningThreshold,
-                            defaultAwakeMinutes = defaultAwakeToAsleep,
-                            targetDate = targetDate
-                        )
-                        
-                        if (detected != null) {
-                            initialBedtime = detected.first
-                            initialSegments = detected.second
-                        }
-                    }
-                    
-                    if (initialBedtime == null) {
-                        manualTemplate?.let { template: SleepLogTemplate ->
-                            val baseBedtime = targetDate.atTime(template.bedtimeOffsetMinutes / 60, template.bedtimeOffsetMinutes % 60)
-                            initialBedtime = baseBedtime
-                            initialSegments = template.segments.map { ts ->
+                    val zoneId = ZoneId.systemDefault()
+
+                    if (sessionId != null) {
+                        // Editing a specific existing session by ID
+                        val result = healthConnectManager.getSleepSession(sessionId)
+                        val session = result.getOrNull()
+                        if (session != null) {
+                            editingSessionId = session.metadata.id
+                            initialBedtime = LocalDateTime.ofInstant(session.startTime, zoneId)
+                            initialSegments = session.stages.map { stage ->
                                 SleepSegment(
-                                    endTime = baseBedtime.plusMinutes(ts.endOffsetMinutes.toLong()),
-                                    sleepStage = ts.sleepStage
+                                    endTime = LocalDateTime.ofInstant(stage.endTime, zoneId),
+                                    sleepStage = stage.stage
                                 )
                             }
-                        } ?: run {
-                            initialBedtime = targetDate.atTime(0, 0)
-                            initialSegments = listOf(
-                                SleepSegment(
-                                    endTime = targetDate.plusDays(1).atTime(8, 0),
-                                    sleepStage = androidx.health.connect.client.records.SleepSessionRecord.STAGE_TYPE_SLEEPING
-                                )
+                        }
+                    } else if (isNap) {
+                        // New nap: default to 1 hour ago → now
+                        val now = LocalDateTime.now().withSecond(0).withNano(0)
+                        val napStart = now.minusHours(1)
+                        initialBedtime = napStart
+                        initialSegments = listOf(
+                            SleepSegment(
+                                endTime = now,
+                                sleepStage = androidx.health.connect.client.records.SleepSessionRecord.STAGE_TYPE_SLEEPING
                             )
+                        )
+                    } else {
+                        // Regular overnight sleep: existing auto-detect or template logic
+                        val startBound = targetDate.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
+                        val endBound = targetDate.plusDays(1).atTime(rolloverHour, 0).atZone(zoneId).toInstant()
+
+                        val recordsResult = healthConnectManager.getSleepSessions(startBound, endBound)
+                        val overnightRecords = recordsResult.getOrDefault(emptyList())
+                            .filter { it.title != NAP_TITLE }
+
+                        if (overnightRecords.isNotEmpty()) {
+                            val firstSession = overnightRecords.first()
+                            editingSessionId = firstSession.metadata.id
+                            initialBedtime = LocalDateTime.ofInstant(firstSession.startTime, zoneId)
+                            initialSegments = firstSession.stages.map { stage ->
+                                SleepSegment(
+                                    endTime = LocalDateTime.ofInstant(stage.endTime, zoneId),
+                                    sleepStage = stage.stage
+                                )
+                            }
+                        } else if (detectionMode == SleepDetectionMode.AUTO) {
+                            val db = SleepEventDatabase.getDatabase(this@SleepDataLogger)
+                            // Start at bedtime window start (on the previous calendar day for overnight windows)
+                            // so early bedtimes aren't cut off by a hardcoded buffer.
+                            val bedtimeDay = if (bedtimeStart > rolloverHour * 60) targetDate.minusDays(1) else targetDate
+                            val bedtimeWindowStartInstant = bedtimeDay
+                                .atTime(bedtimeStart / 60, bedtimeStart % 60)
+                                .atZone(zoneId).toInstant()
+                            val eventStart = bedtimeWindowStartInstant.toEpochMilli()
+                            // Extend end to cover the full wakeup window so late wakeups aren't missed.
+                            val wakeupWindowEndInstant = targetDate.plusDays(1)
+                                .atTime(wakeupEnd / 60, wakeupEnd % 60)
+                                .atZone(zoneId).toInstant()
+                            val eventEnd = wakeupWindowEndInstant.toEpochMilli()
+                            val events = db.screenEventDao().getEventsInRange(eventStart, eventEnd).first()
+
+                            val detected = SleepDetectionEngine.detectSleep(
+                                events = events,
+                                bedtimeWindowStart = bedtimeStart,
+                                bedtimeWindowEnd = bedtimeEnd,
+                                wakeupWindowStart = wakeupStart,
+                                wakeupWindowEnd = wakeupEnd,
+                                awakeningThresholdMinutes = awakeningThreshold,
+                                defaultAwakeMinutes = defaultAwakeToAsleep,
+                                targetDate = targetDate
+                            )
+
+                            if (detected != null) {
+                                initialBedtime = detected.first
+                                initialSegments = detected.second
+                            }
+                        }
+
+                        if (initialBedtime == null) {
+                            manualTemplate?.let { template: SleepLogTemplate ->
+                                val baseBedtime = targetDate.atTime(
+                                    template.bedtimeOffsetMinutes / 60,
+                                    template.bedtimeOffsetMinutes % 60
+                                )
+                                initialBedtime = baseBedtime
+                                initialSegments = template.segments.map { ts ->
+                                    SleepSegment(
+                                        endTime = baseBedtime.plusMinutes(ts.endOffsetMinutes.toLong()),
+                                        sleepStage = ts.sleepStage
+                                    )
+                                }
+                            } ?: run {
+                                initialBedtime = targetDate.atTime(0, 0)
+                                initialSegments = listOf(
+                                    SleepSegment(
+                                        endTime = targetDate.plusDays(1).atTime(8, 0),
+                                        sleepStage = androidx.health.connect.client.records.SleepSessionRecord.STAGE_TYPE_SLEEPING
+                                    )
+                                )
+                            }
                         }
                     }
+
                     isLoading = false
                 }
 
                 if (!isLoading && sleepStages.isNotEmpty()) {
+                    val editorTitle = if (isNap) {
+                        "Logging Nap for ${targetDate.format(DateTimeFormatter.ofPattern("MMM d"))}"
+                    } else {
+                        "Logging for Night of ${targetDate.format(DateTimeFormatter.ofPattern("MMM d"))}"
+                    }
+
                     SleepLogEditor(
-                        title = "Logging for Night of ${targetDate.format(DateTimeFormatter.ofPattern("MMM d"))}",
+                        title = editorTitle,
                         initialBedtime = initialBedtime!!,
                         initialSegments = initialSegments!!,
                         sleepStages = sleepStages,
-                        showOverwriteOption = hcRecordsForDay.isNotEmpty(),
-                        onOverwriteChanged = { overwriteExisting = it },
+                        showNapBanner = isNap,
                         onSave = { bedtime, segments ->
-                            saveSleepLog(targetDate, bedtime, segments, rolloverHour)
+                            saveSleepLog(bedtime, segments, isNap, rolloverHour)
                         },
                         onCancel = { finish() }
                     )
@@ -164,31 +207,40 @@ class SleepDataLogger : ComponentActivity() {
         }
     }
 
-    private fun saveSleepLog(targetDate: LocalDate, bedtime: LocalDateTime, segments: List<SleepSegment>, rolloverHour: Int) {
+    private fun saveSleepLog(
+        bedtime: LocalDateTime,
+        segments: List<SleepSegment>,
+        isNap: Boolean,
+        rolloverHour: Int
+    ) {
         lifecycleScope.launch {
             try {
-                if (overwriteExisting) {
-                    val zoneId = ZoneId.systemDefault()
-                    val startBound = targetDate.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
-                    val endBound = targetDate.plusDays(1).atTime(rolloverHour, 0).atZone(zoneId).toInstant()
-                    
-                    val deleteResult = healthConnectManager.deleteSleepSessions(startBound, endBound)
+                // If editing an existing specific session, delete it first
+                if (editingSessionId != null) {
+                    val deleteResult = healthConnectManager.deleteSleepSession(editingSessionId!!)
                     if (deleteResult.isFailure) {
-                        Toast.makeText(this@SleepDataLogger, "Error deleting existing data: ${deleteResult.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            this@SleepDataLogger,
+                            "Error deleting existing session: ${deleteResult.exceptionOrNull()?.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
                         return@launch
                     }
                 }
 
-                val result = healthConnectManager.writeSleepLog(bedtime, segments)
-                
+                val title = if (isNap) NAP_TITLE else null
+                val result = healthConnectManager.writeSleepLog(bedtime, segments, title)
+
                 if (result.isSuccess) {
                     Toast.makeText(this@SleepDataLogger, "Saved sleep data", Toast.LENGTH_SHORT).show()
-                    val mode = userPreferencesRepository.sleepDetectionMode.first()
-                    if (mode == SleepDetectionMode.AUTO) {
-                        val stopIntent = Intent(this@SleepDataLogger, SleepTrackingService::class.java).apply {
-                            action = "STOP_SERVICE"
+                    if (!isNap) {
+                        val mode = userPreferencesRepository.sleepDetectionMode.first()
+                        if (mode == SleepDetectionMode.AUTO) {
+                            val stopIntent = Intent(this@SleepDataLogger, SleepTrackingService::class.java).apply {
+                                action = "STOP_SERVICE"
+                            }
+                            startService(stopIntent)
                         }
-                        startService(stopIntent)
                     }
                     finish()
                 } else {
@@ -200,5 +252,9 @@ class SleepDataLogger : ComponentActivity() {
                 e.printStackTrace()
             }
         }
+    }
+
+    companion object {
+        const val NAP_TITLE = "Nap"
     }
 }
