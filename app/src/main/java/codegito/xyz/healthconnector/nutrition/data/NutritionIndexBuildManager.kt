@@ -1,7 +1,11 @@
 package codegito.xyz.healthconnector.nutrition.data
 
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -19,7 +23,8 @@ class NutritionIndexBuildManager(
     data class BuildResult(
         val recordCount: Int,
         val sourceLocation: String,
-        val debugLog: String
+        val debugLog: String,
+        val debugLogLocation: String
     )
 
     suspend fun hasBundledZip(): Boolean = withContext(Dispatchers.IO) {
@@ -97,27 +102,35 @@ class NutritionIndexBuildManager(
         if (finalCount == 0) {
             diagnostics.appendLine("result=failed")
             diagnostics.appendLine("reason=No usable CSV nutrition records found in ZIP")
-            diagnosticsFile.writeText(diagnostics.toString())
-            error("No usable CSV nutrition records found in ZIP. See build log at ${diagnosticsFile.absolutePath}")
+            val diagnosticsText = diagnostics.toString()
+            diagnosticsFile.writeText(diagnosticsText)
+            val downloadsLocation = writeDiagnosticsToDownloads(diagnosticsText)
+            val logLocation = downloadsLocation ?: diagnosticsFile.absolutePath
+            error("No usable CSV nutrition records found in ZIP. See build log at $logLocation")
         }
 
         diagnostics.appendLine("result=success")
         diagnostics.appendLine("selected_source=$bestSource")
         diagnostics.appendLine("record_count=$finalCount")
-        diagnosticsFile.writeText(diagnostics.toString())
+        val diagnosticsText = diagnostics.toString()
+        diagnosticsFile.writeText(diagnosticsText)
+        val downloadsLocation = writeDiagnosticsToDownloads(diagnosticsText)
+        val logLocation = downloadsLocation ?: diagnosticsFile.absolutePath
 
         val metadata = JSONObject().apply {
             put("source", "Open Nutrition Dataset")
             put("sourceLocation", bestSource)
             put("recordCount", finalCount)
             put("buildLogPath", diagnosticsFile.absolutePath)
+            put("buildLogDownloadUri", downloadsLocation ?: JSONObject.NULL)
         }
         metadataFile.writeText(metadata.toString(2))
 
         return BuildResult(
             recordCount = finalCount,
             sourceLocation = bestSource,
-            debugLog = diagnostics.toString()
+            debugLog = diagnosticsText,
+            debugLogLocation = logLocation
         )
     }
 
@@ -179,6 +192,26 @@ class NutritionIndexBuildManager(
         override fun read(): Int = delegate.read()
         override fun read(b: ByteArray, off: Int, len: Int): Int = delegate.read(b, off, len)
         override fun close() = Unit
+    }
+
+    private fun writeDiagnosticsToDownloads(diagnosticsText: String): String? {
+        return runCatching {
+            val fileName = "sleeptracker-nutrition-build-log-${System.currentTimeMillis()}.txt"
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                ?: return null
+            resolver.openOutputStream(uri)?.bufferedWriter()?.use { out ->
+                out.write(diagnosticsText)
+            } ?: return null
+            uri.toString()
+        }.getOrNull()
     }
 
     private fun parseCsvLine(line: String): List<String> {

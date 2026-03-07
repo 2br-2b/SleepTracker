@@ -615,9 +615,9 @@ fun NutritionDayRouter(
             statusMessage = "Building nutrition index from selected ZIP..."
             val result = nutritionIndexBuildManager.buildFromUri(uri)
             result.onSuccess { build ->
-                statusMessage = "Nutrition index ready (${build.recordCount} foods). Build log: ${context.filesDir.resolve("nutrition/build-log.txt")}"
+                statusMessage = "Nutrition index ready (${build.recordCount} foods). Build log: ${build.debugLogLocation}"
             }.onFailure {
-                statusMessage = "Index build failed: ${it.message ?: "unknown error"}. Build log: ${context.filesDir.resolve("nutrition/build-log.txt")}"
+                statusMessage = "Index build failed: ${it.message ?: "unknown error"}"
             }
             isBuildingIndex = false
         }
@@ -661,9 +661,9 @@ fun NutritionDayRouter(
                                     statusMessage = "Building nutrition index from bundled ZIP..."
                                     val result = nutritionIndexBuildManager.buildFromBundledZip()
                                     result.onSuccess { build ->
-                                        statusMessage = "Nutrition index ready (${build.recordCount} foods). Build log: ${context.filesDir.resolve("nutrition/build-log.txt")}"
+                                        statusMessage = "Nutrition index ready (${build.recordCount} foods). Build log: ${build.debugLogLocation}"
                                     }.onFailure {
-                                        statusMessage = "Index build failed: ${it.message ?: "unknown error"}. Build log: ${context.filesDir.resolve("nutrition/build-log.txt")}"
+                                        statusMessage = "Index build failed: ${it.message ?: "unknown error"}"
                                     }
                                     isBuildingIndex = false
                                 }

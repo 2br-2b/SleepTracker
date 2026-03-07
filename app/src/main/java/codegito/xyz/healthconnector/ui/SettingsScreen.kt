@@ -71,7 +71,7 @@ fun SettingsScreen(
             org.json.JSONObject(metadataText).let {
                 "records=" + it.optInt("recordCount", 0) +
                     ", source=" + it.optString("sourceLocation", "unknown") +
-                    ", log=" + it.optString("buildLogPath", context.filesDir.resolve("nutrition/build-log.txt").absolutePath)
+                    ", log=" + it.optString("buildLogDownloadUri", it.optString("buildLogPath", context.filesDir.resolve("nutrition/build-log.txt").absolutePath))
             }
         }.getOrDefault("Unavailable")
         while (true) {
