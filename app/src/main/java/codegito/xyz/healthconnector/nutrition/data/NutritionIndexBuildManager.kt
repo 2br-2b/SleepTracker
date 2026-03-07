@@ -82,11 +82,15 @@ class NutritionIndexBuildManager(
                         diagnostics.appendLine("  line_${i + 1}=$truncated")
                     }
 
-                    if (entry.name.lowercase().endsWith(".csv")) {
-                        diagnostics.appendLine("  type=csv (processing)")
+                    val entryNameLower = entry.name.lowercase()
+                    val isCsv = entryNameLower.endsWith(".csv")
+                    val isTsv = entryNameLower.endsWith(".tsv")
+                    if (isCsv || isTsv) {
+                        diagnostics.appendLine("  type=${if (isTsv) "tsv" else "csv"} (processing)")
                         val tmpIndex = outputDir.resolve("index-${bestResult?.recordCount ?: 0}.jsonl.tmp")
                         val result = runCatching {
-                            writeIndexFromCsv(reader, tmpIndex, previewLines)
+                            if (isTsv) writeIndexFromTsv(reader, tmpIndex, previewLines)
+                            else writeIndexFromCsv(reader, tmpIndex, previewLines)
                         }
 
                         result.onSuccess { parsed ->
@@ -105,7 +109,7 @@ class NutritionIndexBuildManager(
                         }
                         tmpIndex.delete()
                     } else {
-                        diagnostics.appendLine("  type=non-csv (skipped)")
+                        diagnostics.appendLine("  type=non-csv/tsv (skipped)")
                     }
                 }
                 zip.closeEntry()
@@ -116,12 +120,12 @@ class NutritionIndexBuildManager(
         val finalCount = bestResult?.recordCount ?: 0
         if (finalCount == 0) {
             diagnostics.appendLine("result=failed")
-            diagnostics.appendLine("reason=No usable CSV nutrition records found in ZIP")
+            diagnostics.appendLine("reason=No usable CSV/TSV nutrition records found in ZIP")
             val diagnosticsText = diagnostics.toString()
             diagnosticsFile.writeText(diagnosticsText)
             val downloadsLocation = writeDiagnosticsToDownloads(diagnosticsText)
             val logLocation = downloadsLocation ?: diagnosticsFile.absolutePath
-            error("No usable CSV nutrition records found in ZIP. See build log at $logLocation")
+            error("No usable CSV/TSV nutrition records found in ZIP. See build log at $logLocation")
         }
 
         diagnostics.appendLine("result=success")
@@ -196,6 +200,73 @@ class NutritionIndexBuildManager(
                     put("protein", row.getOrNull(proteinIdx)?.toDoubleOrNull() ?: 0.0)
                     put("carbs", row.getOrNull(carbsIdx)?.toDoubleOrNull() ?: 0.0)
                     put("fat", row.getOrNull(fatIdx)?.toDoubleOrNull() ?: 0.0)
+                }
+                out.appendLine(json.toString())
+                written += 1
+            }
+        }
+
+        return CsvBuildResult(recordCount = written, headerColumns = headerColumns)
+    }
+
+    private fun writeIndexFromTsv(
+        reader: BufferedReader,
+        indexFile: java.io.File,
+        preReadLines: List<String> = emptyList()
+    ): CsvBuildResult {
+        val lineSource: Sequence<String> = sequence {
+            preReadLines.forEach { yield(it) }
+            yieldAll(reader.lineSequence())
+        }
+        val lineIterator = lineSource.iterator()
+        val header = if (lineIterator.hasNext()) lineIterator.next() else return CsvBuildResult(recordCount = 0, headerColumns = emptyList())
+        val headerColumns = header.split("\t").map { it.trim().lowercase() }
+
+        fun col(vararg names: String): Int {
+            names.forEach { name ->
+                val i = headerColumns.indexOf(name)
+                if (i >= 0) return i
+            }
+            return -1
+        }
+
+        val idIdx = col("id")
+        val nameIdx = col("name", "food_name", "description")
+        val nutritionIdx = col("nutrition_100g")
+
+        if (nameIdx < 0) error("TSV is missing name/food_name/description column")
+
+        var written = 0
+        indexFile.bufferedWriter().use { out ->
+            lineIterator.asSequence().forEachIndexed { rowIndex, rawLine ->
+                if (written >= MAX_RECORDS) return@forEachIndexed
+                val row = rawLine.split("\t")
+                val name = row.getOrNull(nameIdx)?.trim().orEmpty()
+                if (name.isEmpty()) return@forEachIndexed
+
+                var calories = 0.0
+                var protein = 0.0
+                var carbs = 0.0
+                var fat = 0.0
+                val nutritionRaw = row.getOrNull(nutritionIdx)?.trim().orEmpty()
+                if (nutritionRaw.isNotEmpty()) {
+                    runCatching {
+                        val n = JSONObject(nutritionRaw)
+                        calories = n.optDouble("energy_kcal", n.optDouble("calories", 0.0))
+                        protein = n.optDouble("protein", 0.0)
+                        carbs = n.optDouble("carbohydrates", n.optDouble("carbs", 0.0))
+                        fat = n.optDouble("fat", 0.0)
+                    }
+                }
+
+                val json = JSONObject().apply {
+                    put("id", row.getOrNull(idIdx)?.takeIf { it.isNotBlank() } ?: "tsv-$rowIndex")
+                    put("name", name)
+                    put("baseAmount", 100.0)
+                    put("calories", calories)
+                    put("protein", protein)
+                    put("carbs", carbs)
+                    put("fat", fat)
                 }
                 out.appendLine(json.toString())
                 written += 1
