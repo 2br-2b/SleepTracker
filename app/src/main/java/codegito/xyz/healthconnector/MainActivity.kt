@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +27,10 @@ import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.records.NutritionRecord
+import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
+import codegito.xyz.healthconnector.nutrition.domain.FoodCandidate
+import androidx.health.connect.client.units.Mass
+import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -40,6 +43,7 @@ import androidx.navigation.compose.rememberNavController
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.ui.AdvancedSleepSettingsScreen
 import codegito.xyz.healthconnector.ui.AutoSleepSettingsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
@@ -151,7 +155,7 @@ fun MainApp(
                         }
                     )
                     NavigationBarItem(
-                        icon = { Icon(Icons.Default.Restaurant, contentDescription = "Food") },
+                        icon = { Icon(Icons.Default.Add, contentDescription = "Food") },
                         label = { Text("Food") },
                         selected = currentDestination?.route == "nutrition",
                         onClick = {
@@ -593,6 +597,7 @@ fun SleepDayCard(
 }
 
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NutritionDayRouter(
     healthConnectManager: HealthConnectManager,
@@ -600,39 +605,150 @@ fun NutritionDayRouter(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
+    val nutritionProvider = remember(context) { AssetNutritionProvider(context) }
+
     var selectedDate by remember { mutableStateOf(LocalDate.now()) }
     var entries by remember { mutableStateOf<List<NutritionRecord>>(emptyList()) }
-    val rangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var isBuildingIndex by remember { mutableStateOf(false) }
+    var showLogFoodDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(selectedDate) {
-        scope.launch {
-            val zone = ZoneId.systemDefault()
-            val dayStart = selectedDate.atStartOfDay(zone).toInstant()
-            val dayEnd = selectedDate.plusDays(1).atStartOfDay(zone).toInstant()
-            val request = androidx.health.connect.client.request.ReadRecordsRequest(
-                recordType = NutritionRecord::class,
-                timeRangeFilter = androidx.health.connect.client.time.TimeRangeFilter.between(dayStart, dayEnd)
-            )
-            entries = runCatching {
-                healthConnectManager.healthConnectClient.readRecords(request).records
-            }.getOrElse {
-                Toast.makeText(context, "Unable to load nutrition entries", Toast.LENGTH_SHORT).show()
-                emptyList()
-            }
+    suspend fun refreshDayEntries(date: LocalDate) {
+        val zone = ZoneId.systemDefault()
+        val dayStart = date.atStartOfDay(zone).toInstant()
+        val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant()
+        val request = androidx.health.connect.client.request.ReadRecordsRequest(
+            recordType = NutritionRecord::class,
+            timeRangeFilter = androidx.health.connect.client.time.TimeRangeFilter.between(dayStart, dayEnd)
+        )
+        entries = runCatching {
+            healthConnectManager.healthConnectClient.readRecords(request).records
+        }.getOrElse {
+            Toast.makeText(context, "Unable to load nutrition entries", Toast.LENGTH_SHORT).show()
+            emptyList()
         }
     }
 
+    val downloadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            isBuildingIndex = true
+            statusMessage = "Building nutrition index from selected ZIP..."
+            val result = nutritionIndexBuildManager.buildFromUri(uri)
+            result.onSuccess { build ->
+                statusMessage = "Nutrition index ready (${build.recordCount} foods). Build log: ${build.debugLogLocation}"
+                showLogFoodDialog = true
+            }.onFailure {
+                statusMessage = "Index build failed: ${it.message ?: "unknown error"}"
+            }
+            isBuildingIndex = false
+        }
+    }
+
+    val hasBundledZip by produceState<Boolean?>(initialValue = null) {
+        value = nutritionIndexBuildManager.hasBundledZip()
+    }
+    val rangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
+
+    LaunchedEffect(selectedDate) {
+        scope.launch { refreshDayEntries(selectedDate) }
+    }
+
+    if (showLogFoodDialog) {
+        LogFoodDialog(
+            nutritionProvider = nutritionProvider,
+            onDismiss = { showLogFoodDialog = false },
+            onLogFood = { candidate, grams ->
+                scope.launch {
+                    val now = Instant.now()
+                    val zoneOffset = ZoneId.systemDefault().rules.getOffset(now)
+                    val multiplier = if (candidate.baseAmount.value <= 0.0) 1.0 else grams / candidate.baseAmount.value
+                    val record = NutritionRecord(
+                        startTime = now,
+                        startZoneOffset = zoneOffset,
+                        endTime = now,
+                        endZoneOffset = zoneOffset,
+                        energy = Energy.calories(candidate.nutrientsPerBase.calories * multiplier),
+                        protein = Mass.grams(candidate.nutrientsPerBase.proteinGrams * multiplier),
+                        totalCarbohydrate = Mass.grams(candidate.nutrientsPerBase.carbsGrams * multiplier),
+                        totalFat = Mass.grams(candidate.nutrientsPerBase.fatGrams * multiplier)
+                    )
+
+                    runCatching {
+                        healthConnectManager.healthConnectClient.insertRecords(listOf(record))
+                    }.onSuccess {
+                        statusMessage = "Logged ${candidate.name} (${grams.toInt()} g)"
+                        refreshDayEntries(selectedDate)
+                        showLogFoodDialog = false
+                    }.onFailure {
+                        statusMessage = "Could not log food: ${it.message ?: "unknown error"}"
+                    }
+                }
+            }
+        )
+    }
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Food tracking") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Food tracking") },
+                actions = {
+                    TextButton(
+                        enabled = !isBuildingIndex && hasBundledZip != null,
+                        onClick = {
+                            val bundled = hasBundledZip == true
+                            if (bundled) {
+                                scope.launch {
+                                    isBuildingIndex = true
+                                    statusMessage = "Building nutrition index from bundled ZIP..."
+                                    val result = nutritionIndexBuildManager.buildFromBundledZip()
+                                    result.onSuccess { build ->
+                                        statusMessage = "Nutrition index ready (${build.recordCount} foods). Build log: ${build.debugLogLocation}"
+                                        showLogFoodDialog = true
+                                    }.onFailure {
+                                        statusMessage = "Index build failed: ${it.message ?: "unknown error"}"
+                                    }
+                                    isBuildingIndex = false
+                                }
+                            } else {
+                                downloadLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                            }
+                        }
+                    ) {
+                        Text(if (hasBundledZip == true) "Build index" else "Select ZIP")
+                    }
+                }
+            )
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                Toast.makeText(context, "Food search/manual entry coming next", Toast.LENGTH_SHORT).show()
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Add food")
+            FloatingActionButton(onClick = { showLogFoodDialog = true }) {
+                Icon(Icons.Default.Add, contentDescription = "Log food")
             }
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (isBuildingIndex) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            if (hasBundledZip == false) {
+                Text(
+                    text = "Dataset ZIP is not bundled in this build. Select a ZIP from your phone.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                TextButton(onClick = {
+                    val linkIntent = Intent(
+                        Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://downloads.opennutrition.app/opennutrition-dataset-2025.1.zip")
+                    )
+                    context.startActivity(linkIntent)
+                }) {
+                    Text("Download Open Nutrition dataset")
+                }
+            }
+            statusMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
             Text("Selected day: $selectedDate")
             Text("Past date range from settings: $rangeDays days")
             OutlinedButton(onClick = {
@@ -644,7 +760,7 @@ fun NutritionDayRouter(
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text("Daily summary", style = MaterialTheme.typography.titleMedium)
                     Text("Nutrition entries tracked: ${entries.size}")
-                    Text("Configure summary fields in settings (planned)")
+                    Text("Use + to search and manually log food")
                 }
             }
             Text("Entries (${entries.size})", style = MaterialTheme.typography.titleMedium)
@@ -661,6 +777,83 @@ fun NutritionDayRouter(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LogFoodDialog(
+    nutritionProvider: AssetNutritionProvider,
+    onDismiss: () -> Unit,
+    onLogFood: (FoodCandidate, Double) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var amountText by remember { mutableStateOf("100") }
+    var results by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Search & log food") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search foods") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { amountText = it },
+                    label = { Text("Amount (grams)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        scope.launch {
+                            loading = true
+                            results = nutritionProvider.searchFoods(query.trim(), limit = 25)
+                            loading = false
+                        }
+                    }) {
+                        Text("Search")
+                    }
+                    TextButton(onClick = {
+                        query = ""
+                        results = emptyList()
+                    }) { Text("Clear") }
+                }
+                if (loading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                if (!loading && query.isNotBlank() && results.isEmpty()) {
+                    Text("No foods found. Build/import index first.", style = MaterialTheme.typography.bodySmall)
+                }
+                LazyColumn(modifier = Modifier.heightIn(max = 280.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(results) { candidate ->
+                        Card(modifier = Modifier.fillMaxWidth().clickable {
+                            val grams = amountText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 100.0
+                            onLogFood(candidate, grams)
+                        }) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(candidate.name, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${candidate.nutrientsPerBase.calories.toInt()} kcal / ${candidate.baseAmount.value.toInt()}g",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        }
+    )
 }
 
 

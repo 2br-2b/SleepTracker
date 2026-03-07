@@ -1,17 +1,19 @@
-# Upload Open Nutrition Dataset files here
+# Open Nutrition Dataset bundle
 
-`opennutrition-dataset-2025.1.zip` is not tracked in git to avoid binary-file review issues.
+To ship the full dataset without committing extracted CSVs (~300MB), add the ZIP file here:
 
-Place the **unzipped dataset CSV files** in this directory:
+- `app/src/main/assets/nutrition/opennutrition-dataset-2025.1.zip`
 
-- `app/src/main/assets/nutrition/opennutrition-dataset-2025.1/`
-
-Then run:
+Then build the app. During `preBuild`, Gradle runs:
 
 ```bash
 python3 app/scripts/build_nutrition_index.py
 ```
 
-or build the app (Gradle runs the indexer during `preBuild`).
+This produces `app/src/main/assets/nutrition/index.jsonl` for bundled-search use.
 
-The indexer reads the first `*.csv` found in this folder (recursively).
+If you intentionally omit the ZIP from app assets to reduce APK/AAB size, users can still pick the ZIP from device storage in the Food screen and build the runtime index on-device.
+
+Download source:
+
+- https://downloads.opennutrition.app/opennutrition-dataset-2025.1.zip

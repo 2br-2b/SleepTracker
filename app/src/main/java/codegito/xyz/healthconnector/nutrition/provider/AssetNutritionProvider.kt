@@ -17,7 +17,8 @@ class AssetNutritionProvider(
 
     private suspend fun loadData(): List<FoodCandidate> = withContext(Dispatchers.IO) {
         cached?.let { return@withContext it }
-        val list = context.assets.open("nutrition/index.jsonl").bufferedReader().useLines { lines ->
+
+        val list = openIndexReader()?.useLines { lines ->
             lines.mapNotNull { line ->
                 runCatching {
                     val obj = JSONObject(line)
@@ -34,9 +35,18 @@ class AssetNutritionProvider(
                     )
                 }.getOrNull()
             }.toList()
-        }
+        } ?: emptyList()
+
         cached = list
         list
+    }
+
+    private fun openIndexReader(): java.io.BufferedReader? {
+        val runtimeIndex = context.filesDir.resolve("nutrition/index.jsonl")
+        if (runtimeIndex.exists()) {
+            return runtimeIndex.bufferedReader()
+        }
+        return runCatching { context.assets.open("nutrition/index.jsonl").bufferedReader() }.getOrNull()
     }
 
     override suspend fun searchFoods(query: String, limit: Int): List<FoodCandidate> {
