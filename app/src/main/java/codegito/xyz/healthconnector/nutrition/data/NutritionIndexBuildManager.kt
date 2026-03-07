@@ -69,29 +69,44 @@ class NutritionIndexBuildManager(
         ZipInputStream(input).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
-                if (!entry.isDirectory && entry.name.lowercase().endsWith(".csv")) {
-                    diagnostics.appendLine("candidate_csv=${entry.name}")
-                    val tmpIndex = outputDir.resolve("index-${bestResult?.recordCount ?: 0}.jsonl.tmp")
+                diagnostics.appendLine("zip_entry=${entry.name} size=${entry.size} isDirectory=${entry.isDirectory}")
+                if (!entry.isDirectory) {
                     val reader = BufferedReader(InputStreamReader(NonClosingInputStream(zip)))
-                    val result = runCatching {
-                        writeIndexFromCsv(reader, tmpIndex)
+                    val previewLines = mutableListOf<String>()
+                    repeat(2) {
+                        val line = reader.readLine() ?: return@repeat
+                        previewLines.add(line)
+                    }
+                    previewLines.forEachIndexed { i, line ->
+                        val truncated = if (line.length > 300) line.take(300) + "…" else line
+                        diagnostics.appendLine("  line_${i + 1}=$truncated")
                     }
 
-                    result.onSuccess { parsed ->
-                        diagnostics.appendLine("  header_columns=${parsed.headerColumns.joinToString(",")}")
-                        diagnostics.appendLine("  rows_written=${parsed.recordCount}")
-                        if (parsed.recordCount > 0 && (bestResult == null || parsed.recordCount > bestResult!!.recordCount)) {
-                            bestResult = parsed
-                            bestSource = "$source::${entry.name}"
-                            tmpIndex.copyTo(indexFile, overwrite = true)
-                            diagnostics.appendLine("  selected_for_index=true")
-                        } else {
-                            diagnostics.appendLine("  selected_for_index=false")
+                    if (entry.name.lowercase().endsWith(".csv")) {
+                        diagnostics.appendLine("  type=csv (processing)")
+                        val tmpIndex = outputDir.resolve("index-${bestResult?.recordCount ?: 0}.jsonl.tmp")
+                        val result = runCatching {
+                            writeIndexFromCsv(reader, tmpIndex, previewLines)
                         }
-                    }.onFailure { throwable ->
-                        diagnostics.appendLine("  parse_error=${throwable.message ?: throwable::class.java.simpleName}")
+
+                        result.onSuccess { parsed ->
+                            diagnostics.appendLine("  header_columns=${parsed.headerColumns.joinToString(",")}")
+                            diagnostics.appendLine("  rows_written=${parsed.recordCount}")
+                            if (parsed.recordCount > 0 && (bestResult == null || parsed.recordCount > bestResult!!.recordCount)) {
+                                bestResult = parsed
+                                bestSource = "$source::${entry.name}"
+                                tmpIndex.copyTo(indexFile, overwrite = true)
+                                diagnostics.appendLine("  selected_for_index=true")
+                            } else {
+                                diagnostics.appendLine("  selected_for_index=false (count=${parsed.recordCount} best=${bestResult?.recordCount})")
+                            }
+                        }.onFailure { throwable ->
+                            diagnostics.appendLine("  parse_error=${throwable.message ?: throwable::class.java.simpleName}")
+                        }
+                        tmpIndex.delete()
+                    } else {
+                        diagnostics.appendLine("  type=non-csv (skipped)")
                     }
-                    tmpIndex.delete()
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
@@ -134,8 +149,17 @@ class NutritionIndexBuildManager(
         )
     }
 
-    private fun writeIndexFromCsv(reader: BufferedReader, indexFile: java.io.File): CsvBuildResult {
-        val header = reader.readLine() ?: return CsvBuildResult(recordCount = 0, headerColumns = emptyList())
+    private fun writeIndexFromCsv(
+        reader: BufferedReader,
+        indexFile: java.io.File,
+        preReadLines: List<String> = emptyList()
+    ): CsvBuildResult {
+        val lineSource: Sequence<String> = sequence {
+            preReadLines.forEach { yield(it) }
+            yieldAll(reader.lineSequence())
+        }
+        val lineIterator = lineSource.iterator()
+        val header = if (lineIterator.hasNext()) lineIterator.next() else return CsvBuildResult(recordCount = 0, headerColumns = emptyList())
         val headerColumns = parseCsvLine(header).map { it.trim().lowercase() }
 
         fun indexOfAny(vararg names: String): Int {
@@ -158,7 +182,7 @@ class NutritionIndexBuildManager(
 
         var written = 0
         indexFile.bufferedWriter().use { out ->
-            reader.lineSequence().forEachIndexed { rowIndex, rawLine ->
+            lineIterator.asSequence().forEachIndexed { rowIndex, rawLine ->
                 if (written >= MAX_RECORDS) return@forEachIndexed
                 val row = parseCsvLine(rawLine)
                 val name = row.getOrNull(nameIdx)?.trim().orEmpty()
