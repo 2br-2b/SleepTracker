@@ -341,6 +341,22 @@ class NutritionIndexBuildManager(
         return values
     }
 
+    fun indexRecordCount(): Int {
+        return runCatching {
+            val runtimeMeta = context.filesDir.resolve("nutrition/metadata.json")
+            val text = if (runtimeMeta.exists()) runtimeMeta.readText()
+                       else context.assets.open("nutrition/metadata.json").bufferedReader().use { it.readText() }
+            JSONObject(text).optInt("recordCount", 0)
+        }.getOrDefault(0)
+    }
+
+    fun clearIndex() {
+        val outputDir = context.filesDir.resolve("nutrition")
+        outputDir.resolve("index.jsonl").delete()
+        outputDir.resolve("metadata.json").delete()
+        outputDir.resolve("build-log.txt").delete()
+    }
+
     companion object {
         private const val BUNDLED_ZIP_ASSET_PATH = "nutrition/opennutrition-dataset-2025.1.zip"
         private const val MAX_RECORDS = 50000

@@ -49,6 +49,10 @@ class AssetNutritionProvider(
         return runCatching { context.assets.open("nutrition/index.jsonl").bufferedReader() }.getOrNull()
     }
 
+    fun invalidateCache() {
+        cached = null
+    }
+
     override suspend fun searchFoods(query: String, limit: Int): List<FoodCandidate> {
         val normalized = query.trim().lowercase()
         if (normalized.isEmpty()) return emptyList()
