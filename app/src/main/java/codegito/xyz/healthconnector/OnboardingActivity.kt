@@ -3,8 +3,10 @@ package codegito.xyz.healthconnector
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.app.AlarmManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -14,16 +16,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -31,6 +33,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -71,6 +76,9 @@ class OnboardingActivity : ComponentActivity() {
     private val requestOtherSensorsPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    private val requestExactAlarmPermission =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -90,6 +98,14 @@ class OnboardingActivity : ComponentActivity() {
                     onRequestOtherSensorsPermission = {
                         if (shouldShowOtherSensorsPermission()) {
                             requestOtherSensorsPermission.launch("android.permission.OTHER_SENSORS")
+                        }
+                    },
+                    onRequestExactAlarmPermission = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                data = Uri.parse("package:$packageName")
+                            }
+                            requestExactAlarmPermission.launch(intent)
                         }
                     },
                     onFinish = {
@@ -143,6 +159,7 @@ private fun OnboardingFlow(
     onRequestHealthPermissions: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onRequestOtherSensorsPermission: () -> Unit,
+    onRequestExactAlarmPermission: () -> Unit,
     onFinish: () -> Unit
 ) {
     val context = LocalContext.current
@@ -165,6 +182,7 @@ private fun OnboardingFlow(
     var hasNotificationPermission by remember { mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) }
     var showSensorsPermission by remember { mutableStateOf(false) }
     var hasSensorsPermission by remember { mutableStateOf(true) }
+    var hasExactAlarmPermission by remember { mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.S) }
 
     var showTemplateEditor by remember { mutableStateOf(false) }
 
@@ -193,10 +211,20 @@ private fun OnboardingFlow(
         } else {
             true
         }
+
+        hasExactAlarmPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = context.getSystemService(AlarmManager::class.java)
+            alarmManager?.canScheduleExactAlarms() == true
+        } else {
+            true
+        }
     }
 
     LaunchedEffect(Unit) {
         refreshHealthConnectStatus()
+        if (isHealthConnectInstalled) {
+            step = OnboardingStep.AutoDetectionExplanation
+        }
         refreshPermissionState()
     }
 
@@ -355,23 +383,20 @@ private fun OnboardingFlow(
                 OnboardingStep.AutoConfig -> {
                     Text("Set up automatic detection", style = MaterialTheme.typography.headlineMedium)
 
-                    OutlinedTextField(
-                        value = bedtimeStart.toString(),
-                        onValueChange = { bedtimeStart = it.toIntOrNull() ?: bedtimeStart },
-                        label = { Text("When do you usually go to sleep between? (start, minutes after midnight)") },
-                        modifier = Modifier.fillMaxWidth()
+                    TimeConfigRow(
+                        label = "Bedtime window start",
+                        minutes = bedtimeStart,
+                        onMinutesSelected = { bedtimeStart = it }
                     )
-                    OutlinedTextField(
-                        value = bedtimeEnd.toString(),
-                        onValueChange = { bedtimeEnd = it.toIntOrNull() ?: bedtimeEnd },
-                        label = { Text("When do you usually go to sleep between? (end, minutes after midnight)") },
-                        modifier = Modifier.fillMaxWidth()
+                    TimeConfigRow(
+                        label = "Bedtime window end",
+                        minutes = bedtimeEnd,
+                        onMinutesSelected = { bedtimeEnd = it }
                     )
-                    OutlinedTextField(
-                        value = wakeupEnd.toString(),
-                        onValueChange = { wakeupEnd = it.toIntOrNull() ?: wakeupEnd },
-                        label = { Text("When's the latest you will wake up? (minutes after midnight)") },
-                        modifier = Modifier.fillMaxWidth()
+                    TimeConfigRow(
+                        label = "Latest wake-up time",
+                        minutes = wakeupEnd,
+                        onMinutesSelected = { wakeupEnd = it }
                     )
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -466,7 +491,19 @@ private fun OnboardingFlow(
                         )
                     }
 
-                    val allRequiredGranted = hasHealthPermissions && hasNotificationPermission && (!showSensorsPermission || hasSensorsPermission)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        PermissionRow(
+                            title = "Exact alarms",
+                            reason = "Needed for precise service start/stop scheduling. App will fall back if denied.",
+                            granted = hasExactAlarmPermission,
+                            onRequest = {
+                                onRequestExactAlarmPermission()
+                                refreshPermissionState()
+                            }
+                        )
+                    }
+
+                    val allRequiredGranted = hasHealthPermissions && hasNotificationPermission && (!showSensorsPermission || hasSensorsPermission) && hasExactAlarmPermission
 
                     OutlinedButton(
                         onClick = { refreshPermissionState() },
@@ -505,6 +542,81 @@ private fun OnboardingFlow(
             HorizontalDivider()
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TimeConfigRow(
+    label: String,
+    minutes: Int,
+    onMinutesSelected: (Int) -> Unit
+) {
+    val hour = (minutes / 60).coerceIn(0, 23)
+    val minute = (minutes % 60).coerceIn(0, 59)
+    var showTimePicker by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(label, fontWeight = FontWeight.SemiBold)
+                Text(String.format("%02d:%02d", hour, minute), style = MaterialTheme.typography.bodyMedium)
+            }
+            OutlinedButton(onClick = { showTimePicker = true }) {
+                Text("Pick time")
+            }
+        }
+    }
+
+    if (showTimePicker) {
+        OnboardingTimePickerDialog(
+            title = label,
+            initialHour = hour,
+            initialMinute = minute,
+            onConfirm = { selectedHour, selectedMinute ->
+                onMinutesSelected(selectedHour * 60 + selectedMinute)
+                showTimePicker = false
+            },
+            onDismiss = { showTimePicker = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OnboardingTimePickerDialog(
+    title: String,
+    initialHour: Int,
+    initialMinute: Int,
+    onConfirm: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val state = rememberTimePickerState(
+        initialHour = initialHour,
+        initialMinute = initialMinute,
+        is24Hour = false
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select $title") },
+        text = { TimePicker(state = state) },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(state.hour, state.minute) }) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
