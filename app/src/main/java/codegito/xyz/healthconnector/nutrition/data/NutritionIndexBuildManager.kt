@@ -8,6 +8,8 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.time.Instant
+import java.time.format.DateTimeFormatter
 import java.util.zip.ZipInputStream
 
 class NutritionIndexBuildManager(
@@ -16,7 +18,8 @@ class NutritionIndexBuildManager(
 
     data class BuildResult(
         val recordCount: Int,
-        val sourceLocation: String
+        val sourceLocation: String,
+        val debugLog: String
     )
 
     suspend fun hasBundledZip(): Boolean = withContext(Dispatchers.IO) {
@@ -48,41 +51,78 @@ class NutritionIndexBuildManager(
         if (!outputDir.exists()) outputDir.mkdirs()
         val indexFile = outputDir.resolve("index.jsonl")
         val metadataFile = outputDir.resolve("metadata.json")
+        val diagnosticsFile = outputDir.resolve("build-log.txt")
 
-        var count = 0
-        var csvSource = source
+        val diagnostics = StringBuilder()
+        diagnostics.appendLine("Nutrition index build log")
+        diagnostics.appendLine("timestamp=${DateTimeFormatter.ISO_INSTANT.format(Instant.now())}")
+        diagnostics.appendLine("source=$source")
+
+        var bestResult: CsvBuildResult? = null
+        var bestSource = source
 
         ZipInputStream(input).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory && entry.name.lowercase().endsWith(".csv")) {
-                    csvSource = "$source::${entry.name}"
-                    BufferedReader(InputStreamReader(zip)).use { reader ->
-                        count = writeIndexFromCsv(reader, indexFile)
+                    diagnostics.appendLine("candidate_csv=${entry.name}")
+                    val tmpIndex = outputDir.resolve("index-${bestResult?.recordCount ?: 0}.jsonl.tmp")
+                    val reader = BufferedReader(InputStreamReader(NonClosingInputStream(zip)))
+                    val result = runCatching {
+                        writeIndexFromCsv(reader, tmpIndex)
                     }
-                    break
+
+                    result.onSuccess { parsed ->
+                        diagnostics.appendLine("  header_columns=${parsed.headerColumns.joinToString(",")}")
+                        diagnostics.appendLine("  rows_written=${parsed.recordCount}")
+                        if (parsed.recordCount > 0 && (bestResult == null || parsed.recordCount > bestResult!!.recordCount)) {
+                            bestResult = parsed
+                            bestSource = "$source::${entry.name}"
+                            tmpIndex.copyTo(indexFile, overwrite = true)
+                            diagnostics.appendLine("  selected_for_index=true")
+                        } else {
+                            diagnostics.appendLine("  selected_for_index=false")
+                        }
+                    }.onFailure { throwable ->
+                        diagnostics.appendLine("  parse_error=${throwable.message ?: throwable::class.java.simpleName}")
+                    }
+                    tmpIndex.delete()
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
             }
         }
 
-        if (count == 0) {
-            error("No usable CSV nutrition records found in ZIP")
+        val finalCount = bestResult?.recordCount ?: 0
+        if (finalCount == 0) {
+            diagnostics.appendLine("result=failed")
+            diagnostics.appendLine("reason=No usable CSV nutrition records found in ZIP")
+            diagnosticsFile.writeText(diagnostics.toString())
+            error("No usable CSV nutrition records found in ZIP. See build log at ${diagnosticsFile.absolutePath}")
         }
+
+        diagnostics.appendLine("result=success")
+        diagnostics.appendLine("selected_source=$bestSource")
+        diagnostics.appendLine("record_count=$finalCount")
+        diagnosticsFile.writeText(diagnostics.toString())
 
         val metadata = JSONObject().apply {
             put("source", "Open Nutrition Dataset")
-            put("sourceLocation", csvSource)
-            put("recordCount", count)
+            put("sourceLocation", bestSource)
+            put("recordCount", finalCount)
+            put("buildLogPath", diagnosticsFile.absolutePath)
         }
         metadataFile.writeText(metadata.toString(2))
 
-        return BuildResult(recordCount = count, sourceLocation = csvSource)
+        return BuildResult(
+            recordCount = finalCount,
+            sourceLocation = bestSource,
+            debugLog = diagnostics.toString()
+        )
     }
 
-    private fun writeIndexFromCsv(reader: BufferedReader, indexFile: java.io.File): Int {
-        val header = reader.readLine() ?: return 0
+    private fun writeIndexFromCsv(reader: BufferedReader, indexFile: java.io.File): CsvBuildResult {
+        val header = reader.readLine() ?: return CsvBuildResult(recordCount = 0, headerColumns = emptyList())
         val headerColumns = parseCsvLine(header).map { it.trim().lowercase() }
 
         fun indexOfAny(vararg names: String): Int {
@@ -125,7 +165,20 @@ class NutritionIndexBuildManager(
             }
         }
 
-        return written
+        return CsvBuildResult(recordCount = written, headerColumns = headerColumns)
+    }
+
+    private data class CsvBuildResult(
+        val recordCount: Int,
+        val headerColumns: List<String>
+    )
+
+    private class NonClosingInputStream(
+        private val delegate: InputStream
+    ) : InputStream() {
+        override fun read(): Int = delegate.read()
+        override fun read(b: ByteArray, off: Int, len: Int): Int = delegate.read(b, off, len)
+        override fun close() = Unit
     }
 
     private fun parseCsvLine(line: String): List<String> {

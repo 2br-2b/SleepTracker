@@ -66,8 +66,13 @@ fun SettingsScreen(
     LaunchedEffect(developerModeEnabled) {
         if (!developerModeEnabled) return@LaunchedEffect
         nutritionMetadataSummary = runCatching {
-            context.assets.open("nutrition/metadata.json").bufferedReader().use { it.readText() }
-                .let { json -> org.json.JSONObject(json).let { "records=" + it.optInt("recordCount", 0) + ", version=" + it.optString("version", "unknown") } }
+            val metadataText = context.filesDir.resolve("nutrition/metadata.json").takeIf { it.exists() }?.readText()
+                ?: context.assets.open("nutrition/metadata.json").bufferedReader().use { it.readText() }
+            org.json.JSONObject(metadataText).let {
+                "records=" + it.optInt("recordCount", 0) +
+                    ", source=" + it.optString("sourceLocation", "unknown") +
+                    ", log=" + it.optString("buildLogPath", context.filesDir.resolve("nutrition/build-log.txt").absolutePath)
+            }
         }.getOrDefault("Unavailable")
         while (true) {
             isServiceActive = isServiceRunning(context, SleepTrackingService::class.java)
