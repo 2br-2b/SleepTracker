@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.app.AlarmManager
 import androidx.core.app.NotificationCompat
 import java.time.Instant
 import java.time.LocalDate
@@ -72,11 +73,7 @@ object NotificationHelper {
 
         val triggerTime = Instant.now().plusSeconds(delayMinutes * 60L).toEpochMilli()
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-            alarmManager.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-        } else {
-            alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-        }
+        scheduleWakeupAlarm(alarmManager, triggerTime, pendingIntent)
     }
 
     fun scheduleDeadlineAlarm(context: Context, wakeupEndMinutes: Int) {
@@ -104,19 +101,11 @@ object NotificationHelper {
             deadline = deadline.plusDays(1)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-            alarmManager.setAndAllowWhileIdle(
-                android.app.AlarmManager.RTC_WAKEUP,
-                deadline.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                pendingIntent
-            )
-        } else {
-            alarmManager.setExactAndAllowWhileIdle(
-                android.app.AlarmManager.RTC_WAKEUP, 
-                deadline.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), 
-                pendingIntent
-            )
-        }
+        scheduleWakeupAlarm(
+            alarmManager,
+            deadline.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            pendingIntent
+        )
     }
 
     fun scheduleServiceLifecycle(context: Context, startTimeMinutes: Int, endTimeMinutes: Int) {
@@ -127,14 +116,14 @@ object NotificationHelper {
         val startPending = PendingIntent.getBroadcast(context, 300, startIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         
         val startTrigger = getNextOccurrence(startTimeMinutes)
-        alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, startTrigger, startPending)
+        scheduleWakeupAlarm(alarmManager, startTrigger, startPending)
 
         // Schedule Stop
         val stopIntent = Intent(context, ServiceSchedulerReceiver::class.java).apply { action = "STOP_SERVICE" }
         val stopPending = PendingIntent.getBroadcast(context, 400, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         
         val stopTrigger = getNextOccurrence(endTimeMinutes)
-        alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, stopTrigger, stopPending)
+        scheduleWakeupAlarm(alarmManager, stopTrigger, stopPending)
     }
 
     suspend fun refreshServiceState(context: Context, prefs: UserPreferencesRepository) {
@@ -192,6 +181,25 @@ object NotificationHelper {
             target = target.plusDays(1)
         }
         return target.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    }
+
+    private fun scheduleWakeupAlarm(
+        alarmManager: AlarmManager,
+        triggerAtMillis: Long,
+        pendingIntent: PendingIntent
+    ) {
+        val canUseExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()
+
+        if (canUseExact) {
+            try {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
+                return
+            } catch (e: SecurityException) {
+                Log.w("NotificationHelper", "Exact alarm denied, falling back to inexact alarm", e)
+            }
+        }
+
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent)
     }
 
     fun sendLogReminder(
