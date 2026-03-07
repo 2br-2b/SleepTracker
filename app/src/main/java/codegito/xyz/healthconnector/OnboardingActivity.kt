@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.app.AlarmManager
-import android.app.TimePickerDialog
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -25,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -32,6 +32,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -540,15 +543,16 @@ private fun OnboardingFlow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TimeConfigRow(
     label: String,
     minutes: Int,
     onMinutesSelected: (Int) -> Unit
 ) {
-    val context = LocalContext.current
     val hour = (minutes / 60).coerceIn(0, 23)
     val minute = (minutes % 60).coerceIn(0, 59)
+    var showTimePicker by remember { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -562,21 +566,56 @@ private fun TimeConfigRow(
                 Text(label, fontWeight = FontWeight.SemiBold)
                 Text(String.format("%02d:%02d", hour, minute), style = MaterialTheme.typography.bodyMedium)
             }
-            OutlinedButton(onClick = {
-                TimePickerDialog(
-                    context,
-                    { _, selectedHour, selectedMinute ->
-                        onMinutesSelected(selectedHour * 60 + selectedMinute)
-                    },
-                    hour,
-                    minute,
-                    false
-                ).show()
-            }) {
+            OutlinedButton(onClick = { showTimePicker = true }) {
                 Text("Pick time")
             }
         }
     }
+
+    if (showTimePicker) {
+        OnboardingTimePickerDialog(
+            title = label,
+            initialHour = hour,
+            initialMinute = minute,
+            onConfirm = { selectedHour, selectedMinute ->
+                onMinutesSelected(selectedHour * 60 + selectedMinute)
+                showTimePicker = false
+            },
+            onDismiss = { showTimePicker = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OnboardingTimePickerDialog(
+    title: String,
+    initialHour: Int,
+    initialMinute: Int,
+    onConfirm: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val state = rememberTimePickerState(
+        initialHour = initialHour,
+        initialMinute = initialMinute,
+        is24Hour = false
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select $title") },
+        text = { TimePicker(state = state) },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(state.hour, state.minute) }) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
