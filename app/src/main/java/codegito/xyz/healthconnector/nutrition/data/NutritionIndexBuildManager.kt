@@ -89,7 +89,7 @@ class NutritionIndexBuildManager(
                         diagnostics.appendLine("  type=${if (isTsv) "tsv" else "csv"} (processing)")
                         val tmpIndex = outputDir.resolve("index-${bestResult?.recordCount ?: 0}.jsonl.tmp")
                         val result = runCatching {
-                            if (isTsv) writeIndexFromTsv(reader, tmpIndex, previewLines)
+                            if (isTsv) writeIndexFromTsv(reader, tmpIndex, previewLines, diagnostics)
                             else writeIndexFromCsv(reader, tmpIndex, previewLines)
                         }
 
@@ -212,7 +212,8 @@ class NutritionIndexBuildManager(
     private fun writeIndexFromTsv(
         reader: BufferedReader,
         indexFile: java.io.File,
-        preReadLines: List<String> = emptyList()
+        preReadLines: List<String> = emptyList(),
+        diagnostics: StringBuilder? = null
     ): CsvBuildResult {
         val lineSource: Sequence<String> = sequence {
             preReadLines.forEach { yield(it) }
@@ -236,6 +237,7 @@ class NutritionIndexBuildManager(
 
         if (nameIdx < 0) error("TSV is missing name/food_name/description column")
 
+        var schemaLogged = false
         var written = 0
         indexFile.bufferedWriter().use { out ->
             lineIterator.asSequence().forEachIndexed { rowIndex, rawLine ->
@@ -244,29 +246,67 @@ class NutritionIndexBuildManager(
                 val name = row.getOrNull(nameIdx)?.trim().orEmpty()
                 if (name.isEmpty()) return@forEachIndexed
 
-                var calories = 0.0
-                var protein = 0.0
-                var carbs = 0.0
-                var fat = 0.0
                 val nutritionRaw = row.getOrNull(nutritionIdx)?.trim().orEmpty()
-                if (nutritionRaw.isNotEmpty()) {
-                    runCatching {
-                        val n = JSONObject(nutritionRaw)
-                        calories = n.optDouble("energy_kcal", n.optDouble("calories", 0.0))
-                        protein = n.optDouble("protein", 0.0)
-                        carbs = n.optDouble("carbohydrates", n.optDouble("carbs", 0.0))
-                        fat = n.optDouble("fat", 0.0)
-                    }
+                val n = if (nutritionRaw.isNotEmpty()) runCatching { JSONObject(nutritionRaw) }.getOrNull() else null
+
+                // Log the nutrition_100g schema from the first record that has it
+                if (!schemaLogged && n != null && diagnostics != null) {
+                    schemaLogged = true
+                    val keys = n.keys().asSequence().toList()
+                    diagnostics.appendLine("  nutrition_100g_schema=${keys.joinToString(",")}")
+                    diagnostics.appendLine("  nutrition_100g_sample=${n}")
+                }
+
+                fun d(vararg keys: String) = n?.let { obj ->
+                    keys.firstNotNullOfOrNull { k -> obj.optDouble(k).takeIf { !it.isNaN() && it != 0.0 } }
+                } ?: 0.0
+
+                // mg → g helpers (values > 1 in a per-100g context are likely mg)
+                fun mg(vararg keys: String): Double {
+                    val raw = d(*keys)
+                    // Heuristic: if value > 10 for a mineral/vitamin, assume it's in mg
+                    return if (raw > 10.0) raw / 1000.0 else raw
                 }
 
                 val json = JSONObject().apply {
                     put("id", row.getOrNull(idIdx)?.takeIf { it.isNotBlank() } ?: "tsv-$rowIndex")
                     put("name", name)
                     put("baseAmount", 100.0)
-                    put("calories", calories)
-                    put("protein", protein)
-                    put("carbs", carbs)
-                    put("fat", fat)
+                    // Macros
+                    put("calories", d("energy_kcal", "calories", "energy"))
+                    put("protein", d("protein"))
+                    put("carbs", d("carbohydrates", "carbs", "carbohydrate"))
+                    put("fat", d("fat", "total_fat"))
+                    // Fat breakdown
+                    put("saturatedFat", d("saturated_fat", "saturated_fatty_acids", "saturates"))
+                    put("polyunsaturatedFat", d("polyunsaturated_fat", "polyunsaturated_fatty_acids"))
+                    put("monounsaturatedFat", d("monounsaturated_fat", "monounsaturated_fatty_acids"))
+                    put("transFat", d("trans_fat", "trans_fatty_acids"))
+                    // Carb breakdown
+                    put("fiber", d("fiber", "dietary_fiber", "fibre", "dietary_fibre"))
+                    put("sugar", d("sugars", "sugar", "total_sugars"))
+                    // Minerals
+                    put("sodium", mg("sodium"))
+                    put("cholesterol", mg("cholesterol"))
+                    put("potassium", mg("potassium"))
+                    put("calcium", mg("calcium"))
+                    put("iron", mg("iron"))
+                    put("magnesium", mg("magnesium"))
+                    put("phosphorus", mg("phosphorus"))
+                    put("zinc", mg("zinc"))
+                    // Vitamins
+                    put("vitaminA", mg("vitamin_a", "vitamina", "retinol"))
+                    put("vitaminC", mg("vitamin_c", "vitaminc", "ascorbic_acid"))
+                    put("vitaminD", mg("vitamin_d", "vitamind"))
+                    put("vitaminE", mg("vitamin_e", "vitamine"))
+                    put("vitaminK", mg("vitamin_k", "vitamink"))
+                    put("vitaminB6", mg("vitamin_b6", "vitaminb6", "pyridoxine"))
+                    put("vitaminB12", mg("vitamin_b12", "vitaminb12", "cobalamin"))
+                    put("thiamin", mg("thiamin", "thiamine", "vitamin_b1"))
+                    put("riboflavin", mg("riboflavin", "vitamin_b2"))
+                    put("niacin", mg("niacin", "vitamin_b3"))
+                    put("folate", mg("folate", "folic_acid", "vitamin_b9"))
+                    put("caffeine", mg("caffeine"))
                 }
                 out.appendLine(json.toString())
                 written += 1
