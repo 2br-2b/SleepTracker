@@ -86,7 +86,7 @@ object SleepDetectionEngine {
                     segments.add(
                         SleepSegment(
                             endTime = asleepAgain,
-                            sleepStage = SleepSessionRecord.STAGE_TYPE_AWAKE
+                            sleepStage = SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED
                         )
                     )
                 }
@@ -149,43 +149,61 @@ object SleepDetectionEngine {
         return wakeCandidates.last()
     }
 
+    /**
+     * Finds temporary awakenings (UNLOCK→LOCK pairs) within the sleep period and merges
+     * consecutive ones that are close together.
+     *
+     * **Merging rule:** If the gap between the end of one awakening (LOCK) and the start of the
+     * next (UNLOCK) is ≤ [awakeningThresholdMinutes], the two awakenings are treated as one
+     * continuous wake period (from the first UNLOCK to the last LOCK). If the gap is greater than
+     * the threshold, they are kept as separate awakenings.
+     *
+     * This means the threshold controls how far apart two brief wake-ups must be before they are
+     * counted individually rather than merged into a single longer one.
+     */
     private fun findTemporaryAwakenings(
         events: List<ScreenEvent>,
         startMillis: Long,
         wakeupMillis: Long,
         awakeningThresholdMinutes: Int
     ): List<Pair<Long, Long>> {
-        val awakenings = mutableListOf<Pair<Long, Long>>()
-        var index = 0
+        // Step 1: Collect all raw UNLOCK→LOCK pairs within the sleep window.
+        val rawAwakenings = mutableListOf<Pair<Long, Long>>()
 
-        while (index < events.size) {
-            val event = events[index]
-            if (event.timestampMillis < startMillis || event.timestampMillis >= wakeupMillis) {
-                index++
-                continue
-            }
+        for (i in events.indices) {
+            val event = events[i]
+            if (event.timestampMillis < startMillis || event.timestampMillis >= wakeupMillis) continue
+            if (event.type != "UNLOCK" && event.type != "PRESENT") continue
 
-            if (event.type == "UNLOCK" || event.type == "PRESENT") {
-                val nextLock = events.drop(index + 1).firstOrNull {
-                    it.type == "LOCK" && it.timestampMillis > event.timestampMillis && it.timestampMillis < wakeupMillis
-                }
+            val nextLock = events.drop(i + 1).firstOrNull {
+                it.type == "LOCK" && it.timestampMillis > event.timestampMillis && it.timestampMillis < wakeupMillis
+            } ?: continue
 
-                if (nextLock != null) {
-                    val awakeDuration = Duration.between(
-                        Instant.ofEpochMilli(event.timestampMillis),
-                        Instant.ofEpochMilli(nextLock.timestampMillis)
-                    ).toMinutes()
-
-                    if (awakeDuration in 1..awakeningThresholdMinutes.toLong()) {
-                        awakenings.add(event.timestampMillis to nextLock.timestampMillis)
-                    }
-                }
-            }
-
-            index++
+            rawAwakenings.add(event.timestampMillis to nextLock.timestampMillis)
         }
 
-        return awakenings
+        if (rawAwakenings.isEmpty()) return emptyList()
+
+        // Step 2: Merge consecutive awakenings whose gap is within the threshold.
+        val thresholdMillis = awakeningThresholdMinutes * 60_000L
+        val merged = mutableListOf<Pair<Long, Long>>()
+        var (mergeStart, mergeEnd) = rawAwakenings[0]
+
+        for (i in 1 until rawAwakenings.size) {
+            val (nextStart, nextEnd) = rawAwakenings[i]
+            val gap = nextStart - mergeEnd
+            if (gap <= thresholdMillis) {
+                // Close enough — extend the current awakening window.
+                mergeEnd = nextEnd
+            } else {
+                merged.add(mergeStart to mergeEnd)
+                mergeStart = nextStart
+                mergeEnd = nextEnd
+            }
+        }
+        merged.add(mergeStart to mergeEnd)
+
+        return merged
     }
 
     private fun isTimeInWindow(time: Int, start: Int, end: Int): Boolean {

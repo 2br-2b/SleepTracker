@@ -23,7 +23,7 @@ fun AdvancedSleepSettingsScreen(
 
     val dataRetentionDays by userPreferencesRepository.dataRetentionDays.collectAsState(initial = 7)
     val historyDisplayDays by userPreferencesRepository.historyDisplayDays.collectAsState(initial = 7)
-    val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 60)
+    val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 10)
 
     Scaffold(
         topBar = {
@@ -64,7 +64,7 @@ fun AdvancedSleepSettingsScreen(
 
             SectionHeader("Awakenings")
             Text(
-                "If you unlock, lock, and unlock again in your wakeup window, this threshold helps decide whether you stayed awake or went back to sleep.",
+                "Controls how brief wake-ups during sleep are grouped. Two wake-ups separated by a gap of this duration or less are merged into one continuous awake period. If the gap exceeds the threshold they are recorded as separate events. The same threshold is used in your wakeup window to distinguish a real morning wakeup from a brief check of the phone.",
                 style = MaterialTheme.typography.bodySmall
             )
             OutlinedTextField(
