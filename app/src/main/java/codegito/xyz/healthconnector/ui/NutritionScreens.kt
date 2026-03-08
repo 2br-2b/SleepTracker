@@ -41,6 +41,7 @@ import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -123,7 +124,9 @@ fun NutritionHomeScreen(
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer
                         ),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { navController.navigate("settings") }
                     ) {
                         Column(
                             modifier = Modifier.padding(12.dp),
@@ -134,7 +137,7 @@ fun NutritionHomeScreen(
                                 style = MaterialTheme.typography.titleSmall
                             )
                             Text(
-                                "Go to Settings → Nutrition to upload a dataset ZIP.",
+                                "Tap to go to Settings → Nutrition to upload a dataset ZIP.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -374,12 +377,42 @@ fun LogFoodScreen(
     }
     val recents by recentsRepo.recents().collectAsState(initial = emptyList())
 
+    // Time tracking prefs
+    val askEatenTime by userPreferencesRepository.nutritionAskEatenTime.collectAsState(initial = false)
+    val breakfastStart by userPreferencesRepository.nutritionBreakfastStartHour.collectAsState(initial = 6)
+    val breakfastEnd by userPreferencesRepository.nutritionBreakfastEndHour.collectAsState(initial = 10)
+    val lunchStart by userPreferencesRepository.nutritionLunchStartHour.collectAsState(initial = 11)
+    val lunchEnd by userPreferencesRepository.nutritionLunchEndHour.collectAsState(initial = 14)
+    val dinnerStart by userPreferencesRepository.nutritionDinnerStartHour.collectAsState(initial = 17)
+    val dinnerEnd by userPreferencesRepository.nutritionDinnerEndHour.collectAsState(initial = 21)
+
+    // Eaten time state — defaults to now (or noon for past dates)
+    val defaultEatenTime = remember(date) {
+        if (date == LocalDate.now()) LocalTime.now() else LocalTime.NOON
+    }
+    var eatenTime by remember { mutableStateOf(defaultEatenTime) }
+    var showEatenTimePicker by remember { mutableStateOf(false) }
+
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
     var amountText by remember { mutableStateOf("100") }
     var isLogging by remember { mutableStateOf(false) }
     var showManualEntry by remember { mutableStateOf(false) }
+
+    fun mealLabel(hour: Int): String = when {
+        hour in breakfastStart until breakfastEnd -> "Breakfast"
+        hour in lunchStart until lunchEnd -> "Lunch"
+        hour in dinnerStart until dinnerEnd -> "Dinner"
+        else -> "Snack"
+    }
+
+    fun mealTypeInt(hour: Int): Int = when {
+        hour in breakfastStart until breakfastEnd -> NutritionRecord.MEAL_TYPE_BREAKFAST
+        hour in lunchStart until lunchEnd -> NutritionRecord.MEAL_TYPE_LUNCH
+        hour in dinnerStart until dinnerEnd -> NutritionRecord.MEAL_TYPE_DINNER
+        else -> NutritionRecord.MEAL_TYPE_SNACK
+    }
 
     // Live search with debounce
     LaunchedEffect(query) {
@@ -396,10 +429,24 @@ fun LogFoodScreen(
     suspend fun logFood(candidate: FoodCandidate, grams: Double) {
         isLogging = true
         val zone = ZoneId.systemDefault()
-        val mealDuration = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
-        val endTime = if (date == LocalDate.now()) Instant.now()
-                      else date.atTime(12, 0).atZone(zone).toInstant()
-        val startTime = endTime.minusSeconds(mealDuration * 60L)
+        val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
+        val snackDurationMinutes = userPreferencesRepository.nutritionSnackDurationMinutes.first().coerceAtLeast(1)
+
+        val endTime = if (askEatenTime) {
+            date.atTime(eatenTime).atZone(zone).toInstant()
+        } else if (date == LocalDate.now()) {
+            Instant.now()
+        } else {
+            date.atTime(12, 0).atZone(zone).toInstant()
+        }
+
+        val effectiveHour = if (askEatenTime) eatenTime.hour
+                            else LocalTime.ofInstant(endTime, zone).hour
+        val mealType = mealTypeInt(effectiveHour)
+        val durationMinutes = if (mealType == NutritionRecord.MEAL_TYPE_SNACK) snackDurationMinutes
+                              else mealDurationMinutes
+
+        val startTime = endTime.minusSeconds(durationMinutes * 60L)
         val zoneOffset = zone.rules.getOffset(endTime)
         val multiplier = if (candidate.baseAmount.value > 0.0) grams / candidate.baseAmount.value else 1.0
 
@@ -409,6 +456,7 @@ fun LogFoodScreen(
             startZoneOffset = zoneOffset,
             endTime = endTime,
             endZoneOffset = zoneOffset,
+            mealType = mealType,
             energy = Energy.calories(candidate.nutrientsPerBase.calories * multiplier),
             protein = Mass.grams(candidate.nutrientsPerBase.proteinGrams * multiplier),
             totalCarbohydrate = Mass.grams(candidate.nutrientsPerBase.carbsGrams * multiplier),
@@ -425,6 +473,8 @@ fun LogFoodScreen(
         }
         isLogging = false
     }
+
+    val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
 
     Scaffold(
         topBar = {
@@ -453,6 +503,23 @@ fun LogFoodScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        // Eaten-time row — only shown when preference is enabled
+                        if (askEatenTime) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    "Eaten at: ${eatenTime.format(timeFormatter)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                AssistChip(
+                                    onClick = { showEatenTimePicker = true },
+                                    label = { Text(mealLabel(eatenTime.hour)) }
+                                )
+                            }
+                        }
                         OutlinedTextField(
                             value = amountText,
                             onValueChange = { amountText = it },
@@ -514,6 +581,7 @@ fun LogFoodScreen(
                             onClick = {
                                 selectedFood = candidate
                                 amountText = candidate.baseAmount.value.toInt().toString()
+                                eatenTime = defaultEatenTime
                             }
                         )
                     }
@@ -537,6 +605,7 @@ fun LogFoodScreen(
                             onClick = {
                                 selectedFood = candidate
                                 amountText = lastAmount.value.toInt().toString()
+                                eatenTime = defaultEatenTime
                             }
                         )
                     }
@@ -551,6 +620,29 @@ fun LogFoodScreen(
                 }
             }
         }
+    }
+
+    // Eaten-time picker dialog
+    if (showEatenTimePicker) {
+        val pickerState = rememberTimePickerState(
+            initialHour = eatenTime.hour,
+            initialMinute = eatenTime.minute,
+            is24Hour = false
+        )
+        AlertDialog(
+            onDismissRequest = { showEatenTimePicker = false },
+            title = { Text("When did you eat this?") },
+            text = { TimePicker(state = pickerState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    eatenTime = LocalTime.of(pickerState.hour, pickerState.minute)
+                    showEatenTimePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEatenTimePicker = false }) { Text("Cancel") }
+            }
+        )
     }
 
     // Manual entry dialog

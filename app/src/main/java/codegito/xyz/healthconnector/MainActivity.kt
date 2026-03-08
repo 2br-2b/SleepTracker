@@ -35,13 +35,13 @@ import androidx.navigation.compose.rememberNavController
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
-import codegito.xyz.healthconnector.ui.AdvancedSleepSettingsScreen
-import codegito.xyz.healthconnector.ui.AutoSleepSettingsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.LogFoodScreen
 import codegito.xyz.healthconnector.ui.NutritionDayDetailScreen
 import codegito.xyz.healthconnector.ui.NutritionHomeScreen
+import codegito.xyz.healthconnector.ui.NutritionSettingsScreen
 import codegito.xyz.healthconnector.ui.SettingsScreen
+import codegito.xyz.healthconnector.ui.SleepSettingsScreen
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -221,25 +221,25 @@ fun MainApp(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
                     onManagePermissions = onManagePermissions,
-                    onEditSleepStages = { navController.navigate(Screen.EditSleepStages.route) },
-                    onAutoSleepSettings = { navController.navigate(Screen.AutoSleepSettings.route) }
+                    onSleepSettings = { navController.navigate(Screen.SleepSettings.route) },
+                    onNutritionSettings = { navController.navigate(Screen.NutritionSettings.route) }
                 )
             }
-            composable(Screen.EditSleepStages.route) {
-                EditSleepStagesScreen(
+            composable(Screen.SleepSettings.route) {
+                SleepSettingsScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() },
+                    onEditSleepStages = { navController.navigate(Screen.EditSleepStages.route) }
+                )
+            }
+            composable(Screen.NutritionSettings.route) {
+                NutritionSettingsScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onBack = { navController.popBackStack() }
                 )
             }
-            composable(Screen.AutoSleepSettings.route) {
-                AutoSleepSettingsScreen(
-                    userPreferencesRepository = userPreferencesRepository,
-                    onBack = { navController.popBackStack() },
-                    onAdvancedSettings = { navController.navigate(Screen.AdvancedSleepSettings.route) }
-                )
-            }
-            composable(Screen.AdvancedSleepSettings.route) {
-                AdvancedSleepSettingsScreen(
+            composable(Screen.EditSleepStages.route) {
+                EditSleepStagesScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onBack = { navController.popBackStack() }
                 )
@@ -617,9 +617,9 @@ sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Nutrition : Screen("nutrition")
     object Settings : Screen("settings")
+    object SleepSettings : Screen("sleep_settings")
+    object NutritionSettings : Screen("nutrition_settings")
     object EditSleepStages : Screen("edit_sleep_stages")
-    object AutoSleepSettings : Screen("auto_sleep_settings")
-    object AdvancedSleepSettings : Screen("advanced_sleep_settings")
     object NutritionDay : Screen("nutrition/day/{date}") {
         fun route(date: LocalDate) = "nutrition/day/$date"
     }

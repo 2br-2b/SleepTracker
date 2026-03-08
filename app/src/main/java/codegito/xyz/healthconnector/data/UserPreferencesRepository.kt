@@ -58,9 +58,17 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val HISTORY_DISPLAY_DAYS_KEY = intPreferencesKey("history_display_days")
     private val ONBOARDING_COMPLETED_KEY = booleanPreferencesKey("onboarding_completed")
     private val AMOLED_PITCH_BLACK_KEY = booleanPreferencesKey("amoled_pitch_black")
+    private val SHOW_ADVANCED_SETTINGS_KEY = booleanPreferencesKey("show_advanced_settings")
     private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY = intPreferencesKey("nutrition_past_date_range_days")
     private val NUTRITION_MEAL_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_meal_duration_minutes")
     private val NUTRITION_SNACK_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_snack_duration_minutes")
+    private val NUTRITION_ASK_EATEN_TIME_KEY = booleanPreferencesKey("nutrition_ask_eaten_time")
+    private val NUTRITION_BREAKFAST_START_HOUR_KEY = intPreferencesKey("nutrition_breakfast_start_hour")
+    private val NUTRITION_BREAKFAST_END_HOUR_KEY = intPreferencesKey("nutrition_breakfast_end_hour")
+    private val NUTRITION_LUNCH_START_HOUR_KEY = intPreferencesKey("nutrition_lunch_start_hour")
+    private val NUTRITION_LUNCH_END_HOUR_KEY = intPreferencesKey("nutrition_lunch_end_hour")
+    private val NUTRITION_DINNER_START_HOUR_KEY = intPreferencesKey("nutrition_dinner_start_hour")
+    private val NUTRITION_DINNER_END_HOUR_KEY = intPreferencesKey("nutrition_dinner_end_hour")
 
     val rolloverHour: Flow<Int> = context.dataStore.data
         .map { preferences ->
@@ -149,6 +157,9 @@ class UserPreferencesRepository private constructor(private val context: Context
     val amoledPitchBlackEnabled: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[AMOLED_PITCH_BLACK_KEY] ?: false }
 
+    val showAdvancedSettings: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[SHOW_ADVANCED_SETTINGS_KEY] ?: false }
+
     val nutritionPastDateRangeDays: Flow<Int> = context.dataStore.data
         .map { preferences -> preferences[NUTRITION_PAST_DATE_RANGE_DAYS_KEY] ?: 7 }
 
@@ -157,6 +168,27 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     val nutritionSnackDurationMinutes: Flow<Int> = context.dataStore.data
         .map { preferences -> preferences[NUTRITION_SNACK_DURATION_MINUTES_KEY] ?: 10 }
+
+    val nutritionAskEatenTime: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[NUTRITION_ASK_EATEN_TIME_KEY] ?: false }
+
+    val nutritionBreakfastStartHour: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[NUTRITION_BREAKFAST_START_HOUR_KEY] ?: 6 }
+
+    val nutritionBreakfastEndHour: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[NUTRITION_BREAKFAST_END_HOUR_KEY] ?: 10 }
+
+    val nutritionLunchStartHour: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[NUTRITION_LUNCH_START_HOUR_KEY] ?: 11 }
+
+    val nutritionLunchEndHour: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[NUTRITION_LUNCH_END_HOUR_KEY] ?: 14 }
+
+    val nutritionDinnerStartHour: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[NUTRITION_DINNER_START_HOUR_KEY] ?: 17 }
+
+    val nutritionDinnerEndHour: Flow<Int> = context.dataStore.data
+        .map { preferences -> preferences[NUTRITION_DINNER_END_HOUR_KEY] ?: 21 }
 
     suspend fun setRolloverHour(hour: Int) {
         context.dataStore.edit { preferences ->
@@ -247,6 +279,10 @@ class UserPreferencesRepository private constructor(private val context: Context
         context.dataStore.edit { preferences -> preferences[AMOLED_PITCH_BLACK_KEY] = enabled }
     }
 
+    suspend fun setShowAdvancedSettings(show: Boolean) {
+        context.dataStore.edit { preferences -> preferences[SHOW_ADVANCED_SETTINGS_KEY] = show }
+    }
+
     suspend fun setNutritionPastDateRangeDays(days: Int) {
         context.dataStore.edit { preferences -> preferences[NUTRITION_PAST_DATE_RANGE_DAYS_KEY] = days }
     }
@@ -257,6 +293,31 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setNutritionSnackDurationMinutes(minutes: Int) {
         context.dataStore.edit { preferences -> preferences[NUTRITION_SNACK_DURATION_MINUTES_KEY] = minutes }
+    }
+
+    suspend fun setNutritionAskEatenTime(ask: Boolean) {
+        context.dataStore.edit { preferences -> preferences[NUTRITION_ASK_EATEN_TIME_KEY] = ask }
+    }
+
+    suspend fun setNutritionBreakfastHours(start: Int, end: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[NUTRITION_BREAKFAST_START_HOUR_KEY] = start
+            preferences[NUTRITION_BREAKFAST_END_HOUR_KEY] = end
+        }
+    }
+
+    suspend fun setNutritionLunchHours(start: Int, end: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[NUTRITION_LUNCH_START_HOUR_KEY] = start
+            preferences[NUTRITION_LUNCH_END_HOUR_KEY] = end
+        }
+    }
+
+    suspend fun setNutritionDinnerHours(start: Int, end: Int) {
+        context.dataStore.edit { preferences ->
+            preferences[NUTRITION_DINNER_START_HOUR_KEY] = start
+            preferences[NUTRITION_DINNER_END_HOUR_KEY] = end
+        }
     }
 
     suspend fun isAutoSleepDetectionActive(): Boolean {
