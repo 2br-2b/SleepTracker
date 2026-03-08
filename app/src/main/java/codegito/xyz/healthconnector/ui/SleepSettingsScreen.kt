@@ -2,8 +2,8 @@ package codegito.xyz.healthconnector.ui
 
 import android.app.Activity
 import android.content.Intent
-import android.provider.Settings
 import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -29,6 +29,7 @@ import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.data.model.TimeRange
 import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.LocalDate
@@ -46,14 +47,11 @@ fun SleepSettingsScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // ── Preferences ───────────────────────────────────────────────────────
     val showAdvanced by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val detectionMode by userPreferencesRepository.sleepDetectionMode.collectAsState(initial = SleepDetectionMode.AUTO)
-    val bedtimeStart by userPreferencesRepository.bedtimeWindowStart.collectAsState(initial = 21 * 60)
-    val bedtimeEnd by userPreferencesRepository.bedtimeWindowEnd.collectAsState(initial = 2 * 60)
-    val wakeupStart by userPreferencesRepository.wakeupWindowStart.collectAsState(initial = 5 * 60)
-    val wakeupEnd by userPreferencesRepository.wakeupWindowEnd.collectAsState(initial = 12 * 60)
+    val bedtimeWindow by userPreferencesRepository.bedtimeWindow.collectAsState(initial = TimeRange.BEDTIME)
+    val wakeupWindow by userPreferencesRepository.wakeupWindow.collectAsState(initial = TimeRange.WAKEUP)
     val awakeningEnabled by userPreferencesRepository.awakeningLoggingEnabled.collectAsState(initial = true)
     val defaultAwakeToAsleep by userPreferencesRepository.defaultAwakeToAsleepMinutes.collectAsState(initial = 15)
     val manualTemplateState by userPreferencesRepository.manualSleepTemplate.collectAsState(initial = null)
@@ -61,16 +59,12 @@ fun SleepSettingsScreen(
     val reminderFirstUnlock by userPreferencesRepository.reminderFirstUnlockEnabled.collectAsState(initial = true)
     val reminderDeadlineLoud by userPreferencesRepository.reminderDeadlineLoudEnabled.collectAsState(initial = true)
     val reminderDeadlineSilent by userPreferencesRepository.reminderDeadlineSilentEnabled.collectAsState(initial = true)
-    // Advanced prefs
     val historyDisplayDays by userPreferencesRepository.historyDisplayDays.collectAsState(initial = 7)
     val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 60)
     val dataRetentionDays by userPreferencesRepository.dataRetentionDays.collectAsState(initial = 7)
 
-    // ── Local UI state ────────────────────────────────────────────────────
     var hasOtherSensorsPermission by remember { mutableStateOf(false) }
     var showRolloverPicker by remember { mutableStateOf(false) }
-    var showBedtimePicker by remember { mutableStateOf<Boolean?>(null) }  // true=start, false=end
-    var showWakeupPicker by remember { mutableStateOf<Boolean?>(null) }
     var showTemplateEditor by remember { mutableStateOf(false) }
 
     DisposableEffect(lifecycleOwner) {
@@ -84,7 +78,6 @@ fun SleepSettingsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Template editor takes over the whole screen
     val currentTemplate = manualTemplateState
     if (showTemplateEditor && currentTemplate != null) {
         val baseDate = LocalDate.of(2000, 1, 1)
@@ -104,9 +97,8 @@ fun SleepSettingsScreen(
             initialSegments = initialSegments,
             sleepStages = sleepStages,
             onSave = { bedtime, segments ->
-                val newBedtimeOffset = bedtime.hour * 60 + bedtime.minute
                 val newTemplate = SleepLogTemplate(
-                    bedtimeOffsetMinutes = newBedtimeOffset,
+                    bedtimeOffsetMinutes = bedtime.hour * 60 + bedtime.minute,
                     segments = segments.map { segment ->
                         TemplateSegment(
                             startOffsetMinutes = 0,
@@ -146,7 +138,6 @@ fun SleepSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // ── Rollover time ─────────────────────────────────────────────
             SectionHeader("Rollover Time")
             ListItem(
                 headlineContent = { Text("Daily cutoff") },
@@ -163,12 +154,11 @@ fun SleepSettingsScreen(
 
             HorizontalDivider()
 
-            // ── Default template ──────────────────────────────────────────
             SectionHeader("Default template")
             Text(
-                "When you start logging a new day, the app will provide a default template. " +
-                "Either auto-generated from phone lock/unlock events or from a fixed template — " +
-                "you can edit both before saving.",
+                "When you start logging a new day, the app provides a default template — either " +
+                "auto-generated from phone lock/unlock events or from a fixed template you configure. " +
+                "You can edit it before saving.",
                 style = MaterialTheme.typography.bodySmall
             )
             Column {
@@ -198,7 +188,6 @@ fun SleepSettingsScreen(
                 }
             }
 
-            // ── Sensors permission ────────────────────────────────────────
             SectionHeader("Sensors Permission")
             Text(
                 "GrapheneOS requires the 'Other Sensors' permission for screen state detection.",
@@ -232,34 +221,37 @@ fun SleepSettingsScreen(
             if (detectionMode == SleepDetectionMode.AUTO) {
                 HorizontalDivider()
 
-                // ── Bedtime window ────────────────────────────────────────
                 SectionHeader("Bedtime Window")
                 Text(
                     "When you usually go to bed. The last phone lock in this range is your bedtime.",
                     style = MaterialTheme.typography.bodySmall
                 )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    WindowTimeButton("Start", bedtimeStart, Modifier.weight(1f)) { showBedtimePicker = true }
-                    WindowTimeButton("End", bedtimeEnd, Modifier.weight(1f)) { showBedtimePicker = false }
-                }
+                TimeRangeSetting(
+                    label = "",
+                    range = bedtimeWindow,
+                    onRangeChange = { range ->
+                        scope.launch {
+                            userPreferencesRepository.setBedtimeWindow(range)
+                            NotificationHelper.refreshServiceState(context, userPreferencesRepository)
+                        }
+                    }
+                )
 
-                // ── Wakeup window ─────────────────────────────────────────
                 SectionHeader("Wakeup Window")
                 Text(
                     "When you usually wake up. The first phone unlock in this range is your wakeup time.",
                     style = MaterialTheme.typography.bodySmall
                 )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    WindowTimeButton("Start", wakeupStart, Modifier.weight(1f)) { showWakeupPicker = true }
-                    WindowTimeButton("End", wakeupEnd, Modifier.weight(1f)) { showWakeupPicker = false }
-                }
-
-                // ── Awakenings ────────────────────────────────────────────
-                SectionHeader("Awakenings")
-                Text(
-                    "Log when you briefly wake up during the wakeup window.",
-                    style = MaterialTheme.typography.bodySmall
+                TimeRangeSetting(
+                    label = "",
+                    range = wakeupWindow,
+                    onRangeChange = { range ->
+                        scope.launch { userPreferencesRepository.setWakeupWindow(range) }
+                    }
                 )
+
+                SectionHeader("Awakenings")
+                Text("Log when you briefly wake up during the wakeup window.", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(
                         checked = awakeningEnabled,
@@ -268,18 +260,12 @@ fun SleepSettingsScreen(
                     Text("Log awakenings in bed")
                 }
 
-                // ── Before falling asleep ─────────────────────────────────
                 SectionHeader("Before Falling Asleep")
-                Text(
-                    "Default minutes from your last phone lock to when you fall asleep.",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Text("Default minutes from your last phone lock to when you fall asleep.", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = defaultAwakeToAsleep.toString(),
                     onValueChange = { raw ->
-                        raw.toIntOrNull()?.let { value ->
-                            scope.launch { userPreferencesRepository.setDefaultAwakeToAsleepMinutes(value) }
-                        }
+                        raw.toIntOrNull()?.let { scope.launch { userPreferencesRepository.setDefaultAwakeToAsleepMinutes(it) } }
                     },
                     label = { Text("Default awake in bed (minutes)") },
                     modifier = Modifier.fillMaxWidth()
@@ -298,40 +284,30 @@ fun SleepSettingsScreen(
 
             HorizontalDivider()
 
-            // ── Reminders ─────────────────────────────────────────────────
             SectionHeader("Reminders")
-            Text(
-                "Get notified to log your sleep after waking up.",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("Get notified to log your sleep after waking up.", style = MaterialTheme.typography.bodySmall)
             ListItem(
                 headlineContent = { Text("First Unlock Reminder") },
                 supportingContent = { Text("Fires after your awakening threshold passes since you first pick up your phone.") },
                 trailingContent = {
-                    Switch(
-                        checked = reminderFirstUnlock,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderFirstUnlockEnabled(it) } }
-                    )
+                    Switch(checked = reminderFirstUnlock,
+                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderFirstUnlockEnabled(it) } })
                 }
             )
             ListItem(
                 headlineContent = { Text("Deadline Reminder (Loud)") },
                 supportingContent = { Text("Alerts you at the end of the wakeup window if you've been active.") },
                 trailingContent = {
-                    Switch(
-                        checked = reminderDeadlineLoud,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineLoudEnabled(it) } }
-                    )
+                    Switch(checked = reminderDeadlineLoud,
+                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineLoudEnabled(it) } })
                 }
             )
             ListItem(
                 headlineContent = { Text("Deadline Reminder (Silent)") },
                 supportingContent = { Text("Silent notification at the end of the window if you haven't unlocked your phone.") },
                 trailingContent = {
-                    Switch(
-                        checked = reminderDeadlineSilent,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineSilentEnabled(it) } }
-                    )
+                    Switch(checked = reminderDeadlineSilent,
+                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineSilentEnabled(it) } })
                 }
             )
             OutlinedButton(
@@ -347,7 +323,6 @@ fun SleepSettingsScreen(
 
             HorizontalDivider()
 
-            // ── Sleep stages ──────────────────────────────────────────────
             SectionHeader("Sleep Stages")
             ListItem(
                 headlineContent = { Text("Customize Sleep Stages") },
@@ -356,7 +331,6 @@ fun SleepSettingsScreen(
                 modifier = Modifier.clickable { onEditSleepStages() }
             )
 
-            // ── Advanced (inline, hidden by default) ──────────────────────
             if (showAdvanced) {
                 HorizontalDivider()
                 SectionHeader("Advanced")
@@ -366,8 +340,8 @@ fun SleepSettingsScreen(
                 OutlinedTextField(
                     value = historyDisplayDays.toString(),
                     onValueChange = { raw ->
-                        raw.toIntOrNull()?.takeIf { it > 0 }?.let { value ->
-                            scope.launch { userPreferencesRepository.setHistoryDisplayDays(value) }
+                        raw.toIntOrNull()?.takeIf { it > 0 }?.let {
+                            scope.launch { userPreferencesRepository.setHistoryDisplayDays(it) }
                         }
                     },
                     label = { Text("History display days") },
@@ -382,8 +356,8 @@ fun SleepSettingsScreen(
                 OutlinedTextField(
                     value = awakeningThreshold.toString(),
                     onValueChange = { raw ->
-                        raw.toIntOrNull()?.takeIf { it >= 0 }?.let { value ->
-                            scope.launch { userPreferencesRepository.setAwakeningThreshold(value) }
+                        raw.toIntOrNull()?.takeIf { it >= 0 }?.let {
+                            scope.launch { userPreferencesRepository.setAwakeningThreshold(it) }
                         }
                     },
                     label = { Text("Awakening threshold (minutes)") },
@@ -398,8 +372,8 @@ fun SleepSettingsScreen(
                 OutlinedTextField(
                     value = dataRetentionDays.toString(),
                     onValueChange = { raw ->
-                        raw.toIntOrNull()?.takeIf { it > 0 }?.let { value ->
-                            scope.launch { userPreferencesRepository.setDataRetentionDays(value) }
+                        raw.toIntOrNull()?.takeIf { it > 0 }?.let {
+                            scope.launch { userPreferencesRepository.setDataRetentionDays(it) }
                         }
                     },
                     label = { Text("Data retention (days)") },
@@ -409,44 +383,15 @@ fun SleepSettingsScreen(
         }
     }
 
-    // ── Dialogs ───────────────────────────────────────────────────────────
     if (showRolloverPicker) {
-        RolloverTimePickerDialog(
+        AppTimePickerDialog(
             initialHour = rolloverHour,
-            onConfirm = { hour ->
+            initialMinute = 0,
+            onConfirm = { hour, _ ->
                 scope.launch { userPreferencesRepository.setRolloverHour(hour) }
                 showRolloverPicker = false
             },
             onDismiss = { showRolloverPicker = false }
-        )
-    }
-
-    showBedtimePicker?.let { isStart ->
-        SimpleTimePickerDialog(
-            initialMinutes = if (isStart) bedtimeStart else bedtimeEnd,
-            onConfirm = { mins ->
-                scope.launch {
-                    if (isStart) userPreferencesRepository.setBedtimeWindow(mins, bedtimeEnd)
-                    else userPreferencesRepository.setBedtimeWindow(bedtimeStart, mins)
-                    NotificationHelper.refreshServiceState(context, userPreferencesRepository)
-                }
-                showBedtimePicker = null
-            },
-            onDismiss = { showBedtimePicker = null }
-        )
-    }
-
-    showWakeupPicker?.let { isStart ->
-        SimpleTimePickerDialog(
-            initialMinutes = if (isStart) wakeupStart else wakeupEnd,
-            onConfirm = { mins ->
-                scope.launch {
-                    if (isStart) userPreferencesRepository.setWakeupWindow(mins, wakeupEnd)
-                    else userPreferencesRepository.setWakeupWindow(wakeupStart, mins)
-                }
-                showWakeupPicker = null
-            },
-            onDismiss = { showWakeupPicker = null }
         )
     }
 }

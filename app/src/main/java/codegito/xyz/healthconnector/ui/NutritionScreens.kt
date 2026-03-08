@@ -25,6 +25,7 @@ import androidx.navigation.NavController
 import codegito.xyz.healthconnector.HealthConnectManager
 import codegito.xyz.healthconnector.Screen
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
+import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.db.AppDatabase
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.nutrition.data.NutritionRecentsRepository
@@ -379,12 +380,9 @@ fun LogFoodScreen(
 
     // Time tracking prefs
     val askEatenTime by userPreferencesRepository.nutritionAskEatenTime.collectAsState(initial = false)
-    val breakfastStart by userPreferencesRepository.nutritionBreakfastStartHour.collectAsState(initial = 6)
-    val breakfastEnd by userPreferencesRepository.nutritionBreakfastEndHour.collectAsState(initial = 10)
-    val lunchStart by userPreferencesRepository.nutritionLunchStartHour.collectAsState(initial = 11)
-    val lunchEnd by userPreferencesRepository.nutritionLunchEndHour.collectAsState(initial = 14)
-    val dinnerStart by userPreferencesRepository.nutritionDinnerStartHour.collectAsState(initial = 17)
-    val dinnerEnd by userPreferencesRepository.nutritionDinnerEndHour.collectAsState(initial = 21)
+    val breakfastRange by userPreferencesRepository.nutritionBreakfastRange.collectAsState(initial = TimeRange.BREAKFAST)
+    val lunchRange by userPreferencesRepository.nutritionLunchRange.collectAsState(initial = TimeRange.LUNCH)
+    val dinnerRange by userPreferencesRepository.nutritionDinnerRange.collectAsState(initial = TimeRange.DINNER)
 
     // Eaten time state — defaults to now (or noon for past dates)
     val defaultEatenTime = remember(date) {
@@ -400,17 +398,17 @@ fun LogFoodScreen(
     var isLogging by remember { mutableStateOf(false) }
     var showManualEntry by remember { mutableStateOf(false) }
 
-    fun mealLabel(hour: Int): String = when {
-        hour in breakfastStart until breakfastEnd -> "Breakfast"
-        hour in lunchStart until lunchEnd -> "Lunch"
-        hour in dinnerStart until dinnerEnd -> "Dinner"
+    fun mealLabel(minuteOfDay: Int): String = when {
+        minuteOfDay in breakfastRange -> "Breakfast"
+        minuteOfDay in lunchRange -> "Lunch"
+        minuteOfDay in dinnerRange -> "Dinner"
         else -> "Snack"
     }
 
-    fun mealTypeInt(hour: Int): Int = when {
-        hour in breakfastStart until breakfastEnd -> NutritionRecord.MEAL_TYPE_BREAKFAST
-        hour in lunchStart until lunchEnd -> NutritionRecord.MEAL_TYPE_LUNCH
-        hour in dinnerStart until dinnerEnd -> NutritionRecord.MEAL_TYPE_DINNER
+    fun mealTypeInt(minuteOfDay: Int): Int = when {
+        minuteOfDay in breakfastRange -> NutritionRecord.MEAL_TYPE_BREAKFAST
+        minuteOfDay in lunchRange -> NutritionRecord.MEAL_TYPE_LUNCH
+        minuteOfDay in dinnerRange -> NutritionRecord.MEAL_TYPE_DINNER
         else -> NutritionRecord.MEAL_TYPE_SNACK
     }
 
@@ -440,9 +438,8 @@ fun LogFoodScreen(
             date.atTime(12, 0).atZone(zone).toInstant()
         }
 
-        val effectiveHour = if (askEatenTime) eatenTime.hour
-                            else LocalTime.ofInstant(endTime, zone).hour
-        val mealType = mealTypeInt(effectiveHour)
+        val effectiveTime = if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
+        val mealType = mealTypeInt(effectiveTime.hour * 60 + effectiveTime.minute)
         val durationMinutes = if (mealType == NutritionRecord.MEAL_TYPE_SNACK) snackDurationMinutes
                               else mealDurationMinutes
 
@@ -516,7 +513,7 @@ fun LogFoodScreen(
                                 )
                                 AssistChip(
                                     onClick = { showEatenTimePicker = true },
-                                    label = { Text(mealLabel(eatenTime.hour)) }
+                                    label = { Text(mealLabel(eatenTime.hour * 60 + eatenTime.minute)) }
                                 )
                             }
                         }
