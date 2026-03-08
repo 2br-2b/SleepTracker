@@ -53,7 +53,7 @@ jobs:
       - name: Build release APK
         run: |
           VERSION_CODE=${{ github.run_number }}
-          VERSION_NAME="1.0.${{ github.run_number }}"
+          VERSION_NAME="1.1.0-dev${{ github.run_number }}"
           bash ./gradlew --no-daemon --build-cache assembleRelease -PciVersionCode=${VERSION_CODE} -PciVersionName=${VERSION_NAME}
 
       - name: Upload release artifact
