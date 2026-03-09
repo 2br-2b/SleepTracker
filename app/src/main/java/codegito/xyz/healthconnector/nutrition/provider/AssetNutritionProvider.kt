@@ -26,6 +26,7 @@ class AssetNutritionProvider(
                         id = obj.getString("id"),
                         name = obj.getString("name"),
                         baseAmount = NutritionAmount(obj.optDouble("baseAmount", 100.0), QuantityUnit.GRAM),
+                        servingSizeOz = if (obj.has("servingSizeOz")) obj.getDouble("servingSizeOz") else null,
                         nutrientsPerBase = NutrientVector(
                             calories = obj.optDouble("calories", 0.0),
                             proteinGrams = obj.optDouble("protein", 0.0),

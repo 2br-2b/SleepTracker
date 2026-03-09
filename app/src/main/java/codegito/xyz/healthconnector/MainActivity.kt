@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.net.Uri
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -197,14 +199,17 @@ fun MainApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    val topLevelRoutes = remember(sleepEnabled, nutritionEnabled) {
+        buildList {
+            if (sleepEnabled) add("home")
+            if (nutritionEnabled) add("nutrition")
+            add("settings")
+        }
+    }
+
     Scaffold(
         bottomBar = {
             // Only show bottom bar on top-level screens
-            val topLevelRoutes = buildList {
-                if (sleepEnabled) add("home")
-                if (nutritionEnabled) add("nutrition")
-                add("settings")
-            }
             if (currentRoute in topLevelRoutes) {
                 NavigationBar {
                     // Sleep tab: only when sleep tracking enabled
@@ -253,7 +258,43 @@ fun MainApp(
             }
         }
     ) { paddingValues ->
-        NavHost(navController, startDestination = Screen.Home.route, modifier = Modifier.padding(paddingValues)) {
+        val isOnTopLevel = currentRoute in topLevelRoutes
+
+        NavHost(
+            navController,
+            startDestination = Screen.Home.route,
+            modifier = Modifier
+                .padding(paddingValues)
+                .then(
+                    if (isOnTopLevel) Modifier.pointerInput(currentRoute, topLevelRoutes.joinToString()) {
+                        var swipeDelta = 0f
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                val threshold = 80.dp.toPx()
+                                val currentIndex = topLevelRoutes.indexOf(currentRoute)
+                                val target = when {
+                                    swipeDelta > threshold && currentIndex > 0 ->
+                                        topLevelRoutes[currentIndex - 1]
+                                    swipeDelta < -threshold && currentIndex < topLevelRoutes.size - 1 ->
+                                        topLevelRoutes[currentIndex + 1]
+                                    else -> null
+                                }
+                                if (target != null) {
+                                    navController.navigate(target) {
+                                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                }
+                                swipeDelta = 0f
+                            },
+                            onDragCancel = { swipeDelta = 0f },
+                            onHorizontalDrag = { _, delta -> swipeDelta += delta }
+                        )
+                    }
+                    else Modifier
+                )
+        ) {
             composable(Screen.Home.route) {
                 HomeScreen(
                     healthConnectManager = healthConnectManager,
