@@ -11,6 +11,9 @@ import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.model.TrackingType
 import codegito.xyz.healthconnector.data.SleepStageConfig
+import codegito.xyz.healthconnector.nutrition.domain.NutrientConfig
+import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
+import codegito.xyz.healthconnector.nutrition.domain.NutritionUnitSystem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -74,6 +77,8 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val NUTRITION_LUNCH_END_KEY         = intPreferencesKey("nutrition_lunch_end_min")
     private val NUTRITION_DINNER_START_KEY      = intPreferencesKey("nutrition_dinner_start_min")
     private val NUTRITION_DINNER_END_KEY        = intPreferencesKey("nutrition_dinner_end_min")
+    private val NUTRIENT_CONFIG_JSON_KEY        = stringPreferencesKey("nutrient_config_json")
+    private val NUTRITION_UNIT_SYSTEM_KEY       = stringPreferencesKey("nutrition_unit_system")
 
     // ── Sleep flows ───────────────────────────────────────────────────────
 
@@ -193,6 +198,19 @@ class UserPreferencesRepository private constructor(private val context: Context
         context.dataStore.data.map { it[NUTRITION_DINNER_END_KEY]   ?: (21 * 60) },
         ::TimeRange
     )
+
+    val nutrientConfig: Flow<List<NutrientConfig>> = context.dataStore.data
+        .map { prefs ->
+            prefs[NUTRIENT_CONFIG_JSON_KEY]?.let {
+                runCatching { json.decodeFromString<List<NutrientConfig>>(it) }.getOrNull()
+            } ?: NutrientDefaults.defaultConfig()
+        }
+
+    val nutritionUnitSystem: Flow<NutritionUnitSystem> = context.dataStore.data
+        .map { prefs ->
+            try { NutritionUnitSystem.valueOf(prefs[NUTRITION_UNIT_SYSTEM_KEY] ?: NutritionUnitSystem.US.name) }
+            catch (_: Exception) { NutritionUnitSystem.US }
+        }
 
     // ── Sleep setters ─────────────────────────────────────────────────────
 
@@ -323,6 +341,14 @@ class UserPreferencesRepository private constructor(private val context: Context
             prefs[NUTRITION_DINNER_START_KEY] = range.startMinutes
             prefs[NUTRITION_DINNER_END_KEY]   = range.endMinutes
         }
+    }
+
+    suspend fun saveNutrientConfig(config: List<NutrientConfig>) {
+        context.dataStore.edit { prefs -> prefs[NUTRIENT_CONFIG_JSON_KEY] = json.encodeToString(config) }
+    }
+
+    suspend fun setNutritionUnitSystem(system: NutritionUnitSystem) {
+        context.dataStore.edit { prefs -> prefs[NUTRITION_UNIT_SYSTEM_KEY] = system.name }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

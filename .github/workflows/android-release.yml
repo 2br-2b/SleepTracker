@@ -3,7 +3,7 @@ name: Android Release Build
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -29,12 +29,6 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Cache Android SDK packages
         id: android-sdk-cache
         uses: actions/cache@v4
@@ -46,7 +40,11 @@ jobs:
             ${{ env.ANDROID_HOME }}/build-tools/35.0.0
           key: ${{ runner.os }}-android-sdk-35-35.0.0
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install Android SDK packages
+        if: steps.android-sdk-cache.outputs.cache-hit != 'true'
         run: |
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
@@ -54,7 +52,7 @@ jobs:
         run: |
           VERSION_CODE=${{ github.run_number }}
           VERSION_NAME="1.1.0-dev${{ github.run_number }}"
-          bash ./gradlew --no-daemon --build-cache assembleRelease -PciVersionCode=${VERSION_CODE} -PciVersionName=${VERSION_NAME}
+          bash ./gradlew --no-daemon --build-cache assembleRelease -PciVersionCode=${VERSION_CODE} -PciVersionName=${VERSION_NAME} -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4

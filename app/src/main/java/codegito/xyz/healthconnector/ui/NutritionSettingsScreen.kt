@@ -18,6 +18,10 @@ import androidx.compose.ui.unit.dp
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
+import codegito.xyz.healthconnector.nutrition.domain.NutrientConfig
+import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
+import codegito.xyz.healthconnector.nutrition.domain.NutrientKey
+import codegito.xyz.healthconnector.nutrition.domain.NutritionUnitSystem
 import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,6 +48,8 @@ fun NutritionSettingsScreen(
     val dinnerRange by userPreferencesRepository.nutritionDinnerRange.collectAsState(initial = TimeRange.DINNER)
     val mealDuration by userPreferencesRepository.nutritionMealDurationMinutes.collectAsState(initial = 30)
     val snackDuration by userPreferencesRepository.nutritionSnackDurationMinutes.collectAsState(initial = 10)
+    val unitSystem by userPreferencesRepository.nutritionUnitSystem.collectAsState(initial = NutritionUnitSystem.US)
+    val nutrientConfigList by userPreferencesRepository.nutrientConfig.collectAsState(initial = NutrientDefaults.defaultConfig())
 
     var datasetRecordCount by remember { mutableIntStateOf(-1) }
     var isBuildingDataset by remember { mutableStateOf(false) }
@@ -184,10 +190,103 @@ fun NutritionSettingsScreen(
                 }
             )
 
+            HorizontalDivider()
+
+            // ── Unit system ───────────────────────────────────────────────
+            SectionHeader("Units")
+
+            Text(
+                "Choose the unit system used when entering and displaying food amounts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                NutritionUnitSystem.entries.forEach { system ->
+                    val label = when (system) {
+                        NutritionUnitSystem.US -> "US (oz)"
+                        NutritionUnitSystem.METRIC -> "Metric (g)"
+                    }
+                    FilterChip(
+                        selected = unitSystem == system,
+                        onClick = { scope.launch { userPreferencesRepository.setNutritionUnitSystem(system) } },
+                        label = { Text(label) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
             // ── Advanced (inline) ─────────────────────────────────────────
             if (showAdvanced && contentEnabled) {
                 HorizontalDivider()
                 SectionHeader("Advanced")
+
+                // ── Nutrients ─────────────────────────────────────────────
+                Text("Nutrients", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Choose which nutrients to track and their display order. Use ↑↓ to reorder.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                nutrientConfigList.forEachIndexed { index, cfg ->
+                    val key = runCatching { NutrientKey.valueOf(cfg.key) }.getOrNull()
+                    val name = key?.let { NutrientDefaults.displayName[it] } ?: cfg.key
+                    val unit = key?.let { NutrientDefaults.displayUnit[it] }?.let { " ($it)" } ?: ""
+                    ListItem(
+                        headlineContent = { Text("$name$unit") },
+                        leadingContent = {
+                            Checkbox(
+                                checked = cfg.enabled,
+                                onCheckedChange = { checked ->
+                                    val updated = nutrientConfigList.toMutableList().also {
+                                        it[index] = cfg.copy(enabled = checked)
+                                    }
+                                    scope.launch { userPreferencesRepository.saveNutrientConfig(updated) }
+                                }
+                            )
+                        },
+                        trailingContent = {
+                            Row {
+                                IconButton(
+                                    onClick = {
+                                        if (index > 0) {
+                                            val updated = nutrientConfigList.toMutableList()
+                                            val tmp = updated[index - 1]
+                                            updated[index - 1] = updated[index]
+                                            updated[index] = tmp
+                                            scope.launch { userPreferencesRepository.saveNutrientConfig(updated) }
+                                        }
+                                    },
+                                    enabled = index > 0
+                                ) { Text("↑") }
+                                IconButton(
+                                    onClick = {
+                                        if (index < nutrientConfigList.size - 1) {
+                                            val updated = nutrientConfigList.toMutableList()
+                                            val tmp = updated[index + 1]
+                                            updated[index + 1] = updated[index]
+                                            updated[index] = tmp
+                                            scope.launch { userPreferencesRepository.saveNutrientConfig(updated) }
+                                        }
+                                    },
+                                    enabled = index < nutrientConfigList.size - 1
+                                ) { Text("↓") }
+                            }
+                        }
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        scope.launch { userPreferencesRepository.saveNutrientConfig(NutrientDefaults.defaultConfig()) }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Reset nutrients to defaults") }
+
+                HorizontalDivider()
 
                 Text("Time Tracking", style = MaterialTheme.typography.labelLarge)
                 ListItem(

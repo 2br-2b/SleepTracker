@@ -31,9 +31,16 @@ import codegito.xyz.healthconnector.data.db.AppDatabase
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.nutrition.data.NutritionRecentsRepository
 import codegito.xyz.healthconnector.nutrition.domain.FoodCandidate
+import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
+import codegito.xyz.healthconnector.nutrition.domain.NutrientKey
 import codegito.xyz.healthconnector.nutrition.domain.NutrientVector
 import codegito.xyz.healthconnector.nutrition.domain.NutritionAmount
+import codegito.xyz.healthconnector.nutrition.domain.NutritionUnitSystem
 import codegito.xyz.healthconnector.nutrition.domain.QuantityUnit
+import codegito.xyz.healthconnector.nutrition.domain.amountUnitLabel
+import codegito.xyz.healthconnector.nutrition.domain.formatAmount
+import codegito.xyz.healthconnector.nutrition.domain.gramsToAmountText
+import codegito.xyz.healthconnector.nutrition.domain.parseAmountToGrams
 import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -422,6 +429,13 @@ fun LogFoodScreen(
     val breakfastRange by userPreferencesRepository.nutritionBreakfastRange.collectAsState(initial = TimeRange.BREAKFAST)
     val lunchRange by userPreferencesRepository.nutritionLunchRange.collectAsState(initial = TimeRange.LUNCH)
     val dinnerRange by userPreferencesRepository.nutritionDinnerRange.collectAsState(initial = TimeRange.DINNER)
+    val unitSystem by userPreferencesRepository.nutritionUnitSystem.collectAsState(initial = NutritionUnitSystem.US)
+    val nutrientConfigList by userPreferencesRepository.nutrientConfig.collectAsState(initial = NutrientDefaults.defaultConfig())
+    val enabledNutrients = remember(nutrientConfigList) {
+        nutrientConfigList
+            .filter { it.enabled }
+            .mapNotNull { cfg -> runCatching { NutrientKey.valueOf(cfg.key) }.getOrNull() }
+    }
 
     // Eaten time state — defaults to now (or noon for past dates)
     val defaultEatenTime = remember(date) {
@@ -433,9 +447,13 @@ fun LogFoodScreen(
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
-    var amountText by remember { mutableStateOf("100") }
+    var amountText by remember { mutableStateOf("") }
     var isLogging by remember { mutableStateOf(false) }
-    var showManualEntry by remember { mutableStateOf(false) }
+
+    // When a food is selected, default the amount text in the current unit system
+    fun setDefaultAmount(candidate: FoodCandidate) {
+        amountText = gramsToAmountText(candidate.baseAmount.value, unitSystem)
+    }
 
     fun mealLabel(minuteOfDay: Int): String = when {
         minuteOfDay in breakfastRange -> "Breakfast"
@@ -485,6 +503,8 @@ fun LogFoodScreen(
         val startTime = endTime.minusSeconds(durationMinutes * 60L)
         val zoneOffset = zone.rules.getOffset(endTime)
         val multiplier = if (candidate.baseAmount.value > 0.0) grams / candidate.baseAmount.value else 1.0
+        val n = candidate.nutrientsPerBase
+        fun mass(v: Double) = if (v * multiplier > 0.0) Mass.grams(v * multiplier) else null
 
         val record = NutritionRecord(
             name = candidate.name,
@@ -493,10 +513,36 @@ fun LogFoodScreen(
             endTime = endTime,
             endZoneOffset = zoneOffset,
             mealType = mealType,
-            energy = Energy.calories(candidate.nutrientsPerBase.calories * multiplier),
-            protein = Mass.grams(candidate.nutrientsPerBase.proteinGrams * multiplier),
-            totalCarbohydrate = Mass.grams(candidate.nutrientsPerBase.carbsGrams * multiplier),
-            totalFat = Mass.grams(candidate.nutrientsPerBase.fatGrams * multiplier)
+            energy = if (n.calories * multiplier > 0.0) Energy.calories(n.calories * multiplier) else null,
+            protein = mass(n.proteinGrams),
+            totalCarbohydrate = mass(n.carbsGrams),
+            totalFat = mass(n.fatGrams),
+            saturatedFat = mass(n.saturatedFatGrams),
+            polyunsaturatedFat = mass(n.polyunsaturatedFatGrams),
+            monounsaturatedFat = mass(n.monounsaturatedFatGrams),
+            transFat = mass(n.transFatGrams),
+            dietaryFiber = mass(n.fiberGrams),
+            sugar = mass(n.sugarGrams),
+            sodium = mass(n.sodiumGrams),
+            cholesterol = mass(n.cholesterolGrams),
+            potassium = mass(n.potassiumGrams),
+            calcium = mass(n.calciumGrams),
+            iron = mass(n.ironGrams),
+            magnesium = mass(n.magnesiumGrams),
+            phosphorus = mass(n.phosphorusGrams),
+            zinc = mass(n.zincGrams),
+            vitaminA = mass(n.vitaminAGrams),
+            vitaminC = mass(n.vitaminCGrams),
+            vitaminD = mass(n.vitaminDGrams),
+            vitaminE = mass(n.vitaminEGrams),
+            vitaminK = mass(n.vitaminKGrams),
+            vitaminB6 = mass(n.vitaminB6Grams),
+            vitaminB12 = mass(n.vitaminB12Grams),
+            thiamin = mass(n.thiaminGrams),
+            riboflavin = mass(n.riboflavinGrams),
+            niacin = mass(n.niacinGrams),
+            folate = mass(n.folateGrams),
+            caffeine = mass(n.caffeineGrams),
         )
 
         runCatching {
@@ -529,16 +575,24 @@ fun LogFoodScreen(
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(candidate.name, style = MaterialTheme.typography.titleMedium)
                         val baseNutrition = candidate.nutrientsPerBase
-                        val grams = amountText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: candidate.baseAmount.value
+                        val grams = parseAmountToGrams(amountText, unitSystem) ?: candidate.baseAmount.value
                         val multiplier = if (candidate.baseAmount.value > 0.0) grams / candidate.baseAmount.value else 1.0
-                        Text(
-                            "${(baseNutrition.calories * multiplier).toInt()} kcal  " +
-                            "P: ${(baseNutrition.proteinGrams * multiplier).toInt()}g  " +
-                            "C: ${(baseNutrition.carbsGrams * multiplier).toInt()}g  " +
-                            "F: ${(baseNutrition.fatGrams * multiplier).toInt()}g",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        // Show enabled nutrients in a brief summary
+                        val summaryParts = enabledNutrients.mapNotNull { key ->
+                            val displayVal = NutrientDefaults.getValueInDisplayUnit(baseNutrition, key) * multiplier
+                            if (displayVal <= 0.0) return@mapNotNull null
+                            val unit = NutrientDefaults.displayUnit[key] ?: ""
+                            val short = NutrientDefaults.displayName[key]?.take(3) ?: key.name.take(3)
+                            if (key == NutrientKey.CALORIES) "${displayVal.toInt()} kcal"
+                            else "$short: ${if (displayVal < 10.0) "%.1f".format(displayVal) else displayVal.toInt().toString()}$unit"
+                        }.take(5)
+                        if (summaryParts.isNotEmpty()) {
+                            Text(
+                                summaryParts.joinToString("  "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         // Eaten-time row — only shown when preference is enabled
                         if (askEatenTime) {
                             Row(
@@ -559,22 +613,22 @@ fun LogFoodScreen(
                         OutlinedTextField(
                             value = amountText,
                             onValueChange = { amountText = it },
-                            label = { Text("Amount (grams)") },
+                            label = { Text("Amount (${amountUnitLabel(unitSystem)})") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
-                                onClick = { selectedFood = null; amountText = "100" },
+                                onClick = { selectedFood = null; amountText = "" },
                                 modifier = Modifier.weight(1f)
                             ) { Text("Cancel") }
                             Button(
                                 onClick = {
-                                    val g = amountText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: return@Button
+                                    val g = parseAmountToGrams(amountText, unitSystem) ?: return@Button
                                     scope.launch { logFood(candidate, g) }
                                 },
-                                enabled = !isLogging && amountText.toDoubleOrNull()?.let { it > 0.0 } == true,
+                                enabled = !isLogging && parseAmountToGrams(amountText, unitSystem) != null,
                                 modifier = Modifier.weight(1f)
                             ) { Text(if (isLogging) "Logging…" else "Log") }
                         }
@@ -613,10 +667,11 @@ fun LogFoodScreen(
                     items(searchResults) { candidate ->
                         FoodCandidateRow(
                             candidate = candidate,
+                            subtitle = formatAmount(candidate.baseAmount.value, unitSystem),
                             selected = selectedFood?.id == candidate.id,
                             onClick = {
                                 selectedFood = candidate
-                                amountText = candidate.baseAmount.value.toInt().toString()
+                                setDefaultAmount(candidate)
                                 eatenTime = defaultEatenTime
                             }
                         )
@@ -636,11 +691,11 @@ fun LogFoodScreen(
                     items(recents) { (candidate, lastAmount) ->
                         FoodCandidateRow(
                             candidate = candidate,
-                            subtitle = "${lastAmount.value.toInt()} ${lastAmount.unit.name.lowercase()}",
+                            subtitle = formatAmount(lastAmount.value, unitSystem),
                             selected = selectedFood?.id == candidate.id,
                             onClick = {
                                 selectedFood = candidate
-                                amountText = lastAmount.value.toInt().toString()
+                                amountText = gramsToAmountText(lastAmount.value, unitSystem)
                                 eatenTime = defaultEatenTime
                             }
                         )
@@ -650,7 +705,7 @@ fun LogFoodScreen(
                 // Enter manually
                 item {
                     OutlinedButton(
-                        onClick = { showManualEntry = true },
+                        onClick = { navController.navigate(Screen.ManualFoodEntry.route(date)) },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Enter manually") }
                 }
@@ -681,16 +736,6 @@ fun LogFoodScreen(
         )
     }
 
-    // Manual entry dialog
-    if (showManualEntry) {
-        ManualFoodEntryDialog(
-            onDismiss = { showManualEntry = false },
-            onLog = { candidate, grams ->
-                showManualEntry = false
-                scope.launch { logFood(candidate, grams) }
-            }
-        )
-    }
 }
 
 @Composable
@@ -724,110 +769,3 @@ private fun FoodCandidateRow(
     }
 }
 
-@Composable
-private fun ManualFoodEntryDialog(
-    onDismiss: () -> Unit,
-    onLog: (FoodCandidate, Double) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    var amountText by remember { mutableStateOf("100") }
-    var calText by remember { mutableStateOf("") }
-    var proteinText by remember { mutableStateOf("") }
-    var carbsText by remember { mutableStateOf("") }
-    var fatText by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Enter manually") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Food name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = { amountText = it },
-                    label = { Text("Amount (g)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    "Nutrition values for the amount above:",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = calText,
-                        onValueChange = { calText = it },
-                        label = { Text("kcal") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = proteinText,
-                        onValueChange = { proteinText = it },
-                        label = { Text("P (g)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = carbsText,
-                        onValueChange = { carbsText = it },
-                        label = { Text("C (g)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = fatText,
-                        onValueChange = { fatText = it },
-                        label = { Text("F (g)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val trimmedName = name.trim()
-                    val grams = amountText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: return@TextButton
-                    if (trimmedName.isEmpty()) return@TextButton
-                    // Scale to per-100g for storage in recents
-                    val scale = if (grams > 0.0) 100.0 / grams else 1.0
-                    val cal = (calText.toDoubleOrNull() ?: 0.0) * scale
-                    val protein = (proteinText.toDoubleOrNull() ?: 0.0) * scale
-                    val carbs = (carbsText.toDoubleOrNull() ?: 0.0) * scale
-                    val fat = (fatText.toDoubleOrNull() ?: 0.0) * scale
-                    val candidate = FoodCandidate(
-                        id = "manual-${trimmedName.lowercase().replace(" ", "-")}",
-                        name = trimmedName,
-                        baseAmount = NutritionAmount(100.0, QuantityUnit.GRAM),
-                        nutrientsPerBase = NutrientVector(
-                            calories = cal,
-                            proteinGrams = protein,
-                            carbsGrams = carbs,
-                            fatGrams = fat
-                        )
-                    )
-                    onLog(candidate, grams)
-                },
-                enabled = name.isNotBlank() && amountText.toDoubleOrNull()?.let { it > 0.0 } == true
-            ) { Text("Log") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
-    )
-}
