@@ -127,8 +127,9 @@ object NotificationHelper {
     }
 
     suspend fun refreshServiceState(context: Context, prefs: UserPreferencesRepository) {
-        if (!prefs.isAutoSleepDetectionActive()) {
-            Log.d("NotificationHelper", "Auto mode inactive, stopping service")
+        val sleepEnabled = prefs.sleepEnabled.first()
+        if (!sleepEnabled || !prefs.isAutoSleepDetectionActive()) {
+            Log.d("NotificationHelper", "Sleep disabled or auto mode inactive, stopping service")
             val stopIntent = Intent(context, SleepTrackingService::class.java)
             context.stopService(stopIntent)
             return

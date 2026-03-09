@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -52,9 +53,13 @@ import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.data.model.TimeRange
+import codegito.xyz.healthconnector.data.model.TrackingType
 import codegito.xyz.healthconnector.ui.AppTimePickerDialog
+import codegito.xyz.healthconnector.ui.PermissionCard
+import codegito.xyz.healthconnector.ui.PermissionState
 import codegito.xyz.healthconnector.ui.SleepLogEditor
 import codegito.xyz.healthconnector.ui.TimeRangeSetting
+import codegito.xyz.healthconnector.ui.loadPermissionState
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -81,13 +86,20 @@ class OnboardingActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Prevent the user from backing out of onboarding before completion
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { /* block back */ }
+        })
+
         setContent {
             SleepTrackerTheme {
                 OnboardingFlow(
                     userPreferencesRepository = userPreferencesRepository,
                     healthConnectManager = healthConnectManager,
                     onInstallHealthConnect = { openHealthConnectInstall() },
-                    onRequestHealthPermissions = { requestHealthPermissions.launch(healthConnectManager.permissions) },
+                    onRequestHealthPermissions = { perms ->
+                        requestHealthPermissions.launch(perms)
+                    },
                     onRequestNotificationPermission = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -140,6 +152,7 @@ class OnboardingActivity : ComponentActivity() {
 }
 
 private enum class OnboardingStep {
+    TrackingTypeSelection,
     HealthConnect,
     AutoDetectionExplanation,
     LoggingMode,
@@ -154,7 +167,7 @@ private fun OnboardingFlow(
     userPreferencesRepository: UserPreferencesRepository,
     healthConnectManager: HealthConnectManager,
     onInstallHealthConnect: () -> Unit,
-    onRequestHealthPermissions: () -> Unit,
+    onRequestHealthPermissions: (Set<String>) -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onRequestOtherSensorsPermission: () -> Unit,
     onRequestExactAlarmPermission: () -> Unit,
@@ -165,9 +178,13 @@ private fun OnboardingFlow(
     val sleepStages by userPreferencesRepository.sleepStages.collectAsState(initial = emptyList())
     val manualTemplate by userPreferencesRepository.manualSleepTemplate.collectAsState(initial = null)
 
-    var step by remember { mutableStateOf(OnboardingStep.HealthConnect) }
+    var step by remember { mutableStateOf(OnboardingStep.TrackingTypeSelection) }
     var isHealthConnectInstalled by remember { mutableStateOf(false) }
     var selectedMode by remember { mutableStateOf(SleepDetectionMode.AUTO) }
+
+    // Which tracking types the user wants
+    var sleepSelected by remember { mutableStateOf(true) }
+    var nutritionSelected by remember { mutableStateOf(true) }
 
     var bedtimeRange by remember { mutableStateOf(TimeRange.BEDTIME) }
     var wakeupRange by remember { mutableStateOf(TimeRange.WAKEUP) }
@@ -175,12 +192,7 @@ private fun OnboardingFlow(
     var awakeningThresholdMinutes by remember { mutableIntStateOf(60) }
     var defaultAwakeMinutes by remember { mutableIntStateOf(15) }
 
-    var hasHealthPermissions by remember { mutableStateOf(false) }
-    var hasNotificationPermission by remember { mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) }
-    var showSensorsPermission by remember { mutableStateOf(false) }
-    var hasSensorsPermission by remember { mutableStateOf(true) }
-    var hasExactAlarmPermission by remember { mutableStateOf(Build.VERSION.SDK_INT < Build.VERSION_CODES.S) }
-
+    var permState by remember { mutableStateOf(PermissionState()) }
     var showTemplateEditor by remember { mutableStateOf(false) }
 
     fun refreshHealthConnectStatus() {
@@ -191,38 +203,13 @@ private fun OnboardingFlow(
         }.isSuccess
     }
 
-    fun refreshPermissionState() {
-        scope.launch {
-            hasHealthPermissions = healthConnectManager.hasPermissions()
-        }
-        hasNotificationPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-
-        showSensorsPermission = runCatching {
-            context.packageManager.getPackageInfo("app.grapheneos.apps", 0)
-            true
-        }.getOrElse { false }
-
-        hasSensorsPermission = if (showSensorsPermission) {
-            ContextCompat.checkSelfPermission(context, "android.permission.OTHER_SENSORS") == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-
-        hasExactAlarmPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val alarmManager = context.getSystemService(AlarmManager::class.java)
-            alarmManager?.canScheduleExactAlarms() == true
-        } else {
-            true
-        }
+    fun refreshPermissions() {
+        scope.launch { permState = loadPermissionState(context, healthConnectManager) }
     }
 
     LaunchedEffect(Unit) {
         refreshHealthConnectStatus()
-        if (isHealthConnectInstalled) {
-            step = OnboardingStep.AutoDetectionExplanation
-        }
-        refreshPermissionState()
+        refreshPermissions()
     }
 
     if (showTemplateEditor && manualTemplate != null) {
@@ -277,6 +264,54 @@ private fun OnboardingFlow(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             when (step) {
+
+                // ── Step 0: What do you want to track? ───────────────────
+                OnboardingStep.TrackingTypeSelection -> {
+                    Text("What do you want to track?", style = MaterialTheme.typography.headlineMedium)
+                    Text("Select at least one category. You can change this later in Settings.")
+
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            TrackingTypeRow(
+                                label = TrackingType.SLEEP.displayName,
+                                description = TrackingType.SLEEP.description,
+                                checked = sleepSelected,
+                                onCheckedChange = { sleepSelected = it }
+                            )
+                            HorizontalDivider()
+                            TrackingTypeRow(
+                                label = TrackingType.NUTRITION.displayName,
+                                description = TrackingType.NUTRITION.description,
+                                checked = nutritionSelected,
+                                onCheckedChange = { nutritionSelected = it }
+                            )
+                        }
+                    }
+
+                    if (!sleepSelected && !nutritionSelected) {
+                        Text(
+                            "At least one tracking type is required.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                userPreferencesRepository.setSleepEnabled(sleepSelected)
+                                userPreferencesRepository.setNutritionEnabled(nutritionSelected)
+                            }
+                            step = OnboardingStep.HealthConnect
+                        },
+                        enabled = sleepSelected || nutritionSelected,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Continue")
+                    }
+                }
+
+                // ── Step 1: Health Connect ────────────────────────────────
                 OnboardingStep.HealthConnect -> {
                     Text("Welcome to SleepTracker", style = MaterialTheme.typography.headlineMedium)
                     Text("SleepTracker uses Health Connect to save and read your confirmed sleep and nutrition logs.")
@@ -302,8 +337,12 @@ private fun OnboardingFlow(
                         }
                     }
 
+                    // Skip sleep-specific step if only nutrition selected
                     Button(
-                        onClick = { step = OnboardingStep.AutoDetectionExplanation },
+                        onClick = {
+                            step = if (sleepSelected) OnboardingStep.AutoDetectionExplanation
+                                   else OnboardingStep.Permissions
+                        },
                         enabled = isHealthConnectInstalled,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -311,6 +350,7 @@ private fun OnboardingFlow(
                     }
                 }
 
+                // ── Step 2: Auto Detection Explanation ────────────────────
                 OnboardingStep.AutoDetectionExplanation -> {
                     Text("How auto sleep detection works", style = MaterialTheme.typography.headlineMedium)
 
@@ -341,6 +381,7 @@ private fun OnboardingFlow(
                     }
                 }
 
+                // ── Step 3: Logging Mode ──────────────────────────────────
                 OnboardingStep.LoggingMode -> {
                     Text("How do you want to log sleep?", style = MaterialTheme.typography.headlineMedium)
 
@@ -377,6 +418,7 @@ private fun OnboardingFlow(
                     }
                 }
 
+                // ── Step 4: Auto Config ───────────────────────────────────
                 OnboardingStep.AutoConfig -> {
                     Text("Set up automatic detection", style = MaterialTheme.typography.headlineMedium)
 
@@ -414,8 +456,6 @@ private fun OnboardingFlow(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Text("Track naps is disabled.", style = MaterialTheme.typography.bodyMedium)
-
                     Button(
                         onClick = {
                             scope.launch {
@@ -434,6 +474,7 @@ private fun OnboardingFlow(
                     }
                 }
 
+                // ── Step 5: Manual Info ───────────────────────────────────
                 OnboardingStep.ManualInfo -> {
                     Text("Manual logging setup", style = MaterialTheme.typography.headlineMedium)
                     Text("You'll first configure a template for future days, then you can adjust each day as needed.")
@@ -449,58 +490,85 @@ private fun OnboardingFlow(
                     }
                 }
 
+                // ── Step 6: Permissions ───────────────────────────────────
                 OnboardingStep.Permissions -> {
                     Text("Permissions", style = MaterialTheme.typography.headlineMedium)
-                    Text("Grant only the permissions you need. You can request each one below.")
+                    Text("Grant only the permissions you need. You can update these later in Settings → Permissions.")
 
-                    PermissionRow(
-                        title = "Health Connect read/write",
-                        reason = "Needed to read/write your sleep sessions and nutrition records.",
-                        granted = hasHealthPermissions,
-                        onRequest = {
-                            onRequestHealthPermissions()
-                            refreshPermissionState()
-                        }
-                    )
-
-                    PermissionRow(
+                    // General permissions
+                    PermissionCard(
                         title = "Notifications",
                         reason = "Needed to run reliable background tracking reminders.",
-                        granted = hasNotificationPermission,
-                        onRequest = {
+                        granted = permState.notificationsGranted,
+                        onGrant = {
                             onRequestNotificationPermission()
-                            refreshPermissionState()
+                            refreshPermissions()
                         }
                     )
 
-                    if (showSensorsPermission) {
-                        PermissionRow(
-                            title = "Sensors (GrapheneOS)",
-                            reason = "Needed on this device profile for detection reliability.",
-                            granted = hasSensorsPermission,
-                            onRequest = {
-                                onRequestOtherSensorsPermission()
-                                refreshPermissionState()
-                            }
-                        )
-                    }
-
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        PermissionRow(
-                            title = "Exact alarms",
-                            reason = "Needed for precise service start/stop scheduling. App will fall back if denied.",
-                            granted = hasExactAlarmPermission,
-                            onRequest = {
+                        PermissionCard(
+                            title = "Exact Alarms",
+                            reason = "Needed for precise service start/stop scheduling. App falls back if denied.",
+                            granted = permState.exactAlarmGranted,
+                            onGrant = {
                                 onRequestExactAlarmPermission()
-                                refreshPermissionState()
+                                refreshPermissions()
                             }
                         )
                     }
 
-                    val allRequiredGranted = hasHealthPermissions && hasNotificationPermission && (!showSensorsPermission || hasSensorsPermission) && hasExactAlarmPermission
+                    // Sleep-specific permissions
+                    if (sleepSelected) {
+                        HorizontalDivider()
+                        Text("Sleep", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+
+                        PermissionCard(
+                            title = "Sleep — Read & Write",
+                            reason = "Required to save and read sleep sessions in Health Connect.",
+                            granted = permState.sleepWriteGranted && permState.sleepReadGranted,
+                            onGrant = {
+                                onRequestHealthPermissions(healthConnectManager.sleepPermissions)
+                                refreshPermissions()
+                            }
+                        )
+
+                        if (permState.showSensors) {
+                            PermissionCard(
+                                title = "Other Sensors (GrapheneOS)",
+                                reason = "Required on this device for screen state detection.",
+                                granted = permState.sensorsGranted,
+                                onGrant = {
+                                    onRequestOtherSensorsPermission()
+                                    refreshPermissions()
+                                }
+                            )
+                        }
+                    }
+
+                    // Nutrition-specific permissions
+                    if (nutritionSelected) {
+                        HorizontalDivider()
+                        Text("Nutrition", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+
+                        PermissionCard(
+                            title = "Nutrition — Read & Write",
+                            reason = "Required to save and read nutrition records in Health Connect.",
+                            granted = permState.nutritionWriteGranted && permState.nutritionReadGranted,
+                            onGrant = {
+                                onRequestHealthPermissions(healthConnectManager.nutritionPermissions)
+                                refreshPermissions()
+                            }
+                        )
+                    }
+
+                    val allRequired = permState.notificationsGranted &&
+                        permState.exactAlarmGranted &&
+                        (!sleepSelected || (permState.sleepWriteGranted && (!permState.showSensors || permState.sensorsGranted))) &&
+                        (!nutritionSelected || permState.nutritionWriteGranted)
 
                     OutlinedButton(
-                        onClick = { refreshPermissionState() },
+                        onClick = { refreshPermissions() },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Refresh permission status")
@@ -508,16 +576,17 @@ private fun OnboardingFlow(
 
                     Button(
                         onClick = { step = OnboardingStep.Completion },
-                        enabled = allRequiredGranted,
+                        enabled = allRequired,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Continue")
                     }
                 }
 
+                // ── Step 7: Done ──────────────────────────────────────────
                 OnboardingStep.Completion -> {
                     Text("You're all set", style = MaterialTheme.typography.headlineMedium)
-                    Text("Health Connect is ready, your logging mode is configured, and permissions are complete.")
+                    Text("Health Connect is ready, your preferences are configured, and permissions are complete.")
 
                     Button(
                         onClick = {
@@ -528,7 +597,7 @@ private fun OnboardingFlow(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("let's go!")
+                        Text("Let's go!")
                     }
                 }
             }
@@ -538,27 +607,26 @@ private fun OnboardingFlow(
     }
 }
 
-
 @Composable
-private fun PermissionRow(
-    title: String,
-    reason: String,
-    granted: Boolean,
-    onRequest: () -> Unit
+private fun TrackingTypeRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text(reason, style = MaterialTheme.typography.bodyMedium)
-            Text(if (granted) "Granted" else "Not granted")
-            if (!granted) {
-                Button(
-                    onClick = onRequest,
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text("Grant")
-                }
-            }
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.padding(top = 2.dp)
+        )
+        Column {
+            Text(label, fontWeight = FontWeight.SemiBold)
+            Text(description, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

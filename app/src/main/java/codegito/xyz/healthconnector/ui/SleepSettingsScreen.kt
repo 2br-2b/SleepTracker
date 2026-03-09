@@ -1,9 +1,5 @@
 package codegito.xyz.healthconnector.ui
 
-import android.app.Activity
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -11,18 +7,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import androidx.core.content.PermissionChecker
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import codegito.xyz.healthconnector.NotificationHelper
 import codegito.xyz.healthconnector.SleepSegment
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
@@ -45,8 +35,8 @@ fun SleepSettingsScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
 
+    val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val showAdvanced by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val detectionMode by userPreferencesRepository.sleepDetectionMode.collectAsState(initial = SleepDetectionMode.AUTO)
@@ -59,24 +49,11 @@ fun SleepSettingsScreen(
     val reminderFirstUnlock by userPreferencesRepository.reminderFirstUnlockEnabled.collectAsState(initial = true)
     val reminderDeadlineLoud by userPreferencesRepository.reminderDeadlineLoudEnabled.collectAsState(initial = true)
     val reminderDeadlineSilent by userPreferencesRepository.reminderDeadlineSilentEnabled.collectAsState(initial = true)
-    val historyDisplayDays by userPreferencesRepository.historyDisplayDays.collectAsState(initial = 7)
+    val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
     val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 10)
-    val dataRetentionDays by userPreferencesRepository.dataRetentionDays.collectAsState(initial = 7)
 
-    var hasOtherSensorsPermission by remember { mutableStateOf(false) }
     var showRolloverPicker by remember { mutableStateOf(false) }
     var showTemplateEditor by remember { mutableStateOf(false) }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                val state = ContextCompat.checkSelfPermission(context, "android.permission.OTHER_SENSORS")
-                hasOtherSensorsPermission = state == PermissionChecker.PERMISSION_GRANTED
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
 
     val currentTemplate = manualTemplateState
     if (showTemplateEditor && currentTemplate != null) {
@@ -138,33 +115,68 @@ fun SleepSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            SectionHeader("Rollover Time")
+            // ── Enable / Disable toggle ────────────────────────────────────
             ListItem(
-                headlineContent = { Text("Daily cutoff") },
-                supportingContent = { Text("Sleep sessions starting before this hour count toward the previous calendar day.") },
-                trailingContent = {
-                    Text(
-                        LocalTime.of(rolloverHour, 0).format(DateTimeFormatter.ofPattern("h:mm a")),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                headlineContent = { Text("Sleep Tracking Enabled") },
+                supportingContent = {
+                    Text(if (sleepEnabled) "Sleep is active and visible in the app."
+                         else "Sleep is disabled. Home tab and settings below are hidden.")
                 },
-                modifier = Modifier.clickable { showRolloverPicker = true }
+                trailingContent = {
+                    Switch(
+                        checked = sleepEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch {
+                                userPreferencesRepository.setSleepEnabled(enabled)
+                                NotificationHelper.refreshServiceState(context, userPreferencesRepository)
+                            }
+                        }
+                    )
+                }
             )
 
             HorizontalDivider()
 
-            SectionHeader("Default template")
+            // Gray-out alpha for all settings below when disabled
+            val contentAlpha = if (sleepEnabled) 1f else 0.38f
+
+            // ── Rollover Time ──────────────────────────────────────────────
+            SectionHeader("Rollover Time")
+            ListItem(
+                headlineContent = {
+                    Text("Daily cutoff",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha))
+                },
+                supportingContent = {
+                    Text("Sleep sessions starting before this hour count toward the previous calendar day.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha))
+                },
+                trailingContent = {
+                    Text(
+                        LocalTime.of(rolloverHour, 0).format(DateTimeFormatter.ofPattern("h:mm a")),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = contentAlpha)
+                    )
+                },
+                modifier = if (sleepEnabled) Modifier.clickable { showRolloverPicker = true } else Modifier
+            )
+
+            HorizontalDivider()
+
+            // ── Detection Mode ─────────────────────────────────────────────
+            SectionHeader("Default Template")
             Text(
                 "When you start logging a new day, the app provides a default template — either " +
                 "auto-generated from phone lock/unlock events or from a fixed template you configure. " +
                 "You can edit it before saving.",
-                style = MaterialTheme.typography.bodySmall
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)
             )
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
                         selected = detectionMode == SleepDetectionMode.AUTO,
+                        enabled = sleepEnabled,
                         onClick = {
                             scope.launch {
                                 userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.AUTO)
@@ -172,11 +184,13 @@ fun SleepSettingsScreen(
                             }
                         }
                     )
-                    Text("Auto-detect")
+                    Text("Auto-detect",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
                         selected = detectionMode == SleepDetectionMode.MANUAL,
+                        enabled = sleepEnabled,
                         onClick = {
                             scope.launch {
                                 userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.MANUAL)
@@ -184,41 +198,12 @@ fun SleepSettingsScreen(
                             }
                         }
                     )
-                    Text("Template")
+                    Text("Template",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha))
                 }
             }
 
-            SectionHeader("Sensors Permission")
-            Text(
-                "GrapheneOS requires the 'Other Sensors' permission for screen state detection.",
-                style = MaterialTheme.typography.bodySmall
-            )
-            if (hasOtherSensorsPermission) {
-                Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                    Text("Sensors Permission Granted")
-                }
-            } else {
-                Button(
-                    onClick = { (context as? Activity)?.requestPermissions(arrayOf("android.permission.OTHER_SENSORS"), 1001) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Request Sensors Permission") }
-                OutlinedButton(
-                    onClick = {
-                        context.startActivity(
-                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                data = Uri.fromParts("package", context.packageName, null)
-                            }
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Open App Info (Toggle Sensors)")
-                }
-            }
-
-            if (detectionMode == SleepDetectionMode.AUTO) {
+            if (detectionMode == SleepDetectionMode.AUTO && sleepEnabled) {
                 HorizontalDivider()
 
                 SectionHeader("Bedtime Window")
@@ -272,7 +257,7 @@ fun SleepSettingsScreen(
                 )
             }
 
-            if (detectionMode == SleepDetectionMode.MANUAL) {
+            if (detectionMode == SleepDetectionMode.MANUAL && sleepEnabled) {
                 HorizontalDivider()
                 SectionHeader("Manual Sleep Template")
                 Text("Default sleep structure when logging a new day.", style = MaterialTheme.typography.bodySmall)
@@ -284,67 +269,83 @@ fun SleepSettingsScreen(
 
             HorizontalDivider()
 
+            // ── Reminders ──────────────────────────────────────────────────
             SectionHeader("Reminders")
-            Text("Get notified to log your sleep after waking up.", style = MaterialTheme.typography.bodySmall)
-            ListItem(
-                headlineContent = { Text("First Unlock Reminder") },
-                supportingContent = { Text("Fires after your awakening threshold passes since you first pick up your phone.") },
-                trailingContent = {
-                    Switch(checked = reminderFirstUnlock,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderFirstUnlockEnabled(it) } })
-                }
+            Text(
+                "Get notified to log your sleep after waking up.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)
             )
             ListItem(
-                headlineContent = { Text("Deadline Reminder (Loud)") },
-                supportingContent = { Text("Alerts you at the end of the wakeup window if you've been active.") },
+                headlineContent = { Text("First Unlock Reminder",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)) },
+                supportingContent = { Text("Fires after your awakening threshold passes since you first pick up your phone.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)) },
                 trailingContent = {
-                    Switch(checked = reminderDeadlineLoud,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineLoudEnabled(it) } })
-                }
-            )
-            ListItem(
-                headlineContent = { Text("Deadline Reminder (Silent)") },
-                supportingContent = { Text("Silent notification at the end of the window if you haven't unlocked your phone.") },
-                trailingContent = {
-                    Switch(checked = reminderDeadlineSilent,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineSilentEnabled(it) } })
-                }
-            )
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                        }
+                    Switch(
+                        checked = reminderFirstUnlock,
+                        enabled = sleepEnabled,
+                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderFirstUnlockEnabled(it) } }
                     )
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Open Notification Settings") }
+                }
+            )
+            ListItem(
+                headlineContent = { Text("Deadline Reminder (Loud)",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)) },
+                supportingContent = { Text("Alerts you at the end of the wakeup window if you've been active.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)) },
+                trailingContent = {
+                    Switch(
+                        checked = reminderDeadlineLoud,
+                        enabled = sleepEnabled,
+                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineLoudEnabled(it) } }
+                    )
+                }
+            )
+            ListItem(
+                headlineContent = { Text("Deadline Reminder (Silent)",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)) },
+                supportingContent = { Text("Silent notification at the end of the window if you haven't unlocked your phone.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)) },
+                trailingContent = {
+                    Switch(
+                        checked = reminderDeadlineSilent,
+                        enabled = sleepEnabled,
+                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineSilentEnabled(it) } }
+                    )
+                }
+            )
 
             HorizontalDivider()
 
+            // ── Sleep Stages ───────────────────────────────────────────────
             SectionHeader("Sleep Stages")
             ListItem(
-                headlineContent = { Text("Customize Sleep Stages") },
-                supportingContent = { Text("Reorder, enable/disable, and change emojis") },
+                headlineContent = { Text("Customize Sleep Stages",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)) },
+                supportingContent = { Text("Reorder, enable/disable, and change emojis",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)) },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = Modifier.clickable { onEditSleepStages() }
+                modifier = if (sleepEnabled) Modifier.clickable { onEditSleepStages() } else Modifier
             )
 
-            if (showAdvanced) {
+            if (showAdvanced && sleepEnabled) {
                 HorizontalDivider()
                 SectionHeader("Advanced")
 
-                Text("History", style = MaterialTheme.typography.labelLarge)
-                Text("Number of days shown on the home screen.", style = MaterialTheme.typography.bodySmall)
+                Text("History & Retention", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Number of days shown on the home screen and how long raw screen events are kept.",
+                    style = MaterialTheme.typography.bodySmall
+                )
                 OutlinedTextField(
-                    value = historyDisplayDays.toString(),
+                    value = historyDays.toString(),
                     onValueChange = { raw ->
                         raw.toIntOrNull()?.takeIf { it > 0 }?.let {
-                            scope.launch { userPreferencesRepository.setHistoryDisplayDays(it) }
+                            scope.launch { userPreferencesRepository.setHistoryDays(it) }
                         }
                     },
-                    label = { Text("History display days") },
+                    label = { Text("History / retention days") },
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -361,22 +362,6 @@ fun SleepSettingsScreen(
                         }
                     },
                     label = { Text("Awakening threshold (minutes)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Text("Data Retention", style = MaterialTheme.typography.labelLarge)
-                Text(
-                    "How many days of raw screen events to keep. Increasing this lets you re-detect sleep from further back.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedTextField(
-                    value = dataRetentionDays.toString(),
-                    onValueChange = { raw ->
-                        raw.toIntOrNull()?.takeIf { it > 0 }?.let {
-                            scope.launch { userPreferencesRepository.setDataRetentionDays(it) }
-                        }
-                    },
-                    label = { Text("Data retention (days)") },
                     modifier = Modifier.fillMaxWidth()
                 )
             }

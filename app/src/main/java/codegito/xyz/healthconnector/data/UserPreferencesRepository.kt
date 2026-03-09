@@ -9,6 +9,7 @@ import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.data.model.TimeRange
+import codegito.xyz.healthconnector.data.model.TrackingType
 import codegito.xyz.healthconnector.data.SleepStageConfig
 import codegito.xyz.healthconnector.nutrition.domain.NutrientConfig
 import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
@@ -57,9 +58,12 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val REMINDER_DEADLINE_LOUD_ENABLED_KEY  = booleanPreferencesKey("reminder_deadline_loud_enabled")
     private val REMINDER_DEADLINE_SILENT_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_silent_enabled")
     private val DEVELOPER_MODE_ENABLED_KEY      = booleanPreferencesKey("developer_mode_enabled")
-    private val DATA_RETENTION_DAYS_KEY         = intPreferencesKey("data_retention_days")
-    private val HISTORY_DISPLAY_DAYS_KEY        = intPreferencesKey("history_display_days")
+    // Consolidated: single setting for both retention and display (was two separate keys)
+    private val HISTORY_DAYS_KEY                = intPreferencesKey("history_days")
     private val ONBOARDING_COMPLETED_KEY        = booleanPreferencesKey("onboarding_completed")
+    private val ENABLED_TRACKING_TYPES_KEY      = stringPreferencesKey("enabled_tracking_types")
+    private val SLEEP_TRACKING_ENABLED_KEY      = booleanPreferencesKey("sleep_tracking_enabled")
+    private val NUTRITION_TRACKING_ENABLED_KEY  = booleanPreferencesKey("nutrition_tracking_enabled")
     private val AMOLED_PITCH_BLACK_KEY          = booleanPreferencesKey("amoled_pitch_black")
     private val SHOW_ADVANCED_SETTINGS_KEY      = booleanPreferencesKey("show_advanced_settings")
     private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY  = intPreferencesKey("nutrition_past_date_range_days")
@@ -122,11 +126,13 @@ class UserPreferencesRepository private constructor(private val context: Context
             } ?: getDefaultSleepStages()
         }
 
-    val dataRetentionDays: Flow<Int> = context.dataStore.data
-        .map { prefs -> prefs[DATA_RETENTION_DAYS_KEY] ?: 7 }
+    // Consolidated: historyDays drives both display and raw-event retention
+    val historyDays: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[HISTORY_DAYS_KEY] ?: 7 }
 
-    val historyDisplayDays: Flow<Int> = context.dataStore.data
-        .map { prefs -> prefs[HISTORY_DISPLAY_DAYS_KEY] ?: 7 }
+    // Keep old names as aliases so call sites compile without churn
+    val dataRetentionDays: Flow<Int> get() = historyDays
+    val historyDisplayDays: Flow<Int> get() = historyDays
 
     // ── Reminder flows ────────────────────────────────────────────────────
 
@@ -152,6 +158,14 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     val showAdvancedSettings: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[SHOW_ADVANCED_SETTINGS_KEY] ?: false }
+
+    // ── Tracking type flows ───────────────────────────────────────────────
+
+    val sleepEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[SLEEP_TRACKING_ENABLED_KEY] ?: true }
+
+    val nutritionEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[NUTRITION_TRACKING_ENABLED_KEY] ?: true }
 
     // ── Nutrition flows ───────────────────────────────────────────────────
 
@@ -242,13 +256,13 @@ class UserPreferencesRepository private constructor(private val context: Context
         context.dataStore.edit { prefs -> prefs[SLEEP_STAGES_JSON_KEY] = json.encodeToString(stages) }
     }
 
-    suspend fun setDataRetentionDays(days: Int) {
-        context.dataStore.edit { prefs -> prefs[DATA_RETENTION_DAYS_KEY] = days }
+    suspend fun setHistoryDays(days: Int) {
+        context.dataStore.edit { prefs -> prefs[HISTORY_DAYS_KEY] = days }
     }
 
-    suspend fun setHistoryDisplayDays(days: Int) {
-        context.dataStore.edit { prefs -> prefs[HISTORY_DISPLAY_DAYS_KEY] = days }
-    }
+    // Alias setters so old call sites compile
+    suspend fun setDataRetentionDays(days: Int) = setHistoryDays(days)
+    suspend fun setHistoryDisplayDays(days: Int) = setHistoryDays(days)
 
     // ── Reminder setters ──────────────────────────────────────────────────
 
@@ -280,6 +294,14 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setShowAdvancedSettings(show: Boolean) {
         context.dataStore.edit { prefs -> prefs[SHOW_ADVANCED_SETTINGS_KEY] = show }
+    }
+
+    suspend fun setSleepEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[SLEEP_TRACKING_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setNutritionEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[NUTRITION_TRACKING_ENABLED_KEY] = enabled }
     }
 
     // ── Nutrition setters ─────────────────────────────────────────────────

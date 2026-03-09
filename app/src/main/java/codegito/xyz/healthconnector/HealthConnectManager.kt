@@ -13,20 +13,42 @@ import java.time.ZoneId
 class HealthConnectManager(val context: Context) {
     val healthConnectClient by lazy { HealthConnectClient.getOrCreate(context) }
 
+    val sleepWritePermission = HealthPermission.getWritePermission(SleepSessionRecord::class)
+    val sleepReadPermission  = HealthPermission.getReadPermission(SleepSessionRecord::class)
+    val nutritionWritePermission = HealthPermission.getWritePermission(NutritionRecord::class)
+    val nutritionReadPermission  = HealthPermission.getReadPermission(NutritionRecord::class)
+
     val permissions = setOf(
-        HealthPermission.getWritePermission(SleepSessionRecord::class),
-        HealthPermission.getReadPermission(SleepSessionRecord::class),
-        HealthPermission.getWritePermission(NutritionRecord::class),
-        HealthPermission.getReadPermission(NutritionRecord::class)
+        sleepWritePermission,
+        sleepReadPermission,
+        nutritionWritePermission,
+        nutritionReadPermission
     )
 
-    suspend fun hasPermissions(): Boolean {
-        return healthConnectClient.permissionController.getGrantedPermissions().containsAll(permissions)
-    }
+    val sleepPermissions = setOf(sleepWritePermission, sleepReadPermission)
+    val nutritionPermissions = setOf(nutritionWritePermission, nutritionReadPermission)
+
+    suspend fun getGrantedPermissions(): Set<String> =
+        healthConnectClient.permissionController.getGrantedPermissions()
+
+    suspend fun hasPermissions(): Boolean =
+        getGrantedPermissions().containsAll(permissions)
+
+    suspend fun hasSleepWritePermission(): Boolean =
+        getGrantedPermissions().contains(sleepWritePermission)
+
+    suspend fun hasSleepReadPermission(): Boolean =
+        getGrantedPermissions().contains(sleepReadPermission)
+
+    suspend fun hasNutritionWritePermission(): Boolean =
+        getGrantedPermissions().contains(nutritionWritePermission)
+
+    suspend fun hasNutritionReadPermission(): Boolean =
+        getGrantedPermissions().contains(nutritionReadPermission)
 
     suspend fun getSleepSessions(start: Instant, end: Instant): Result<List<SleepSessionRecord>> {
         return try {
-            if (!hasPermissions()) return Result.failure(Exception("Permissions not granted"))
+            if (!hasSleepReadPermission()) return Result.failure(Exception("Sleep read permission not granted"))
             
             val request = ReadRecordsRequest(
                 recordType = SleepSessionRecord::class,
@@ -45,7 +67,7 @@ class HealthConnectManager(val context: Context) {
         title: String? = null
     ): Result<Unit> {
         return try {
-            if (!hasPermissions()) return Result.failure(Exception("Permissions not granted"))
+            if (!hasSleepWritePermission()) return Result.failure(Exception("Sleep write permission not granted"))
 
             val zoneId = ZoneId.systemDefault()
             val startInstant = bedtime.atZone(zoneId).toInstant()
@@ -81,7 +103,7 @@ class HealthConnectManager(val context: Context) {
 
     suspend fun getSleepSession(id: String): Result<SleepSessionRecord?> {
         return try {
-            if (!hasPermissions()) return Result.failure(Exception("Permissions not granted"))
+            if (!hasSleepReadPermission()) return Result.failure(Exception("Sleep read permission not granted"))
             val response = healthConnectClient.readRecord(SleepSessionRecord::class, id)
             Result.success(response.record)
         } catch (e: Exception) {
@@ -91,7 +113,7 @@ class HealthConnectManager(val context: Context) {
 
     suspend fun deleteSleepSession(id: String): Result<Unit> {
         return try {
-            if (!hasPermissions()) return Result.failure(Exception("Permissions not granted"))
+            if (!hasSleepWritePermission()) return Result.failure(Exception("Sleep write permission not granted"))
             healthConnectClient.deleteRecords(
                 recordType = SleepSessionRecord::class,
                 recordIdsList = listOf(id),
@@ -105,7 +127,7 @@ class HealthConnectManager(val context: Context) {
 
     suspend fun deleteSleepSessions(start: Instant, end: Instant): Result<Unit> {
         return try {
-            if (!hasPermissions()) return Result.failure(Exception("Permissions not granted"))
+            if (!hasSleepWritePermission()) return Result.failure(Exception("Sleep write permission not granted"))
             healthConnectClient.deleteRecords(
                 recordType = SleepSessionRecord::class,
                 timeRangeFilter = TimeRangeFilter.between(start, end)

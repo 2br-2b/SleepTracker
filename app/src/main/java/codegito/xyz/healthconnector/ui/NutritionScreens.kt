@@ -64,7 +64,8 @@ fun NutritionHomeScreen(
     healthConnectManager: HealthConnectManager,
     userPreferencesRepository: UserPreferencesRepository,
     nutritionIndexBuildManager: NutritionIndexBuildManager,
-    navController: NavController
+    navController: NavController,
+    onNavigateToPermissions: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -73,6 +74,7 @@ fun NutritionHomeScreen(
 
     var nutritionByDay by remember { mutableStateOf<Map<LocalDate, List<NutritionRecord>>>(emptyMap()) }
     var indexRecordCount by remember { mutableIntStateOf(-1) }
+    var hasNutritionWrite by remember { mutableStateOf<Boolean?>(null) }
 
     fun loadData() {
         scope.launch {
@@ -105,7 +107,10 @@ fun NutritionHomeScreen(
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) loadData()
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                loadData()
+                scope.launch { hasNutritionWrite = healthConnectManager.hasNutritionWritePermission() }
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -126,6 +131,39 @@ fun NutritionHomeScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(padding)
         ) {
+            // Write permission banner
+            if (hasNutritionWrite == false) {
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "Nutrition write permission not granted",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                "Food logs cannot be saved until Health Connect write access is granted.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            if (onNavigateToPermissions != null) {
+                                TextButton(onClick = onNavigateToPermissions) {
+                                    Text("Open Permissions", color = MaterialTheme.colorScheme.onErrorContainer)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Dataset banner – hide once index has > 10 foods
             if (indexRecordCount in 0..10) {
                 item {

@@ -2,10 +2,13 @@ package codegito.xyz.healthconnector
 
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import android.Manifest
+import android.os.Build
+import android.provider.Settings
+import android.net.Uri
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.lifecycle.Lifecycle
@@ -41,6 +43,7 @@ import codegito.xyz.healthconnector.ui.ManualFoodEntryScreen
 import codegito.xyz.healthconnector.ui.NutritionDayDetailScreen
 import codegito.xyz.healthconnector.ui.NutritionHomeScreen
 import codegito.xyz.healthconnector.ui.NutritionSettingsScreen
+import codegito.xyz.healthconnector.ui.PermissionsScreen
 import codegito.xyz.healthconnector.ui.SettingsScreen
 import codegito.xyz.healthconnector.ui.SleepSettingsScreen
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
@@ -81,7 +84,23 @@ class MainActivity : ComponentActivity() {
                 MainApp(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
-                    onManagePermissions = { requestPermissions.launch(healthConnectManager.permissions) },
+                    onRequestHealthPermissions = { perms -> requestPermissions.launch(perms) },
+                    onRequestNotificationPermission = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    },
+                    onRequestSensorsPermission = {
+                        requestSensorsPermission.launch("android.permission.OTHER_SENSORS")
+                    },
+                    onRequestExactAlarmPermission = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                data = Uri.parse("package:$packageName")
+                            }
+                            requestExactAlarmPermission.launch(intent)
+                        }
+                    },
                     onOpenSession = { date, sessionId, isNap ->
                         val intent = Intent(this, SleepDataLogger::class.java).apply {
                             putExtra("target_date_millis", date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
@@ -96,13 +115,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private val requestPermissions =
-        registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
-            if (granted.containsAll(healthConnectManager.permissions)) {
-                 // Check permissions again / Refresh UI logic handled by state
-            } else {
-                Toast.makeText(this, "Permissions not granted", Toast.LENGTH_SHORT).show()
-            }
-        }
+        registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { }
+
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private val requestExactAlarmPermission =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
+
+    private val requestSensorsPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     private fun ensureServiceRunning() {
         lifecycleScope.launch {
@@ -122,48 +144,98 @@ class MainActivity : ComponentActivity() {
 fun MainApp(
     healthConnectManager: HealthConnectManager,
     userPreferencesRepository: UserPreferencesRepository,
-    onManagePermissions: () -> Unit,
+    onRequestHealthPermissions: (Set<String>) -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onRequestSensorsPermission: () -> Unit,
+    onRequestExactAlarmPermission: () -> Unit,
     onOpenSession: (LocalDate, String?, Boolean) -> Unit
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
 
+    val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
+    val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
+
     val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
     val nutritionProvider = remember(context) { AssetNutritionProvider(context) }
 
+    // One-shot initial redirect: if the natural start (Sleep/Home) is disabled, go somewhere sensible.
+    LaunchedEffect(Unit) {
+        if (!userPreferencesRepository.sleepEnabled.first()) {
+            val dest = if (userPreferencesRepository.nutritionEnabled.first())
+                Screen.Nutrition.route else Screen.Settings.route
+            navController.navigate(dest) {
+                popUpTo(Screen.Home.route) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    // When sleep gets toggled off while the user is on the Sleep screen, redirect away.
+    LaunchedEffect(sleepEnabled) {
+        if (!sleepEnabled && navController.currentDestination?.route == Screen.Home.route) {
+            val dest = if (nutritionEnabled) Screen.Nutrition.route else Screen.Settings.route
+            navController.navigate(dest) {
+                popUpTo(Screen.Home.route) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    // When nutrition gets toggled off while the user is on the Food screen, redirect away.
+    // Do NOT touch nav state for any other condition — that's what caused the food button to break.
+    LaunchedEffect(nutritionEnabled) {
+        if (!nutritionEnabled && navController.currentDestination?.route == Screen.Nutrition.route) {
+            navController.navigate(Screen.Settings.route) {
+                popUpTo(Screen.Home.route) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
     Scaffold(
         bottomBar = {
-            val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val currentRoute = navBackStackEntry?.destination?.route
-
             // Only show bottom bar on top-level screens
-            val topLevelRoutes = listOf("home", "nutrition", "settings")
+            val topLevelRoutes = buildList {
+                if (sleepEnabled) add("home")
+                if (nutritionEnabled) add("nutrition")
+                add("settings")
+            }
             if (currentRoute in topLevelRoutes) {
                 NavigationBar {
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                        label = { Text("Home") },
-                        selected = currentRoute == "home",
-                        onClick = {
-                            navController.navigate("home") {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
+                    // Sleep tab: only when sleep tracking enabled
+                    if (sleepEnabled) {
+                        NavigationBarItem(
+                            icon = { Icon(Icons.Default.Home, contentDescription = "Sleep") },
+                            label = { Text("Sleep") },
+                            selected = currentRoute == "home",
+                            onClick = {
+                                navController.navigate("home") {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
-                        }
-                    )
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.Add, contentDescription = "Food") },
-                        label = { Text("Food") },
-                        selected = currentRoute == "nutrition",
-                        onClick = {
-                            navController.navigate("nutrition") {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
+                        )
+                    }
+                    // Food tab: only if nutrition enabled
+                    if (nutritionEnabled) {
+                        NavigationBarItem(
+                            icon = { Icon(Icons.Default.Add, contentDescription = "Food") },
+                            label = { Text("Food") },
+                            selected = currentRoute == "nutrition",
+                            onClick = {
+                                navController.navigate("nutrition") {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
                         label = { Text("Settings") },
@@ -185,7 +257,7 @@ fun MainApp(
                 HomeScreen(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
-                    onManagePermissions = onManagePermissions,
+                    onNavigateToPermissions = { navController.navigate(Screen.Permissions.route) },
                     onOpenSession = onOpenSession
                 )
             }
@@ -194,7 +266,8 @@ fun MainApp(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
                     nutritionIndexBuildManager = nutritionIndexBuildManager,
-                    navController = navController
+                    navController = navController,
+                    onNavigateToPermissions = { navController.navigate(Screen.Permissions.route) }
                 )
             }
             composable(Screen.NutritionDay.route) { backStack ->
@@ -229,11 +302,21 @@ fun MainApp(
             }
             composable(Screen.Settings.route) {
                 SettingsScreen(
-                    healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
-                    onManagePermissions = onManagePermissions,
+                    onPermissions = { navController.navigate(Screen.Permissions.route) },
                     onSleepSettings = { navController.navigate(Screen.SleepSettings.route) },
                     onNutritionSettings = { navController.navigate(Screen.NutritionSettings.route) }
+                )
+            }
+            composable(Screen.Permissions.route) {
+                PermissionsScreen(
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() },
+                    onRequestHealthPermissions = onRequestHealthPermissions,
+                    onRequestNotificationPermission = onRequestNotificationPermission,
+                    onRequestSensorsPermission = onRequestSensorsPermission,
+                    onRequestExactAlarmPermission = onRequestExactAlarmPermission
                 )
             }
             composable(Screen.SleepSettings.route) {
@@ -264,67 +347,84 @@ fun MainApp(
 fun HomeScreen(
     healthConnectManager: HealthConnectManager,
     userPreferencesRepository: UserPreferencesRepository,
-    onManagePermissions: () -> Unit,
+    onNavigateToPermissions: () -> Unit,
     onOpenSession: (LocalDate, String?, Boolean) -> Unit
 ) {
     var sleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
-    var hasPermissions by remember { mutableStateOf(false) }
+    var hasSleepWrite by remember { mutableStateOf<Boolean?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Observe rollover hour, developer mode, and history display days
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     val historyDisplayDays by userPreferencesRepository.historyDisplayDays.collectAsState(initial = 7)
 
-    // Dialog state for multi-session days
     var sessionPickerDate by remember { mutableStateOf<LocalDate?>(null) }
     var napOrOvernightDate by remember { mutableStateOf<LocalDate?>(null) }
 
-    LaunchedEffect(Unit) {
-        val client = HealthConnectClient.getOrCreate(context)
-        val granted = client.permissionController.getGrantedPermissions()
-        hasPermissions = granted.containsAll(healthConnectManager.permissions)
-    }
-
-    // Load data on resume
+    // Load data and check write permission on resume
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 scope.launch {
-                    val endTime = Instant.now()
-                    val startTime = endTime.minus(Duration.ofDays(historyDisplayDays.toLong()))
-                    val result = healthConnectManager.getSleepSessions(startTime, endTime)
-                    sleepSessions = result.getOrDefault(emptyList())
-
-                    if (result.isFailure) {
-                        Toast.makeText(context, "Data error: ${result.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
+                    hasSleepWrite = healthConnectManager.hasSleepWritePermission()
+                    if (hasSleepWrite == true) {
+                        val endTime = Instant.now()
+                        val startTime = endTime.minus(Duration.ofDays(historyDisplayDays.toLong()))
+                        val result = healthConnectManager.getSleepSessions(startTime, endTime)
+                        sleepSessions = result.getOrDefault(emptyList())
                     }
                 }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Sleep Tracker") }
-            )
+            TopAppBar(title = { Text("Sleep Tracker") })
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                text = { Text("Add Nap") },
-                icon = { Icon(Icons.Default.Add, contentDescription = "Add Nap") },
-                onClick = { onOpenSession(LocalDate.now(), null, true) }
-            )
+            if (hasSleepWrite == true) {
+                ExtendedFloatingActionButton(
+                    text = { Text("Add Nap") },
+                    icon = { Icon(Icons.Default.Add, contentDescription = "Add Nap") },
+                    onClick = { onOpenSession(LocalDate.now(), null, true) }
+                )
+            }
         }
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding)) {
+            // Banner when write permission is missing
+            if (hasSleepWrite == false) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Sleep write permission not granted",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            "Sleep logs cannot be saved until Health Connect write access is granted.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        TextButton(onClick = onNavigateToPermissions) {
+                            Text("Open Permissions", color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
+                    }
+                }
+            }
+
             val today = LocalDate.now()
             val weekDays = (0 until historyDisplayDays).map { today.minusDays(it.toLong()) }
             val zoneId = ZoneId.systemDefault()
@@ -345,6 +445,7 @@ fun HomeScreen(
                     val napSessions = sessionsForDate.filter { it.title == SleepDataLogger.NAP_TITLE }
                     val overnightSessions = sessionsForDate.filter { it.title != SleepDataLogger.NAP_TITLE }
 
+                    val writeGranted = hasSleepWrite == true
                     SleepDayCard(
                         date = date,
                         isToday = isToday,
@@ -352,7 +453,9 @@ fun HomeScreen(
                         overnightSession = overnightSessions.firstOrNull(),
                         developerModeEnabled = developerModeEnabled,
                         rolloverHour = rolloverHour,
+                        writePermissionGranted = writeGranted,
                         onClick = {
+                            if (!writeGranted) return@SleepDayCard
                             when {
                                 isToday -> {
                                     // Today: only naps can exist; pick from them
@@ -502,6 +605,7 @@ fun SleepDayCard(
     overnightSession: SleepSessionRecord?,
     developerModeEnabled: Boolean = false,
     rolloverHour: Int = 2,
+    writePermissionGranted: Boolean = true,
     onClick: () -> Unit
 ) {
     val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
@@ -510,15 +614,15 @@ fun SleepDayCard(
 
     val hasNaps = napSessions.isNotEmpty()
     val hasOvernight = overnightSession != null
-    // Today's card is clickable only if naps exist (overnight not possible until tomorrow)
-    val clickEnabled = if (isToday) hasNaps else true
+    // Today's card is clickable only if naps exist; also requires write permission
+    val clickEnabled = writePermissionGranted && (if (isToday) hasNaps else true)
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = clickEnabled) { onClick() },
         colors = CardDefaults.cardColors(
-            containerColor = if (isToday && !hasNaps)
+            containerColor = if (!writePermissionGranted || (isToday && !hasNaps))
                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             else MaterialTheme.colorScheme.surfaceVariant
         )
@@ -628,6 +732,7 @@ sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Nutrition : Screen("nutrition")
     object Settings : Screen("settings")
+    object Permissions : Screen("permissions")
     object SleepSettings : Screen("sleep_settings")
     object NutritionSettings : Screen("nutrition_settings")
     object EditSleepStages : Screen("edit_sleep_stages")

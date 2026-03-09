@@ -1,12 +1,7 @@
 package codegito.xyz.healthconnector.ui
 
 import android.app.ActivityManager
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,53 +14,37 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import codegito.xyz.healthconnector.HealthConnectManager
 import codegito.xyz.healthconnector.NotificationHelper
 import codegito.xyz.healthconnector.SleepTrackingService
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    healthConnectManager: HealthConnectManager,
     userPreferencesRepository: UserPreferencesRepository,
-    onManagePermissions: () -> Unit,
+    onPermissions: () -> Unit,
     onSleepSettings: () -> Unit,
     onNutritionSettings: () -> Unit,
-    // Deprecated callbacks kept for binary compat — not used in new flow
+    // Kept for binary compat — not used in new flow
+    healthConnectManager: codegito.xyz.healthconnector.HealthConnectManager? = null,
+    onManagePermissions: () -> Unit = onPermissions,
     onEditSleepStages: () -> Unit = {},
     onAutoSleepSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val lifecycleOwner = LocalLifecycleOwner.current
-
-    var hasHealthConnectPermissions by remember { mutableStateOf<Boolean?>(null) }
 
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     val amoledPitchBlackEnabled by userPreferencesRepository.amoledPitchBlackEnabled.collectAsState(initial = false)
     val showAdvancedSettings by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
+    val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
+    val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
 
     var versionTapCount by remember { mutableIntStateOf(0) }
     var isServiceActive by remember { mutableStateOf(false) }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                scope.launch { hasHealthConnectPermissions = healthConnectManager.hasPermissions() }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
 
     LaunchedEffect(developerModeEnabled) {
         if (!developerModeEnabled) return@LaunchedEffect
@@ -86,52 +65,41 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // ── Health Connect ────────────────────────────────────────────
-            SectionHeader("Health Connect")
+            // ── Permissions ───────────────────────────────────────────────
+            SectionHeader("Permissions")
 
-            if (hasHealthConnectPermissions == false) {
-                Button(onClick = onManagePermissions, modifier = Modifier.fillMaxWidth()) {
-                    Text("Grant Health Connect Permissions")
-                }
-            } else {
-                OutlinedButton(onClick = onManagePermissions, modifier = Modifier.fillMaxWidth()) {
-                    Text("Manage Health Connect Permissions")
-                }
-            }
-
-            OutlinedButton(
-                onClick = {
-                    val intent = Intent("androidx.health.ACTION_HEALTH_CONNECT_SETTINGS")
-                    if (intent.resolveActivity(context.packageManager) != null) {
-                        context.startActivity(intent)
-                    } else {
-                        context.startActivity(
-                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                data = Uri.fromParts("package", context.packageName, null)
-                            }
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Open Health Connect App")
-            }
+            ListItem(
+                headlineContent = { Text("Permissions") },
+                supportingContent = { Text("Health Connect, notifications, sensors, alarms") },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                modifier = Modifier.clickable { onPermissions() }
+            )
 
             HorizontalDivider()
 
-            // ── Sub-pages ─────────────────────────────────────────────────
-            SectionHeader("Settings")
+            // ── Tracking categories ───────────────────────────────────────
+            SectionHeader("Tracking")
 
             ListItem(
                 headlineContent = { Text("Sleep") },
-                supportingContent = { Text("Detection, reminders, stages, rollover time") },
+                supportingContent = {
+                    Text(
+                        if (sleepEnabled) "Detection, reminders, stages, rollover time"
+                        else "Disabled — tap to configure"
+                    )
+                },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
                 modifier = Modifier.clickable { onSleepSettings() }
             )
 
             ListItem(
                 headlineContent = { Text("Nutrition") },
-                supportingContent = { Text("Food database, date range, meal windows") },
+                supportingContent = {
+                    Text(
+                        if (nutritionEnabled) "Food database, date range, meal windows"
+                        else "Disabled — tap to configure"
+                    )
+                },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
                 modifier = Modifier.clickable { onNutritionSettings() }
             )
@@ -256,4 +224,3 @@ fun SectionHeader(title: String) {
         color = MaterialTheme.colorScheme.primary
     )
 }
-
