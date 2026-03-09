@@ -36,6 +36,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,6 +45,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
@@ -198,6 +202,8 @@ private fun OnboardingFlow(
     var permState by remember { mutableStateOf(PermissionState()) }
     var showTemplateEditor by remember { mutableStateOf(false) }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+
     // Determine the previous step for back navigation
     val previousStep: OnboardingStep? = when (step) {
         OnboardingStep.TrackingTypeSelection -> null // first step — back blocked by activity
@@ -234,6 +240,15 @@ private fun OnboardingFlow(
     LaunchedEffect(Unit) {
         refreshHealthConnectStatus()
         refreshPermissions()
+    }
+
+    // Auto-refresh permissions when returning from a permission dialog
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshPermissions()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     if (showTemplateEditor && manualTemplate != null) {
@@ -469,12 +484,22 @@ private fun OnboardingFlow(
                     Text("Tell SleepTracker when you typically go to bed and wake up. It will only record screen events during these windows.")
 
                     Text("Bedtime window", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "The time range when you usually go to bed. The last time you lock your phone inside this window becomes your detected bedtime.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     TimeRangeSetting(
                         label = "",
                         range = bedtimeRange,
                         onRangeChange = { bedtimeRange = it }
                     )
                     Text("Wake-up window", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "The time range when you usually wake up. The first time you unlock your phone inside this window becomes your detected wake-up time.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     TimeRangeSetting(
                         label = "",
                         range = wakeupRange,
@@ -558,10 +583,7 @@ private fun OnboardingFlow(
                         title = "Notifications",
                         reason = "Needed to run reliable background tracking reminders.",
                         granted = permState.notificationsGranted,
-                        onGrant = {
-                            onRequestNotificationPermission()
-                            refreshPermissions()
-                        }
+                        onGrant = { onRequestNotificationPermission() }
                     )
 
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -569,10 +591,7 @@ private fun OnboardingFlow(
                             title = "Exact Alarms",
                             reason = "Needed for precise service start/stop scheduling. App falls back if denied.",
                             granted = permState.exactAlarmGranted,
-                            onGrant = {
-                                onRequestExactAlarmPermission()
-                                refreshPermissions()
-                            }
+                            onGrant = { onRequestExactAlarmPermission() }
                         )
                     }
 
@@ -585,10 +604,7 @@ private fun OnboardingFlow(
                             title = "Sleep — Read & Write",
                             reason = "Required to save and read sleep sessions in Health Connect.",
                             granted = permState.sleepWriteGranted && permState.sleepReadGranted,
-                            onGrant = {
-                                onRequestHealthPermissions(healthConnectManager.sleepPermissions)
-                                refreshPermissions()
-                            }
+                            onGrant = { onRequestHealthPermissions(healthConnectManager.sleepPermissions) }
                         )
 
                         if (permState.showSensors) {
@@ -596,10 +612,7 @@ private fun OnboardingFlow(
                                 title = "Other Sensors (GrapheneOS)",
                                 reason = "Required on this device for screen state detection.",
                                 granted = permState.sensorsGranted,
-                                onGrant = {
-                                    onRequestOtherSensorsPermission()
-                                    refreshPermissions()
-                                }
+                                onGrant = { onRequestOtherSensorsPermission() }
                             )
                         }
                     }
@@ -613,14 +626,12 @@ private fun OnboardingFlow(
                             title = "Nutrition — Read & Write",
                             reason = "Required to save and read nutrition records in Health Connect.",
                             granted = permState.nutritionWriteGranted && permState.nutritionReadGranted,
-                            onGrant = {
-                                onRequestHealthPermissions(healthConnectManager.nutritionPermissions)
-                                refreshPermissions()
-                            }
+                            onGrant = { onRequestHealthPermissions(healthConnectManager.nutritionPermissions) }
                         )
                     }
 
-                    val allRequired = permState.notificationsGranted &&
+                    val allRequired = permState.isLoaded &&
+                        permState.notificationsGranted &&
                         permState.exactAlarmGranted &&
                         (!sleepSelected || (permState.sleepWriteGranted && (!permState.showSensors || permState.sensorsGranted))) &&
                         (!nutritionSelected || permState.nutritionWriteGranted)

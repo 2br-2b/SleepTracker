@@ -31,14 +31,15 @@ import kotlinx.coroutines.launch
 // ── Shared permission state holder ───────────────────────────────────────────
 
 data class PermissionState(
-    val sleepWriteGranted: Boolean = false,
-    val sleepReadGranted: Boolean = false,
-    val nutritionWriteGranted: Boolean = false,
-    val nutritionReadGranted: Boolean = false,
-    val notificationsGranted: Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU,
+    val sleepWriteGranted: Boolean = true,
+    val sleepReadGranted: Boolean = true,
+    val nutritionWriteGranted: Boolean = true,
+    val nutritionReadGranted: Boolean = true,
+    val notificationsGranted: Boolean = true,
     val sensorsGranted: Boolean = true,
     val showSensors: Boolean = false,
-    val exactAlarmGranted: Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+    val exactAlarmGranted: Boolean = true,
+    val isLoaded: Boolean = false
 )
 
 suspend fun loadPermissionState(
@@ -62,7 +63,8 @@ suspend fun loadPermissionState(
         showSensors = showSensors,
         exactAlarmGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             context.getSystemService(AlarmManager::class.java)?.canScheduleExactAlarms() == true
-        } else true
+        } else true,
+        isLoaded = true
     )
 }
 
@@ -185,7 +187,7 @@ fun PermissionsScreen(
                 }
             )
 
-            if (permState.showSensors || !permState.sensorsGranted) {
+            if (permState.showSensors) {
                 PermissionCard(
                     title = "Other Sensors (GrapheneOS)",
                     reason = "Required on GrapheneOS for screen state detection to work reliably.",
