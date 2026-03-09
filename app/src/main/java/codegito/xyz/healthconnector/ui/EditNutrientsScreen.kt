@@ -35,34 +35,28 @@ fun EditNutrientsScreen(
     val scope = rememberCoroutineScope()
     val nutrientConfigFlow = userPreferencesRepository.nutrientConfig.collectAsState(initial = emptyList())
 
-    // Only the configurable (non-nutritional-facts) portion is shown and managed here
+    // All nutrients are shown and configurable (both core and extra)
     var displayItems by remember { mutableStateOf<List<NutrientConfig>>(emptyList()) }
 
     LaunchedEffect(nutrientConfigFlow.value) {
         if (displayItems.isEmpty() && nutrientConfigFlow.value.isNotEmpty()) {
-            displayItems = nutrientConfigFlow.value.filter { cfg ->
-                runCatching { NutrientKey.valueOf(cfg.key) }.getOrNull()
-                    ?.let { it !in NutrientDefaults.nutritionalFactsKeys } ?: false
-            }
+            displayItems = nutrientConfigFlow.value
         }
     }
 
     val dragReorderState = rememberDragReorderState()
 
-    // Save merges always-on nutritional facts + user-ordered configurable items
+    // Save the full ordered list
     fun save() {
         scope.launch {
-            val nutritionalFactsPart = NutrientDefaults.nutritionalFactsKeys.map { key ->
-                NutrientConfig(key = key.name, enabled = true)
-            }
-            userPreferencesRepository.saveNutrientConfig(nutritionalFactsPart + displayItems)
+            userPreferencesRepository.saveNutrientConfig(displayItems)
         }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Extra Nutrients") },
+                title = { Text("Nutrients") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -81,8 +75,7 @@ fun EditNutrientsScreen(
         ) {
             item {
                 Text(
-                    "Choose which additional nutrients to track and their display order. " +
-                    "Core nutrition facts (Calories, Protein, Carbs, Fat, etc.) are always tracked.",
+                    "Drag to reorder nutrients and toggle which ones are tracked and shown in summaries.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

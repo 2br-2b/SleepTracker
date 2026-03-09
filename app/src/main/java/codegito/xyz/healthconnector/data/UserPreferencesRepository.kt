@@ -180,7 +180,7 @@ class UserPreferencesRepository private constructor(private val context: Context
         .map { prefs -> prefs[NUTRITION_SNACK_DURATION_MINUTES_KEY] ?: 10 }
 
     val nutritionAskEatenTime: Flow<Boolean> = context.dataStore.data
-        .map { prefs -> prefs[NUTRITION_ASK_EATEN_TIME_KEY] ?: false }
+        .map { prefs -> prefs[NUTRITION_ASK_EATEN_TIME_KEY] ?: true }
 
     val nutritionBreakfastRange: Flow<TimeRange> = combine(
         context.dataStore.data.map { it[NUTRITION_BREAKFAST_START_KEY] ?: (6 * 60) },

@@ -162,10 +162,28 @@ fun NutritionSettingsScreen(
             SectionHeader("Nutrients")
 
             ListItem(
-                headlineContent = { Text("Extra Nutrients") },
-                supportingContent = { Text("Choose which optional nutrients to track and their display order") },
+                headlineContent = { Text("Configure Nutrients") },
+                supportingContent = { Text("Choose which nutrients to track, their display order, and whether to show core nutrients") },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
                 modifier = if (contentEnabled) Modifier.clickable { onEditNutrients() } else Modifier
+            )
+
+            // ── Time Tracking ─────────────────────────────────────────────
+            SectionHeader("Time Tracking")
+
+            ListItem(
+                headlineContent = { Text("Ask when food was eaten") },
+                supportingContent = {
+                    Text(if (askEatenTime) "Shows a time picker each time you log food."
+                         else "Logs at current time without asking.")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = askEatenTime,
+                        onCheckedChange = { scope.launch { userPreferencesRepository.setNutritionAskEatenTime(it) } },
+                        enabled = contentEnabled
+                    )
+                }
             )
 
             HorizontalDivider()
@@ -229,21 +247,6 @@ fun NutritionSettingsScreen(
                 )
 
                 HorizontalDivider()
-
-                Text("Time Tracking", style = MaterialTheme.typography.labelLarge)
-                ListItem(
-                    headlineContent = { Text("Ask when food was eaten") },
-                    supportingContent = {
-                        Text(if (askEatenTime) "Shows a time picker each time you log food."
-                             else "Logs at current time without asking.")
-                    },
-                    trailingContent = {
-                        Switch(
-                            checked = askEatenTime,
-                            onCheckedChange = { scope.launch { userPreferencesRepository.setNutritionAskEatenTime(it) } }
-                        )
-                    }
-                )
 
                 Text("Meal Detection Windows", style = MaterialTheme.typography.labelLarge)
                 Text(

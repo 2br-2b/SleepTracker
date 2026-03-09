@@ -52,7 +52,8 @@ data class FoodCandidate(
     val id: String,
     val name: String,
     val baseAmount: NutritionAmount,
-    val nutrientsPerBase: NutrientVector
+    val nutrientsPerBase: NutrientVector,
+    val servingSizeOz: Double? = null
 )
 
 data class LoggedFoodEntry(
