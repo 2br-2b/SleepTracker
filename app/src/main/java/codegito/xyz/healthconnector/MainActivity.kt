@@ -37,6 +37,7 @@ import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.LogFoodScreen
+import codegito.xyz.healthconnector.ui.ManualFoodEntryScreen
 import codegito.xyz.healthconnector.ui.NutritionDayDetailScreen
 import codegito.xyz.healthconnector.ui.NutritionHomeScreen
 import codegito.xyz.healthconnector.ui.NutritionSettingsScreen
@@ -213,6 +214,16 @@ fun MainApp(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
                     nutritionProvider = nutritionProvider,
+                    navController = navController
+                )
+            }
+            composable(Screen.ManualFoodEntry.route) { backStack ->
+                val dateStr = backStack.arguments?.getString("date") ?: return@composable
+                val date = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: return@composable
+                ManualFoodEntryScreen(
+                    date = date,
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository,
                     navController = navController
                 )
             }
@@ -625,5 +636,8 @@ sealed class Screen(val route: String) {
     }
     object LogFood : Screen("nutrition/log/{date}") {
         fun route(date: LocalDate) = "nutrition/log/$date"
+    }
+    object ManualFoodEntry : Screen("nutrition/manual/{date}") {
+        fun route(date: LocalDate) = "nutrition/manual/$date"
     }
 }
