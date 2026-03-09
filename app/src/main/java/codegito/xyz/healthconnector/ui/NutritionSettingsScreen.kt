@@ -1,6 +1,6 @@
 package codegito.xyz.healthconnector.ui
 
-import android.widget.Toast
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
@@ -28,9 +28,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.TimeRange
+import androidx.compose.ui.platform.LocalUriHandler
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.nutrition.domain.NutritionUnitSystem
-import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
+import codegito.xyz.healthconnector.nutrition.provider.NutritionProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -39,7 +40,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun NutritionSettingsScreen(
     userPreferencesRepository: UserPreferencesRepository,
-    nutritionProvider: AssetNutritionProvider,
+    nutritionProvider: NutritionProvider,
     onBack: () -> Unit,
     onEditNutrients: () -> Unit,
     scrollToDataset: Boolean = false
@@ -63,6 +64,9 @@ fun NutritionSettingsScreen(
     var datasetRecordCount by remember { mutableIntStateOf(-1) }
     var isBuildingDataset by remember { mutableStateOf(false) }
     var datasetStatusMessage by remember { mutableStateOf<String?>(null) }
+    var buildProgress by remember { mutableIntStateOf(0) }
+    var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
+    var showMergeDialog by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
     var datasetSectionContentY by remember { mutableIntStateOf(0) }
@@ -96,12 +100,16 @@ fun NutritionSettingsScreen(
 
     LaunchedEffect(Unit) { refreshDatasetCount() }
 
-    val zipPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    fun launchBuildFromUri(uri: Uri, mergeMode: Boolean) {
         scope.launch {
             isBuildingDataset = true
-            datasetStatusMessage = "Building index…"
-            nutritionIndexBuildManager.buildFromUri(uri)
+            buildProgress = 0
+            datasetStatusMessage = if (mergeMode) "Merging dataset…" else "Building database…"
+            nutritionIndexBuildManager.buildFromUri(
+                uri = uri,
+                progressCallback = { current, _ -> buildProgress = current },
+                mergeMode = mergeMode
+            )
                 .onSuccess { build ->
                     nutritionProvider.invalidateCache()
                     datasetStatusMessage = "Ready: ${build.recordCount} foods loaded"
@@ -110,6 +118,53 @@ fun NutritionSettingsScreen(
                 .onFailure { datasetStatusMessage = "Failed: ${it.message}" }
             isBuildingDataset = false
         }
+    }
+
+    fun launchBuildFromBundled() {
+        scope.launch {
+            isBuildingDataset = true
+            buildProgress = 0
+            datasetStatusMessage = "Building database from bundled dataset…"
+            nutritionIndexBuildManager.buildFromBundledZip(
+                progressCallback = { current, _ -> buildProgress = current }
+            )
+                .onSuccess { build ->
+                    nutritionProvider.invalidateCache()
+                    datasetStatusMessage = "Ready: ${build.recordCount} foods loaded"
+                    refreshDatasetCount()
+                }
+                .onFailure { datasetStatusMessage = "Failed: ${it.message}" }
+            isBuildingDataset = false
+        }
+    }
+
+    val zipPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        pendingImportUri = uri
+        showMergeDialog = true
+    }
+
+    if (showMergeDialog) {
+        val uri = pendingImportUri
+        AlertDialog(
+            onDismissRequest = { showMergeDialog = false; pendingImportUri = null },
+            title = { Text("Import Dataset") },
+            text = { Text("Merge with existing database, or replace it entirely?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showMergeDialog = false
+                    uri?.let { launchBuildFromUri(it, mergeMode = false) }
+                    pendingImportUri = null
+                }) { Text("Replace") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showMergeDialog = false
+                    uri?.let { launchBuildFromUri(it, mergeMode = true) }
+                    pendingImportUri = null
+                }) { Text("Merge") }
+            }
+        )
     }
 
     Scaffold(
@@ -182,7 +237,17 @@ fun NutritionSettingsScreen(
             }
             ListItem(headlineContent = { Text("Food database") }, supportingContent = { Text(datasetLabel) })
 
-            if (isBuildingDataset) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            if (isBuildingDataset) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (buildProgress > 0) {
+                    Text(
+                        "$buildProgress foods indexed…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            }
             datasetStatusMessage?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(horizontal = 16.dp))
@@ -193,20 +258,25 @@ fun NutritionSettingsScreen(
                 Button(
                     onClick = { zipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
                     enabled = contentEnabled && !isBuildingDataset, modifier = Modifier.weight(1f)
-                ) { Text("Upload ZIP") }
-                if (datasetRecordCount > 0) {
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { nutritionIndexBuildManager.clearIndex() }
-                                nutritionProvider.invalidateCache()
-                                datasetStatusMessage = "Dataset cleared"
-                                refreshDatasetCount()
-                            }
-                        },
-                        enabled = contentEnabled && !isBuildingDataset, modifier = Modifier.weight(1f)
-                    ) { Text("Clear") }
-                }
+                ) { Text("Import ZIP") }
+                OutlinedButton(
+                    onClick = { launchBuildFromBundled() },
+                    enabled = contentEnabled && !isBuildingDataset, modifier = Modifier.weight(1f)
+                ) { Text("Re-index") }
+            }
+            if (datasetRecordCount > 0) {
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { nutritionIndexBuildManager.clearIndex() }
+                            nutritionProvider.invalidateCache()
+                            datasetStatusMessage = "Database cleared"
+                            refreshDatasetCount()
+                        }
+                    },
+                    enabled = contentEnabled && !isBuildingDataset,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                ) { Text("Clear database") }
             }
             } // end dataset section highlight Column
 
@@ -268,13 +338,14 @@ fun NutritionSettingsScreen(
                 }
             }
 
+            val uriHandler = LocalUriHandler.current
             ListItem(
-                headlineContent = { Text("Nutrition Dataset License") },
-                supportingContent = { Text("See README + bundled metadata for dataset attribution and licensing.") },
+                headlineContent = { Text("Nutrition Dataset") },
+                supportingContent = {
+                    Text("Data from OpenNutrition \u00b7 Open Food Facts contributors \u00b7 ODbL license")
+                },
                 leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
-                modifier = Modifier.clickable {
-                    Toast.makeText(context, "See README + bundled metadata for nutrition dataset licensing.", Toast.LENGTH_LONG).show()
-                }
+                modifier = Modifier.clickable { uriHandler.openUri("https://opennutrition.app") }
             )
 
             // ── Advanced (inline) ─────────────────────────────────────────

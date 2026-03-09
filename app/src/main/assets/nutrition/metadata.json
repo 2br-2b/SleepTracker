@@ -1,8 +1,0 @@
-{
-  "source": "Open Nutrition Dataset",
-  "version": "2025.1",
-  "sourceZip": "opennutrition-dataset-2025.1.zip",
-  "sourceLocation": "demo-fallback",
-  "licenseNotice": "Refer to Nutrition Dataset License in app settings and repository documentation.",
-  "recordCount": 2
-}
