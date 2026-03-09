@@ -98,7 +98,7 @@ class UserPreferencesRepository private constructor(private val context: Context
         .map { prefs -> prefs[AWAKENING_LOGGING_ENABLED_KEY] ?: true }
 
     val awakeningThresholdMinutes: Flow<Int> = context.dataStore.data
-        .map { prefs -> prefs[AWAKENING_THRESHOLD_MINUTES_KEY] ?: 60 }
+        .map { prefs -> prefs[AWAKENING_THRESHOLD_MINUTES_KEY] ?: 10 } // Default 10 minutes
 
     val defaultAwakeToAsleepMinutes: Flow<Int> = context.dataStore.data
         .map { prefs -> prefs[DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY] ?: 15 }
