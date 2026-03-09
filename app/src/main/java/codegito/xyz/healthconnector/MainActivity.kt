@@ -17,8 +17,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -31,11 +34,14 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
@@ -215,7 +221,7 @@ fun MainApp(
                     // Sleep tab: only when sleep tracking enabled
                     if (sleepEnabled) {
                         NavigationBarItem(
-                            icon = { Icon(Icons.Default.Home, contentDescription = "Sleep") },
+                            icon = { Icon(Icons.Default.Bedtime, contentDescription = "Sleep") },
                             label = { Text("Sleep") },
                             selected = currentRoute == "home",
                             onClick = {
@@ -230,7 +236,7 @@ fun MainApp(
                     // Food tab: only if nutrition enabled
                     if (nutritionEnabled) {
                         NavigationBarItem(
-                            icon = { Icon(Icons.Default.Add, contentDescription = "Food") },
+                            icon = { Icon(Icons.Default.Restaurant, contentDescription = "Food") },
                             label = { Text("Food") },
                             selected = currentRoute == "nutrition",
                             onClick = {
@@ -243,7 +249,7 @@ fun MainApp(
                         )
                     }
                     NavigationBarItem(
-                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                        icon = { Icon(Icons.Default.Tune, contentDescription = "Settings") },
                         label = { Text("Settings") },
                         selected = currentRoute == "settings",
                         onClick = {
@@ -369,12 +375,20 @@ fun MainApp(
                     onEditSleepStages = { navController.navigate(Screen.EditSleepStages.route) }
                 )
             }
-            composable(Screen.NutritionSettings.route) {
+            composable(
+                route = "${Screen.NutritionSettings.route}?highlight={highlight}",
+                arguments = listOf(navArgument("highlight") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                })
+            ) { backStack ->
+                val highlight = backStack.arguments?.getString("highlight") ?: ""
                 NutritionSettingsScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     nutritionProvider = nutritionProvider,
                     onBack = { navController.popBackStack() },
-                    onEditNutrients = { navController.navigate(Screen.EditNutrients.route) }
+                    onEditNutrients = { navController.navigate(Screen.EditNutrients.route) },
+                    scrollToDataset = highlight == "dataset"
                 )
             }
             composable(Screen.EditNutrients.route) {
@@ -404,6 +418,7 @@ fun HomeScreen(
     var sleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
     var hasSleepWrite by remember { mutableStateOf<Boolean?>(null) }
     var hasSleepRead by remember { mutableStateOf<Boolean?>(null) }
+    var isRefreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -449,7 +464,24 @@ fun HomeScreen(
             }
         }
     ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding)) {
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                scope.launch {
+                    hasSleepWrite = healthConnectManager.hasSleepWritePermission()
+                    if (hasSleepWrite == true) {
+                        val endTime = Instant.now()
+                        val startTime = endTime.minus(Duration.ofDays(historyDisplayDays.toLong()))
+                        val result = healthConnectManager.getSleepSessions(startTime, endTime)
+                        sleepSessions = result.getOrDefault(emptyList())
+                    }
+                    isRefreshing = false
+                }
+            },
+            modifier = Modifier.padding(innerPadding)
+        ) {
+        Column {
             // Banner when write permission is missing
             if (hasSleepWrite == false) {
                 Card(
@@ -540,6 +572,7 @@ fun HomeScreen(
                 }
             }
         }
+        } // end PullToRefreshBox
     }
 
     // Session picker dialog (for days with multiple sessions)
