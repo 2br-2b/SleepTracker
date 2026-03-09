@@ -10,6 +10,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "screen_events")
@@ -30,7 +32,8 @@ data class RecentFoodEntity(
     val carbsGrams: Double,
     val fatGrams: Double,
     val lastUsedAtMillis: Long,
-    val sourceType: String
+    val sourceType: String,
+    val nutrientsJson: String = "{}"
 )
 
 @Dao
@@ -57,7 +60,13 @@ interface RecentFoodDao {
     suspend fun clearAll()
 }
 
-@Database(entities = [ScreenEvent::class, RecentFoodEntity::class], version = 1, exportSchema = false)
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE recent_foods ADD COLUMN nutrientsJson TEXT NOT NULL DEFAULT '{}'")
+    }
+}
+
+@Database(entities = [ScreenEvent::class, RecentFoodEntity::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun screenEventDao(): ScreenEventDao
     abstract fun recentFoodDao(): RecentFoodDao
@@ -72,7 +81,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "sleep_tracker_database"
-                ).build()
+                ).addMigrations(MIGRATION_1_2).build()
                 INSTANCE = instance
                 instance
             }

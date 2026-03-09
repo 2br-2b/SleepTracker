@@ -49,23 +49,23 @@ class SleepTrackingService : Service() {
             // Watch for mode or window changes
             kotlinx.coroutines.flow.combine(
                 prefs.sleepDetectionMode,
-                prefs.wakeupWindowEnd,
-                prefs.bedtimeWindowStart
-            ) { mode, wakeupEnd, bedtimeStart ->
-                Triple(mode, wakeupEnd, bedtimeStart)
-            }.collect { (mode, wakeupEnd, bedtimeStart) ->
+                prefs.wakeupWindow,
+                prefs.bedtimeWindow
+            ) { mode, wakeupWindow, bedtimeWindow ->
+                Triple(mode, wakeupWindow, bedtimeWindow)
+            }.collect { (mode, wakeupWindow, bedtimeWindow) ->
                 if (mode == SleepDetectionMode.MANUAL) {
                     Log.d("SleepTrackingService", "Manual mode enabled, stopping service")
                     stopSelf()
                 } else {
                     // Reschedule deadline alarm if settings change
-                    NotificationHelper.scheduleDeadlineAlarm(this@SleepTrackingService, wakeupEnd)
-                    
+                    NotificationHelper.scheduleDeadlineAlarm(this@SleepTrackingService, wakeupWindow.endMinutes)
+
                     // Schedule next start/stop based on windows
                     NotificationHelper.scheduleServiceLifecycle(
                         this@SleepTrackingService,
-                        bedtimeStart,
-                        wakeupEnd
+                        bedtimeWindow.startMinutes,
+                        wakeupWindow.endMinutes
                     )
                 }
             }

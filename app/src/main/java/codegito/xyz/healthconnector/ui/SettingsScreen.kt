@@ -1,38 +1,35 @@
 package codegito.xyz.healthconnector.ui
 
-import android.app.Activity
+import android.app.ActivityManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import androidx.core.content.PermissionChecker
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import codegito.xyz.healthconnector.HealthConnectManager
-import codegito.xyz.healthconnector.data.UserPreferencesRepository
-import kotlinx.coroutines.launch
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import android.widget.Toast
-import android.app.ActivityManager
 import codegito.xyz.healthconnector.NotificationHelper
 import codegito.xyz.healthconnector.SleepTrackingService
+import codegito.xyz.healthconnector.data.UserPreferencesRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,8 +38,11 @@ fun SettingsScreen(
     healthConnectManager: HealthConnectManager,
     userPreferencesRepository: UserPreferencesRepository,
     onManagePermissions: () -> Unit,
-    onEditSleepStages: () -> Unit,
-    onAutoSleepSettings: () -> Unit
+    onSleepSettings: () -> Unit,
+    onNutritionSettings: () -> Unit,
+    // Deprecated callbacks kept for binary compat — not used in new flow
+    onEditSleepStages: () -> Unit = {},
+    onAutoSleepSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -50,54 +50,33 @@ fun SettingsScreen(
 
     var hasHealthConnectPermissions by remember { mutableStateOf<Boolean?>(null) }
 
-    val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     val amoledPitchBlackEnabled by userPreferencesRepository.amoledPitchBlackEnabled.collectAsState(initial = false)
-    val nutritionRangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
-    val nutritionMealDuration by userPreferencesRepository.nutritionMealDurationMinutes.collectAsState(initial = 30)
-    val nutritionSnackDuration by userPreferencesRepository.nutritionSnackDurationMinutes.collectAsState(initial = 10)
-    var showRolloverTimePicker by remember { mutableStateOf(false) }
+    val showAdvancedSettings by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
+
     var versionTapCount by remember { mutableIntStateOf(0) }
-    
-    // Check if service is running
     var isServiceActive by remember { mutableStateOf(false) }
-    var nutritionMetadataSummary by remember { mutableStateOf("Unavailable") }
-    
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scope.launch { hasHealthConnectPermissions = healthConnectManager.hasPermissions() }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(developerModeEnabled) {
         if (!developerModeEnabled) return@LaunchedEffect
-        nutritionMetadataSummary = runCatching {
-            val metadataText = context.filesDir.resolve("nutrition/metadata.json").takeIf { it.exists() }?.readText()
-                ?: context.assets.open("nutrition/metadata.json").bufferedReader().use { it.readText() }
-            org.json.JSONObject(metadataText).let {
-                "records=" + it.optInt("recordCount", 0) +
-                    ", source=" + it.optString("sourceLocation", "unknown") +
-                    ", log=" + it.optString("buildLogDownloadUri", it.optString("buildLogPath", context.filesDir.resolve("nutrition/build-log.txt").absolutePath))
-            }
-        }.getOrDefault("Unavailable")
         while (true) {
             isServiceActive = isServiceRunning(context, SleepTrackingService::class.java)
             kotlinx.coroutines.delay(2000)
         }
     }
 
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                 scope.launch {
-                    hasHealthConnectPermissions = healthConnectManager.hasPermissions()
-                }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
     Scaffold(
-        topBar = {
-            TopAppBar(title = { Text("Settings") })
-        }
+        topBar = { TopAppBar(title = { Text("Settings") }) }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -107,21 +86,15 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // Permissions Section
-            SectionHeader("Permissions")
-            
+            // ── Health Connect ────────────────────────────────────────────
+            SectionHeader("Health Connect")
+
             if (hasHealthConnectPermissions == false) {
-                Button(
-                    onClick = onManagePermissions,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Button(onClick = onManagePermissions, modifier = Modifier.fillMaxWidth()) {
                     Text("Grant Health Connect Permissions")
                 }
             } else {
-                OutlinedButton(
-                    onClick = onManagePermissions,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                OutlinedButton(onClick = onManagePermissions, modifier = Modifier.fillMaxWidth()) {
                     Text("Manage Health Connect Permissions")
                 }
             }
@@ -132,10 +105,11 @@ fun SettingsScreen(
                     if (intent.resolveActivity(context.packageManager) != null) {
                         context.startActivity(intent)
                     } else {
-                         val settingsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.fromParts("package", context.packageName, null)
-                        }
-                        context.startActivity(settingsIntent)
+                        context.startActivity(
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", context.packageName, null)
+                            }
+                        )
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -145,20 +119,28 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            // Automation Section
-            SectionHeader("Automation")
+            // ── Sub-pages ─────────────────────────────────────────────────
+            SectionHeader("Settings")
 
             ListItem(
-                headlineContent = { Text("Auto-Detect Sleep") },
-                supportingContent = { Text("Configure windows, thresholds, and manual template") },
+                headlineContent = { Text("Sleep") },
+                supportingContent = { Text("Detection, reminders, stages, rollover time") },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = Modifier.clickable { onAutoSleepSettings() }
+                modifier = Modifier.clickable { onSleepSettings() }
+            )
+
+            ListItem(
+                headlineContent = { Text("Nutrition") },
+                supportingContent = { Text("Food database, date range, meal windows") },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                modifier = Modifier.clickable { onNutritionSettings() }
             )
 
             HorizontalDivider()
 
-            // Appearance Section
+            // ── Appearance ────────────────────────────────────────────────
             SectionHeader("Appearance")
+
             ListItem(
                 headlineContent = { Text("Pitch black (AMOLED)") },
                 supportingContent = { Text("Use pure black backgrounds in dark mode.") },
@@ -174,116 +156,40 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            // Data Section
-            SectionHeader("Data")
+            // ── Advanced ──────────────────────────────────────────────────
+            SectionHeader("Advanced")
 
             ListItem(
-                headlineContent = { Text("Rollover Time") },
-                supportingContent = { Text("Cutoff time for daily statistics. If a sleep starts before this time, it will be counted as part of the previous day's night.") },
+                headlineContent = { Text("Show advanced settings") },
+                supportingContent = { Text("Reveal extra options on the Sleep and Nutrition settings pages.") },
                 trailingContent = {
-                    Text(
-                        LocalTime.of(rolloverHour, 0).format(DateTimeFormatter.ofPattern("h:mm a")),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                    Checkbox(
+                        checked = showAdvancedSettings,
+                        onCheckedChange = { enabled ->
+                            scope.launch { userPreferencesRepository.setShowAdvancedSettings(enabled) }
+                        }
                     )
                 },
-                modifier = Modifier.clickable { showRolloverTimePicker = true }
-            )
-
-
-            HorizontalDivider()
-            SectionHeader("Nutrition")
-
-            ListItem(
-                headlineContent = { Text("Past date range") },
-                supportingContent = { Text("$nutritionRangeDays days selectable in Food tab") },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            val next = (nutritionRangeDays - 1).coerceAtLeast(1)
-                            scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays(next) }
-                        }) { Text("-") }
-                        OutlinedButton(onClick = {
-                            val next = (nutritionRangeDays + 1).coerceAtMost(365)
-                            scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays(next) }
-                        }) { Text("+") }
-                    }
-                }
-            )
-
-            ListItem(
-                headlineContent = { Text("Meal entry duration") },
-                supportingContent = { Text("$nutritionMealDuration minutes backfilled from time eaten") },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            scope.launch { userPreferencesRepository.setNutritionMealDurationMinutes((nutritionMealDuration - 5).coerceAtLeast(5)) }
-                        }) { Text("-") }
-                        OutlinedButton(onClick = {
-                            scope.launch { userPreferencesRepository.setNutritionMealDurationMinutes((nutritionMealDuration + 5).coerceAtMost(180)) }
-                        }) { Text("+") }
-                    }
-                }
-            )
-
-            ListItem(
-                headlineContent = { Text("Snack entry duration") },
-                supportingContent = { Text("$nutritionSnackDuration minutes backfilled from time eaten") },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            scope.launch { userPreferencesRepository.setNutritionSnackDurationMinutes((nutritionSnackDuration - 5).coerceAtLeast(1)) }
-                        }) { Text("-") }
-                        OutlinedButton(onClick = {
-                            scope.launch { userPreferencesRepository.setNutritionSnackDurationMinutes((nutritionSnackDuration + 5).coerceAtMost(120)) }
-                        }) { Text("+") }
-                    }
-                }
-            )
-
-            ListItem(
-                headlineContent = { Text("Nutrition Dataset License") },
-                supportingContent = { Text("Open the bundled dataset attribution and licensing notes") },
-                leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
                 modifier = Modifier.clickable {
-                    Toast.makeText(context, "See README + bundled metadata for nutrition dataset licensing.", Toast.LENGTH_LONG).show()
+                    scope.launch { userPreferencesRepository.setShowAdvancedSettings(!showAdvancedSettings) }
                 }
             )
 
-            HorizontalDivider()
-
-            // Sleep Stages Section
-            SectionHeader("Sleep Stages")
-
-            ListItem(
-                headlineContent = { Text("Customize Sleep Stages") },
-                supportingContent = { Text("Reorder, enable/disable, and change emojis") },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = Modifier.clickable { onEditSleepStages() }
-            )
-
+            // ── Developer ─────────────────────────────────────────────────
             if (developerModeEnabled) {
                 HorizontalDivider()
                 SectionHeader("Developer Tools")
-                
+
                 ListItem(
                     headlineContent = { Text("Service Status") },
                     supportingContent = { Text(if (isServiceActive) "Running (Foreground)" else "Stopped") },
                     trailingContent = {
-                        val color = if (isServiceActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                        Surface(
-                            modifier = Modifier.size(12.dp),
-                            shape = CircleShape,
-                            color = color
-                        ) {}
+                        val color = if (isServiceActive) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error
+                        Surface(modifier = Modifier.size(12.dp), shape = CircleShape, color = color) {}
                     }
                 )
 
-                ListItem(
-                    headlineContent = { Text("Nutrition index") },
-                    supportingContent = { Text(nutritionMetadataSummary) }
-                )
-                
                 Button(
                     onClick = {
                         NotificationHelper.sendLogReminder(
@@ -312,8 +218,8 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.weight(1f))
-            
-            val appVersion = "1.0" // TODO: Get from BuildConfig if available
+
+            val appVersion = "1.0"
             Text(
                 text = "Version $appVersion",
                 style = MaterialTheme.typography.bodySmall,
@@ -333,19 +239,6 @@ fun SettingsScreen(
             )
         }
     }
-
-    if (showRolloverTimePicker) {
-         RolloverTimePickerDialog(
-             initialHour = rolloverHour,
-             onConfirm = { hour ->
-                 scope.launch {
-                     userPreferencesRepository.setRolloverHour(hour)
-                 }
-                 showRolloverTimePicker = false
-             },
-             onDismiss = { showRolloverTimePicker = false }
-         )
-    }
 }
 
 private fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
@@ -364,34 +257,3 @@ fun SectionHeader(title: String) {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun RolloverTimePickerDialog(
-    initialHour: Int,
-    onConfirm: (Int) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val state = rememberTimePickerState(
-        initialHour = initialHour,
-        initialMinute = 0,
-        is24Hour = false
-    )
-    
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Select Rollover Hour") },
-        text = {
-            TimePicker(state = state)
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(state.hour) }) {
-                Text("OK")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
