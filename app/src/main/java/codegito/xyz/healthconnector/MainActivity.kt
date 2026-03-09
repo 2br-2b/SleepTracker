@@ -37,6 +37,7 @@ import androidx.navigation.compose.rememberNavController
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
+import codegito.xyz.healthconnector.ui.EditNutrientsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.LogFoodScreen
 import codegito.xyz.healthconnector.ui.ManualFoodEntryScreen
@@ -328,6 +329,14 @@ fun MainApp(
             }
             composable(Screen.NutritionSettings.route) {
                 NutritionSettingsScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    nutritionProvider = nutritionProvider,
+                    onBack = { navController.popBackStack() },
+                    onEditNutrients = { navController.navigate(Screen.EditNutrients.route) }
+                )
+            }
+            composable(Screen.EditNutrients.route) {
+                EditNutrientsScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onBack = { navController.popBackStack() }
                 )
@@ -736,6 +745,7 @@ sealed class Screen(val route: String) {
     object SleepSettings : Screen("sleep_settings")
     object NutritionSettings : Screen("nutrition_settings")
     object EditSleepStages : Screen("edit_sleep_stages")
+    object EditNutrients : Screen("edit_nutrients")
     object NutritionDay : Screen("nutrition/day/{date}") {
         fun route(date: LocalDate) = "nutrition/day/$date"
     }

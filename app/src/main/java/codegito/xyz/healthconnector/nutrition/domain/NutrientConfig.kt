@@ -45,11 +45,29 @@ data class NutrientConfig(
 
 object NutrientDefaults {
 
+    /**
+     * Core "Nutrition Facts" panel nutrients — always tracked regardless of user config.
+     * These are not shown in the configurable nutrient selection screen.
+     */
+    val nutritionalFactsKeys: Set<NutrientKey> = setOf(
+        NutrientKey.CALORIES,
+        NutrientKey.PROTEIN,
+        NutrientKey.CARBS,
+        NutrientKey.FAT,
+        NutrientKey.SATURATED_FAT,
+        NutrientKey.TRANS_FAT,
+        NutrientKey.CHOLESTEROL,
+        NutrientKey.SODIUM,
+        NutrientKey.FIBER,
+        NutrientKey.SUGAR,
+    )
+
     private val defaultEnabledKeys = setOf(
         NutrientKey.CALORIES,
         NutrientKey.CARBS,
         NutrientKey.FAT,
         NutrientKey.SATURATED_FAT,
+        NutrientKey.TRANS_FAT,
         NutrientKey.CHOLESTEROL,
         NutrientKey.SODIUM,
         NutrientKey.PROTEIN,
