@@ -22,10 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -33,9 +31,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TimePicker
-import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,7 +51,10 @@ import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.data.model.TimeRange
+import codegito.xyz.healthconnector.ui.AppTimePickerDialog
 import codegito.xyz.healthconnector.ui.SleepLogEditor
+import codegito.xyz.healthconnector.ui.TimeRangeSetting
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -171,9 +169,8 @@ private fun OnboardingFlow(
     var isHealthConnectInstalled by remember { mutableStateOf(false) }
     var selectedMode by remember { mutableStateOf(SleepDetectionMode.AUTO) }
 
-    var bedtimeStart by remember { mutableIntStateOf(21 * 60) }
-    var bedtimeEnd by remember { mutableIntStateOf(2 * 60) }
-    var wakeupEnd by remember { mutableIntStateOf(12 * 60) }
+    var bedtimeRange by remember { mutableStateOf(TimeRange.BEDTIME) }
+    var wakeupRange by remember { mutableStateOf(TimeRange.WAKEUP) }
     var awakeningsEnabled by remember { mutableStateOf(true) }
     var awakeningThresholdMinutes by remember { mutableIntStateOf(60) }
     var defaultAwakeMinutes by remember { mutableIntStateOf(15) }
@@ -383,20 +380,17 @@ private fun OnboardingFlow(
                 OnboardingStep.AutoConfig -> {
                     Text("Set up automatic detection", style = MaterialTheme.typography.headlineMedium)
 
-                    TimeConfigRow(
-                        label = "Bedtime window start",
-                        minutes = bedtimeStart,
-                        onMinutesSelected = { bedtimeStart = it }
+                    Text("Bedtime window", style = MaterialTheme.typography.labelLarge)
+                    TimeRangeSetting(
+                        label = "",
+                        range = bedtimeRange,
+                        onRangeChange = { bedtimeRange = it }
                     )
-                    TimeConfigRow(
-                        label = "Bedtime window end",
-                        minutes = bedtimeEnd,
-                        onMinutesSelected = { bedtimeEnd = it }
-                    )
-                    TimeConfigRow(
-                        label = "Latest wake-up time",
-                        minutes = wakeupEnd,
-                        onMinutesSelected = { wakeupEnd = it }
+                    Text("Wake-up window", style = MaterialTheme.typography.labelLarge)
+                    TimeRangeSetting(
+                        label = "",
+                        range = wakeupRange,
+                        onRangeChange = { wakeupRange = it }
                     )
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -426,8 +420,8 @@ private fun OnboardingFlow(
                         onClick = {
                             scope.launch {
                                 userPreferencesRepository.setSleepDetectionMode(SleepDetectionMode.AUTO)
-                                userPreferencesRepository.setBedtimeWindow(bedtimeStart, bedtimeEnd)
-                                userPreferencesRepository.setWakeupWindow(5 * 60, wakeupEnd)
+                                userPreferencesRepository.setBedtimeWindow(bedtimeRange)
+                                userPreferencesRepository.setWakeupWindow(wakeupRange)
                                 userPreferencesRepository.setAwakeningLoggingEnabled(awakeningsEnabled)
                                 userPreferencesRepository.setAwakeningThreshold(awakeningThresholdMinutes)
                                 userPreferencesRepository.setDefaultAwakeToAsleepMinutes(defaultAwakeMinutes)
@@ -544,80 +538,6 @@ private fun OnboardingFlow(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TimeConfigRow(
-    label: String,
-    minutes: Int,
-    onMinutesSelected: (Int) -> Unit
-) {
-    val hour = (minutes / 60).coerceIn(0, 23)
-    val minute = (minutes % 60).coerceIn(0, 59)
-    var showTimePicker by remember { mutableStateOf(false) }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(label, fontWeight = FontWeight.SemiBold)
-                Text(String.format("%02d:%02d", hour, minute), style = MaterialTheme.typography.bodyMedium)
-            }
-            OutlinedButton(onClick = { showTimePicker = true }) {
-                Text("Pick time")
-            }
-        }
-    }
-
-    if (showTimePicker) {
-        OnboardingTimePickerDialog(
-            title = label,
-            initialHour = hour,
-            initialMinute = minute,
-            onConfirm = { selectedHour, selectedMinute ->
-                onMinutesSelected(selectedHour * 60 + selectedMinute)
-                showTimePicker = false
-            },
-            onDismiss = { showTimePicker = false }
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun OnboardingTimePickerDialog(
-    title: String,
-    initialHour: Int,
-    initialMinute: Int,
-    onConfirm: (Int, Int) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val state = rememberTimePickerState(
-        initialHour = initialHour,
-        initialMinute = initialMinute,
-        is24Hour = false
-    )
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Select $title") },
-        text = { TimePicker(state = state) },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(state.hour, state.minute) }) {
-                Text("OK")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
 
 @Composable
 private fun PermissionRow(

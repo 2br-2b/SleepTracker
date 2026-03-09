@@ -46,10 +46,12 @@ class ScreenStateReceiver : BroadcastReceiver() {
         val now = LocalTime.now()
         val nowMins = now.hour * 60 + now.minute
 
-        val bedtimeStart = prefs.bedtimeWindowStart.first()
-        val bedtimeEnd = prefs.bedtimeWindowEnd.first()
-        val wakeupStart = prefs.wakeupWindowStart.first()
-        val wakeupEnd = prefs.wakeupWindowEnd.first()
+        val bedtimeWindow = prefs.bedtimeWindow.first()
+        val wakeupWindow = prefs.wakeupWindow.first()
+        val bedtimeStart = bedtimeWindow.startMinutes
+        val bedtimeEnd = bedtimeWindow.endMinutes
+        val wakeupStart = wakeupWindow.startMinutes
+        val wakeupEnd = wakeupWindow.endMinutes
 
         val inBedtimeWindow = isTimeInWindow(nowMins, bedtimeStart, bedtimeEnd)
         val inWakeupWindow = isTimeInWindow(nowMins, wakeupStart, wakeupEnd)

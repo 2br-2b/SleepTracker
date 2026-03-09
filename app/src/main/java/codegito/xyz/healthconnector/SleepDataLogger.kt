@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.db.SleepEventDatabase
 import codegito.xyz.healthconnector.data.model.SleepDetectionMode
+import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.logic.SleepDetectionEngine
 import codegito.xyz.healthconnector.ui.SleepLogEditor
@@ -61,10 +62,12 @@ class SleepDataLogger : ComponentActivity() {
 
                 val detectionMode by userPreferencesRepository.sleepDetectionMode.collectAsState(initial = SleepDetectionMode.AUTO)
                 val manualTemplate by userPreferencesRepository.manualSleepTemplate.collectAsState(initial = null)
-                val bedtimeStart by userPreferencesRepository.bedtimeWindowStart.collectAsState(initial = 21 * 60)
-                val bedtimeEnd by userPreferencesRepository.bedtimeWindowEnd.collectAsState(initial = 2 * 60)
-                val wakeupStart by userPreferencesRepository.wakeupWindowStart.collectAsState(initial = 5 * 60)
-                val wakeupEnd by userPreferencesRepository.wakeupWindowEnd.collectAsState(initial = 12 * 60)
+                val bedtimeWindow by userPreferencesRepository.bedtimeWindow.collectAsState(initial = TimeRange.BEDTIME)
+                val wakeupWindow by userPreferencesRepository.wakeupWindow.collectAsState(initial = TimeRange.WAKEUP)
+                val bedtimeStart = bedtimeWindow.startMinutes
+                val bedtimeEnd = bedtimeWindow.endMinutes
+                val wakeupStart = wakeupWindow.startMinutes
+                val wakeupEnd = wakeupWindow.endMinutes
                 val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 60)
                 val defaultAwakeToAsleep by userPreferencesRepository.defaultAwakeToAsleepMinutes.collectAsState(initial = 15)
 

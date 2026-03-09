@@ -8,8 +8,10 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
+import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.SleepStageConfig
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.encodeToString
@@ -35,246 +37,284 @@ class UserPreferencesRepository private constructor(private val context: Context
         encodeDefaults = true
     }
 
-    private val SLEEP_STAGES_JSON_KEY = stringPreferencesKey("sleep_stages_json")
-    private val ROLLOVER_HOUR_KEY = intPreferencesKey("rollover_hour")
-    
-    // Auto Sleep Detection Settings
-    private val SLEEP_DETECTION_MODE_KEY = stringPreferencesKey("sleep_detection_mode")
-    private val BEDTIME_WINDOW_START_KEY = intPreferencesKey("bedtime_window_start")
-    private val BEDTIME_WINDOW_END_KEY = intPreferencesKey("bedtime_window_end")
-    private val WAKEUP_WINDOW_START_KEY = intPreferencesKey("wakeup_window_start")
-    private val WAKEUP_WINDOW_END_KEY = intPreferencesKey("wakeup_window_end")
-    private val AWAKENING_LOGGING_ENABLED_KEY = booleanPreferencesKey("awakening_logging_enabled")
+    // ── Keys ──────────────────────────────────────────────────────────────
+
+    private val SLEEP_STAGES_JSON_KEY           = stringPreferencesKey("sleep_stages_json")
+    private val ROLLOVER_HOUR_KEY               = intPreferencesKey("rollover_hour")
+    private val SLEEP_DETECTION_MODE_KEY        = stringPreferencesKey("sleep_detection_mode")
+    private val BEDTIME_WINDOW_START_KEY        = intPreferencesKey("bedtime_window_start")
+    private val BEDTIME_WINDOW_END_KEY          = intPreferencesKey("bedtime_window_end")
+    private val WAKEUP_WINDOW_START_KEY         = intPreferencesKey("wakeup_window_start")
+    private val WAKEUP_WINDOW_END_KEY           = intPreferencesKey("wakeup_window_end")
+    private val AWAKENING_LOGGING_ENABLED_KEY   = booleanPreferencesKey("awakening_logging_enabled")
     private val AWAKENING_THRESHOLD_MINUTES_KEY = intPreferencesKey("awakening_threshold_minutes")
     private val DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY = intPreferencesKey("default_awake_to_asleep_minutes")
-    private val MANUAL_SLEEP_TEMPLATE_JSON_KEY = stringPreferencesKey("manual_sleep_template_json")
-    
-    // Notifications
-    private val REMINDER_FIRST_UNLOCK_ENABLED_KEY = booleanPreferencesKey("reminder_first_unlock_enabled")
-    private val REMINDER_DEADLINE_LOUD_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_loud_enabled")
+    private val MANUAL_SLEEP_TEMPLATE_JSON_KEY  = stringPreferencesKey("manual_sleep_template_json")
+    private val REMINDER_FIRST_UNLOCK_ENABLED_KEY   = booleanPreferencesKey("reminder_first_unlock_enabled")
+    private val REMINDER_DEADLINE_LOUD_ENABLED_KEY  = booleanPreferencesKey("reminder_deadline_loud_enabled")
     private val REMINDER_DEADLINE_SILENT_ENABLED_KEY = booleanPreferencesKey("reminder_deadline_silent_enabled")
-    private val DEVELOPER_MODE_ENABLED_KEY = booleanPreferencesKey("developer_mode_enabled")
-    private val DATA_RETENTION_DAYS_KEY = intPreferencesKey("data_retention_days")
-    private val HISTORY_DISPLAY_DAYS_KEY = intPreferencesKey("history_display_days")
-    private val ONBOARDING_COMPLETED_KEY = booleanPreferencesKey("onboarding_completed")
-    private val AMOLED_PITCH_BLACK_KEY = booleanPreferencesKey("amoled_pitch_black")
-    private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY = intPreferencesKey("nutrition_past_date_range_days")
+    private val DEVELOPER_MODE_ENABLED_KEY      = booleanPreferencesKey("developer_mode_enabled")
+    private val DATA_RETENTION_DAYS_KEY         = intPreferencesKey("data_retention_days")
+    private val HISTORY_DISPLAY_DAYS_KEY        = intPreferencesKey("history_display_days")
+    private val ONBOARDING_COMPLETED_KEY        = booleanPreferencesKey("onboarding_completed")
+    private val AMOLED_PITCH_BLACK_KEY          = booleanPreferencesKey("amoled_pitch_black")
+    private val SHOW_ADVANCED_SETTINGS_KEY      = booleanPreferencesKey("show_advanced_settings")
+    private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY  = intPreferencesKey("nutrition_past_date_range_days")
     private val NUTRITION_MEAL_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_meal_duration_minutes")
     private val NUTRITION_SNACK_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_snack_duration_minutes")
+    private val NUTRITION_ASK_EATEN_TIME_KEY    = booleanPreferencesKey("nutrition_ask_eaten_time")
+    // Meal window ranges stored as minutes from midnight
+    private val NUTRITION_BREAKFAST_START_KEY   = intPreferencesKey("nutrition_breakfast_start_min")
+    private val NUTRITION_BREAKFAST_END_KEY     = intPreferencesKey("nutrition_breakfast_end_min")
+    private val NUTRITION_LUNCH_START_KEY       = intPreferencesKey("nutrition_lunch_start_min")
+    private val NUTRITION_LUNCH_END_KEY         = intPreferencesKey("nutrition_lunch_end_min")
+    private val NUTRITION_DINNER_START_KEY      = intPreferencesKey("nutrition_dinner_start_min")
+    private val NUTRITION_DINNER_END_KEY        = intPreferencesKey("nutrition_dinner_end_min")
+
+    // ── Sleep flows ───────────────────────────────────────────────────────
 
     val rolloverHour: Flow<Int> = context.dataStore.data
-        .map { preferences ->
-            preferences[ROLLOVER_HOUR_KEY] ?: 2 // Default to 2 AM
-        }
+        .map { prefs -> prefs[ROLLOVER_HOUR_KEY] ?: 2 }
 
     val sleepDetectionMode: Flow<SleepDetectionMode> = context.dataStore.data
-        .map { preferences ->
-            try {
-                SleepDetectionMode.valueOf(preferences[SLEEP_DETECTION_MODE_KEY] ?: SleepDetectionMode.AUTO.name)
-            } catch (e: Exception) {
-                SleepDetectionMode.AUTO
-            }
+        .map { prefs ->
+            try { SleepDetectionMode.valueOf(prefs[SLEEP_DETECTION_MODE_KEY] ?: SleepDetectionMode.AUTO.name) }
+            catch (_: Exception) { SleepDetectionMode.AUTO }
         }
 
-    val bedtimeWindowStart: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[BEDTIME_WINDOW_START_KEY] ?: (21 * 60) } // Default 9 PM
-    
-    val bedtimeWindowEnd: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[BEDTIME_WINDOW_END_KEY] ?: (2 * 60) } // Default 2 AM (next day handle later)
+    private val bedtimeWindowStart: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[BEDTIME_WINDOW_START_KEY] ?: (21 * 60) }
+    private val bedtimeWindowEnd: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[BEDTIME_WINDOW_END_KEY] ?: (2 * 60) }
+    private val wakeupWindowStart: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[WAKEUP_WINDOW_START_KEY] ?: (5 * 60) }
+    private val wakeupWindowEnd: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[WAKEUP_WINDOW_END_KEY] ?: (12 * 60) }
 
-    val wakeupWindowStart: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[WAKEUP_WINDOW_START_KEY] ?: (5 * 60) } // Default 5 AM
-    
-    val wakeupWindowEnd: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[WAKEUP_WINDOW_END_KEY] ?: (12 * 60) } // Default 12 PM
+    val bedtimeWindow: Flow<TimeRange> = combine(bedtimeWindowStart, bedtimeWindowEnd, ::TimeRange)
+    val wakeupWindow: Flow<TimeRange>  = combine(wakeupWindowStart, wakeupWindowEnd, ::TimeRange)
 
     val awakeningLoggingEnabled: Flow<Boolean> = context.dataStore.data
-        .map { preferences -> preferences[AWAKENING_LOGGING_ENABLED_KEY] ?: true }
+        .map { prefs -> prefs[AWAKENING_LOGGING_ENABLED_KEY] ?: true }
 
     val awakeningThresholdMinutes: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[AWAKENING_THRESHOLD_MINUTES_KEY] ?: 10 } // Default 10 minutes
+        .map { prefs -> prefs[AWAKENING_THRESHOLD_MINUTES_KEY] ?: 10 } // Default 10 minutes
 
     val defaultAwakeToAsleepMinutes: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY] ?: 15 }
+        .map { prefs -> prefs[DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY] ?: 15 }
 
     val manualSleepTemplate: Flow<SleepLogTemplate> = context.dataStore.data
-        .map { preferences ->
-            val jsonString = preferences[MANUAL_SLEEP_TEMPLATE_JSON_KEY]
-            if (jsonString != null) {
-                try {
-                    json.decodeFromString<SleepLogTemplate>(jsonString)
-                } catch (e: Exception) {
-                    getDefaultTemplate()
-                }
-            } else {
-                getDefaultTemplate()
-            }
+        .map { prefs ->
+            prefs[MANUAL_SLEEP_TEMPLATE_JSON_KEY]?.let {
+                runCatching { json.decodeFromString<SleepLogTemplate>(it) }.getOrNull()
+            } ?: getDefaultTemplate()
         }
 
     val sleepStages: Flow<List<SleepStageConfig>> = context.dataStore.data
-        .map { preferences ->
-            val jsonString = preferences[SLEEP_STAGES_JSON_KEY]
-            if (jsonString != null) {
-                try {
-                    json.decodeFromString<List<SleepStageConfig>>(jsonString)
-                } catch (e: Exception) {
-                    codegito.xyz.healthconnector.data.getDefaultSleepStages()
-                }
-            } else {
-                codegito.xyz.healthconnector.data.getDefaultSleepStages()
-            }
+        .map { prefs ->
+            prefs[SLEEP_STAGES_JSON_KEY]?.let {
+                runCatching { json.decodeFromString<List<SleepStageConfig>>(it) }.getOrNull()
+            } ?: getDefaultSleepStages()
         }
-
-    val reminderFirstUnlockEnabled: Flow<Boolean> = context.dataStore.data
-        .map { preferences -> preferences[REMINDER_FIRST_UNLOCK_ENABLED_KEY] ?: true }
-
-    val reminderDeadlineLoudEnabled: Flow<Boolean> = context.dataStore.data
-        .map { preferences -> preferences[REMINDER_DEADLINE_LOUD_ENABLED_KEY] ?: true }
-
-    val reminderDeadlineSilentEnabled: Flow<Boolean> = context.dataStore.data
-        .map { preferences -> preferences[REMINDER_DEADLINE_SILENT_ENABLED_KEY] ?: true }
-
-    val developerModeEnabled: Flow<Boolean> = context.dataStore.data
-        .map { preferences -> preferences[DEVELOPER_MODE_ENABLED_KEY] ?: false }
 
     val dataRetentionDays: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[DATA_RETENTION_DAYS_KEY] ?: 7 }
+        .map { prefs -> prefs[DATA_RETENTION_DAYS_KEY] ?: 7 }
 
     val historyDisplayDays: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[HISTORY_DISPLAY_DAYS_KEY] ?: 7 }
+        .map { prefs -> prefs[HISTORY_DISPLAY_DAYS_KEY] ?: 7 }
+
+    // ── Reminder flows ────────────────────────────────────────────────────
+
+    val reminderFirstUnlockEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[REMINDER_FIRST_UNLOCK_ENABLED_KEY] ?: true }
+
+    val reminderDeadlineLoudEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[REMINDER_DEADLINE_LOUD_ENABLED_KEY] ?: true }
+
+    val reminderDeadlineSilentEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[REMINDER_DEADLINE_SILENT_ENABLED_KEY] ?: true }
+
+    // ── App / display flows ───────────────────────────────────────────────
+
+    val developerModeEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[DEVELOPER_MODE_ENABLED_KEY] ?: false }
 
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data
-        .map { preferences -> preferences[ONBOARDING_COMPLETED_KEY] ?: false }
+        .map { prefs -> prefs[ONBOARDING_COMPLETED_KEY] ?: false }
 
     val amoledPitchBlackEnabled: Flow<Boolean> = context.dataStore.data
-        .map { preferences -> preferences[AMOLED_PITCH_BLACK_KEY] ?: false }
+        .map { prefs -> prefs[AMOLED_PITCH_BLACK_KEY] ?: false }
+
+    val showAdvancedSettings: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[SHOW_ADVANCED_SETTINGS_KEY] ?: false }
+
+    // ── Nutrition flows ───────────────────────────────────────────────────
 
     val nutritionPastDateRangeDays: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[NUTRITION_PAST_DATE_RANGE_DAYS_KEY] ?: 7 }
+        .map { prefs -> prefs[NUTRITION_PAST_DATE_RANGE_DAYS_KEY] ?: 7 }
 
     val nutritionMealDurationMinutes: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[NUTRITION_MEAL_DURATION_MINUTES_KEY] ?: 30 }
+        .map { prefs -> prefs[NUTRITION_MEAL_DURATION_MINUTES_KEY] ?: 30 }
 
     val nutritionSnackDurationMinutes: Flow<Int> = context.dataStore.data
-        .map { preferences -> preferences[NUTRITION_SNACK_DURATION_MINUTES_KEY] ?: 10 }
+        .map { prefs -> prefs[NUTRITION_SNACK_DURATION_MINUTES_KEY] ?: 10 }
+
+    val nutritionAskEatenTime: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[NUTRITION_ASK_EATEN_TIME_KEY] ?: false }
+
+    val nutritionBreakfastRange: Flow<TimeRange> = combine(
+        context.dataStore.data.map { it[NUTRITION_BREAKFAST_START_KEY] ?: (6 * 60) },
+        context.dataStore.data.map { it[NUTRITION_BREAKFAST_END_KEY]   ?: (10 * 60) },
+        ::TimeRange
+    )
+
+    val nutritionLunchRange: Flow<TimeRange> = combine(
+        context.dataStore.data.map { it[NUTRITION_LUNCH_START_KEY] ?: (11 * 60) },
+        context.dataStore.data.map { it[NUTRITION_LUNCH_END_KEY]   ?: (14 * 60) },
+        ::TimeRange
+    )
+
+    val nutritionDinnerRange: Flow<TimeRange> = combine(
+        context.dataStore.data.map { it[NUTRITION_DINNER_START_KEY] ?: (17 * 60) },
+        context.dataStore.data.map { it[NUTRITION_DINNER_END_KEY]   ?: (21 * 60) },
+        ::TimeRange
+    )
+
+    // ── Sleep setters ─────────────────────────────────────────────────────
 
     suspend fun setRolloverHour(hour: Int) {
-        context.dataStore.edit { preferences ->
-            preferences[ROLLOVER_HOUR_KEY] = hour
-        }
+        context.dataStore.edit { prefs -> prefs[ROLLOVER_HOUR_KEY] = hour }
     }
 
     suspend fun setSleepDetectionMode(mode: SleepDetectionMode) {
-        context.dataStore.edit { preferences ->
-            preferences[SLEEP_DETECTION_MODE_KEY] = mode.name
+        context.dataStore.edit { prefs -> prefs[SLEEP_DETECTION_MODE_KEY] = mode.name }
+    }
+
+    suspend fun setBedtimeWindow(range: TimeRange) {
+        context.dataStore.edit { prefs ->
+            prefs[BEDTIME_WINDOW_START_KEY] = range.startMinutes
+            prefs[BEDTIME_WINDOW_END_KEY]   = range.endMinutes
         }
     }
 
-    suspend fun setBedtimeWindow(startMinutes: Int, endMinutes: Int) {
-        context.dataStore.edit { preferences ->
-            preferences[BEDTIME_WINDOW_START_KEY] = startMinutes
-            preferences[BEDTIME_WINDOW_END_KEY] = endMinutes
-        }
-    }
-
-    suspend fun setWakeupWindow(startMinutes: Int, endMinutes: Int) {
-        context.dataStore.edit { preferences ->
-            preferences[WAKEUP_WINDOW_START_KEY] = startMinutes
-            preferences[WAKEUP_WINDOW_END_KEY] = endMinutes
+    suspend fun setWakeupWindow(range: TimeRange) {
+        context.dataStore.edit { prefs ->
+            prefs[WAKEUP_WINDOW_START_KEY] = range.startMinutes
+            prefs[WAKEUP_WINDOW_END_KEY]   = range.endMinutes
         }
     }
 
     suspend fun setAwakeningLoggingEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences ->
-            preferences[AWAKENING_LOGGING_ENABLED_KEY] = enabled
-        }
+        context.dataStore.edit { prefs -> prefs[AWAKENING_LOGGING_ENABLED_KEY] = enabled }
     }
 
     suspend fun setAwakeningThreshold(minutes: Int) {
-        context.dataStore.edit { preferences ->
-            preferences[AWAKENING_THRESHOLD_MINUTES_KEY] = minutes
-        }
+        context.dataStore.edit { prefs -> prefs[AWAKENING_THRESHOLD_MINUTES_KEY] = minutes }
     }
 
     suspend fun setDefaultAwakeToAsleepMinutes(minutes: Int) {
-        context.dataStore.edit { preferences ->
-            preferences[DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY] = minutes
-        }
+        context.dataStore.edit { prefs -> prefs[DEFAULT_AWAKE_TO_ASLEEP_MINUTES_KEY] = minutes }
     }
 
     suspend fun saveManualTemplate(template: SleepLogTemplate) {
-        context.dataStore.edit { preferences ->
-            preferences[MANUAL_SLEEP_TEMPLATE_JSON_KEY] = json.encodeToString(template)
-        }
+        context.dataStore.edit { prefs -> prefs[MANUAL_SLEEP_TEMPLATE_JSON_KEY] = json.encodeToString(template) }
     }
 
     suspend fun saveSleepStages(stages: List<SleepStageConfig>) {
-        context.dataStore.edit { preferences ->
-            preferences[SLEEP_STAGES_JSON_KEY] = json.encodeToString(stages)
-        }
-    }
-
-
-    suspend fun setReminderFirstUnlockEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences -> preferences[REMINDER_FIRST_UNLOCK_ENABLED_KEY] = enabled }
-    }
-
-    suspend fun setReminderDeadlineLoudEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences -> preferences[REMINDER_DEADLINE_LOUD_ENABLED_KEY] = enabled }
-    }
-
-    suspend fun setReminderDeadlineSilentEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences -> preferences[REMINDER_DEADLINE_SILENT_ENABLED_KEY] = enabled }
-    }
-
-    suspend fun setDeveloperModeEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences -> preferences[DEVELOPER_MODE_ENABLED_KEY] = enabled }
+        context.dataStore.edit { prefs -> prefs[SLEEP_STAGES_JSON_KEY] = json.encodeToString(stages) }
     }
 
     suspend fun setDataRetentionDays(days: Int) {
-        context.dataStore.edit { preferences -> preferences[DATA_RETENTION_DAYS_KEY] = days }
+        context.dataStore.edit { prefs -> prefs[DATA_RETENTION_DAYS_KEY] = days }
     }
 
     suspend fun setHistoryDisplayDays(days: Int) {
-        context.dataStore.edit { preferences -> preferences[HISTORY_DISPLAY_DAYS_KEY] = days }
+        context.dataStore.edit { prefs -> prefs[HISTORY_DISPLAY_DAYS_KEY] = days }
+    }
+
+    // ── Reminder setters ──────────────────────────────────────────────────
+
+    suspend fun setReminderFirstUnlockEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[REMINDER_FIRST_UNLOCK_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setReminderDeadlineLoudEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[REMINDER_DEADLINE_LOUD_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setReminderDeadlineSilentEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[REMINDER_DEADLINE_SILENT_ENABLED_KEY] = enabled }
+    }
+
+    // ── App / display setters ─────────────────────────────────────────────
+
+    suspend fun setDeveloperModeEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[DEVELOPER_MODE_ENABLED_KEY] = enabled }
     }
 
     suspend fun setOnboardingCompleted(completed: Boolean) {
-        context.dataStore.edit { preferences -> preferences[ONBOARDING_COMPLETED_KEY] = completed }
+        context.dataStore.edit { prefs -> prefs[ONBOARDING_COMPLETED_KEY] = completed }
     }
 
     suspend fun setAmoledPitchBlackEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences -> preferences[AMOLED_PITCH_BLACK_KEY] = enabled }
+        context.dataStore.edit { prefs -> prefs[AMOLED_PITCH_BLACK_KEY] = enabled }
     }
 
+    suspend fun setShowAdvancedSettings(show: Boolean) {
+        context.dataStore.edit { prefs -> prefs[SHOW_ADVANCED_SETTINGS_KEY] = show }
+    }
+
+    // ── Nutrition setters ─────────────────────────────────────────────────
+
     suspend fun setNutritionPastDateRangeDays(days: Int) {
-        context.dataStore.edit { preferences -> preferences[NUTRITION_PAST_DATE_RANGE_DAYS_KEY] = days }
+        context.dataStore.edit { prefs -> prefs[NUTRITION_PAST_DATE_RANGE_DAYS_KEY] = days }
     }
 
     suspend fun setNutritionMealDurationMinutes(minutes: Int) {
-        context.dataStore.edit { preferences -> preferences[NUTRITION_MEAL_DURATION_MINUTES_KEY] = minutes }
+        context.dataStore.edit { prefs -> prefs[NUTRITION_MEAL_DURATION_MINUTES_KEY] = minutes }
     }
 
     suspend fun setNutritionSnackDurationMinutes(minutes: Int) {
-        context.dataStore.edit { preferences -> preferences[NUTRITION_SNACK_DURATION_MINUTES_KEY] = minutes }
+        context.dataStore.edit { prefs -> prefs[NUTRITION_SNACK_DURATION_MINUTES_KEY] = minutes }
     }
 
-    suspend fun isAutoSleepDetectionActive(): Boolean {
-        return sleepDetectionMode.first() == SleepDetectionMode.AUTO
+    suspend fun setNutritionAskEatenTime(ask: Boolean) {
+        context.dataStore.edit { prefs -> prefs[NUTRITION_ASK_EATEN_TIME_KEY] = ask }
     }
 
-    suspend fun isAnyReminderEnabled(): Boolean {
-        return reminderFirstUnlockEnabled.first() ||
-               reminderDeadlineLoudEnabled.first() ||
-               reminderDeadlineSilentEnabled.first()
+    suspend fun setNutritionBreakfastRange(range: TimeRange) {
+        context.dataStore.edit { prefs ->
+            prefs[NUTRITION_BREAKFAST_START_KEY] = range.startMinutes
+            prefs[NUTRITION_BREAKFAST_END_KEY]   = range.endMinutes
+        }
     }
 
-    private fun getDefaultTemplate(): SleepLogTemplate {
-        return SleepLogTemplate(
-            bedtimeOffsetMinutes = 22 * 60, // 10 PM
-            segments = listOf(
-                TemplateSegment(0, 8 * 60, SleepSessionRecord.STAGE_TYPE_SLEEPING) // 8 hours later
-            )
-        )
+    suspend fun setNutritionLunchRange(range: TimeRange) {
+        context.dataStore.edit { prefs ->
+            prefs[NUTRITION_LUNCH_START_KEY] = range.startMinutes
+            prefs[NUTRITION_LUNCH_END_KEY]   = range.endMinutes
+        }
     }
+
+    suspend fun setNutritionDinnerRange(range: TimeRange) {
+        context.dataStore.edit { prefs ->
+            prefs[NUTRITION_DINNER_START_KEY] = range.startMinutes
+            prefs[NUTRITION_DINNER_END_KEY]   = range.endMinutes
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    suspend fun isAutoSleepDetectionActive(): Boolean =
+        sleepDetectionMode.first() == SleepDetectionMode.AUTO
+
+    suspend fun isAnyReminderEnabled(): Boolean =
+        reminderFirstUnlockEnabled.first() ||
+        reminderDeadlineLoudEnabled.first() ||
+        reminderDeadlineSilentEnabled.first()
+
+    private fun getDefaultTemplate() = SleepLogTemplate(
+        bedtimeOffsetMinutes = 22 * 60,
+        segments = listOf(TemplateSegment(0, 8 * 60, SleepSessionRecord.STAGE_TYPE_SLEEPING))
+    )
 }

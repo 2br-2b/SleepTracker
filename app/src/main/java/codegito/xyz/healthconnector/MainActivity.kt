@@ -1,11 +1,9 @@
 package codegito.xyz.healthconnector
 
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,18 +17,12 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
-import androidx.health.connect.client.records.NutritionRecord
-import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
-import codegito.xyz.healthconnector.nutrition.domain.FoodCandidate
-import androidx.health.connect.client.units.Mass
-import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -41,18 +33,21 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
-import codegito.xyz.healthconnector.data.model.SleepLogTemplate
-import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
-import codegito.xyz.healthconnector.ui.AdvancedSleepSettingsScreen
-import codegito.xyz.healthconnector.ui.AutoSleepSettingsScreen
+import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
+import codegito.xyz.healthconnector.ui.LogFoodScreen
+import codegito.xyz.healthconnector.ui.NutritionDayDetailScreen
+import codegito.xyz.healthconnector.ui.NutritionHomeScreen
+import codegito.xyz.healthconnector.ui.NutritionSettingsScreen
 import codegito.xyz.healthconnector.ui.SettingsScreen
+import codegito.xyz.healthconnector.ui.SleepSettingsScreen
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.*
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import kotlinx.coroutines.flow.first
 
 class MainActivity : ComponentActivity() {
 
@@ -130,25 +125,27 @@ fun MainApp(
     onOpenSession: (LocalDate, String?, Boolean) -> Unit
 ) {
     val navController = rememberNavController()
+    val context = LocalContext.current
+
+    val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
+    val nutritionProvider = remember(context) { AssetNutritionProvider(context) }
 
     Scaffold(
         bottomBar = {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val currentDestination = navBackStackEntry?.destination
+            val currentRoute = navBackStackEntry?.destination?.route
 
-             // Only show bottom bar on top-level screens
+            // Only show bottom bar on top-level screens
             val topLevelRoutes = listOf("home", "nutrition", "settings")
-            if (currentDestination?.route in topLevelRoutes) {
+            if (currentRoute in topLevelRoutes) {
                 NavigationBar {
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                         label = { Text("Home") },
-                        selected = currentDestination?.route == "home",
+                        selected = currentRoute == "home",
                         onClick = {
                             navController.navigate("home") {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
                             }
@@ -157,12 +154,10 @@ fun MainApp(
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Add, contentDescription = "Food") },
                         label = { Text("Food") },
-                        selected = currentDestination?.route == "nutrition",
+                        selected = currentRoute == "nutrition",
                         onClick = {
                             navController.navigate("nutrition") {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
                             }
@@ -171,12 +166,10 @@ fun MainApp(
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
                         label = { Text("Settings") },
-                        selected = currentDestination?.route == "settings",
+                        selected = currentRoute == "settings",
                         onClick = {
                             navController.navigate("settings") {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
                             }
@@ -196,9 +189,31 @@ fun MainApp(
                 )
             }
             composable(Screen.Nutrition.route) {
-                NutritionDayRouter(
+                NutritionHomeScreen(
                     healthConnectManager = healthConnectManager,
-                    userPreferencesRepository = userPreferencesRepository
+                    userPreferencesRepository = userPreferencesRepository,
+                    nutritionIndexBuildManager = nutritionIndexBuildManager,
+                    navController = navController
+                )
+            }
+            composable(Screen.NutritionDay.route) { backStack ->
+                val dateStr = backStack.arguments?.getString("date") ?: return@composable
+                val date = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: return@composable
+                NutritionDayDetailScreen(
+                    date = date,
+                    healthConnectManager = healthConnectManager,
+                    navController = navController
+                )
+            }
+            composable(Screen.LogFood.route) { backStack ->
+                val dateStr = backStack.arguments?.getString("date") ?: return@composable
+                val date = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: return@composable
+                LogFoodScreen(
+                    date = date,
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository,
+                    nutritionProvider = nutritionProvider,
+                    navController = navController
                 )
             }
             composable(Screen.Settings.route) {
@@ -206,25 +221,25 @@ fun MainApp(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
                     onManagePermissions = onManagePermissions,
-                    onEditSleepStages = { navController.navigate(Screen.EditSleepStages.route) },
-                    onAutoSleepSettings = { navController.navigate(Screen.AutoSleepSettings.route) }
+                    onSleepSettings = { navController.navigate(Screen.SleepSettings.route) },
+                    onNutritionSettings = { navController.navigate(Screen.NutritionSettings.route) }
                 )
             }
-            composable(Screen.EditSleepStages.route) {
-                EditSleepStagesScreen(
+            composable(Screen.SleepSettings.route) {
+                SleepSettingsScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() },
+                    onEditSleepStages = { navController.navigate(Screen.EditSleepStages.route) }
+                )
+            }
+            composable(Screen.NutritionSettings.route) {
+                NutritionSettingsScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onBack = { navController.popBackStack() }
                 )
             }
-            composable(Screen.AutoSleepSettings.route) {
-                AutoSleepSettingsScreen(
-                    userPreferencesRepository = userPreferencesRepository,
-                    onBack = { navController.popBackStack() },
-                    onAdvancedSettings = { navController.navigate(Screen.AdvancedSleepSettings.route) }
-                )
-            }
-            composable(Screen.AdvancedSleepSettings.route) {
-                AdvancedSleepSettingsScreen(
+            composable(Screen.EditSleepStages.route) {
+                EditSleepStagesScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onBack = { navController.popBackStack() }
                 )
@@ -597,271 +612,18 @@ fun SleepDayCard(
 }
 
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun NutritionDayRouter(
-    healthConnectManager: HealthConnectManager,
-    userPreferencesRepository: UserPreferencesRepository
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
-    val nutritionProvider = remember(context) { AssetNutritionProvider(context) }
-
-    var selectedDate by remember { mutableStateOf(LocalDate.now()) }
-    var entries by remember { mutableStateOf<List<NutritionRecord>>(emptyList()) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
-    var isBuildingIndex by remember { mutableStateOf(false) }
-    var showLogFoodDialog by remember { mutableStateOf(false) }
-
-    suspend fun refreshDayEntries(date: LocalDate) {
-        val zone = ZoneId.systemDefault()
-        val dayStart = date.atStartOfDay(zone).toInstant()
-        val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant()
-        val request = androidx.health.connect.client.request.ReadRecordsRequest(
-            recordType = NutritionRecord::class,
-            timeRangeFilter = androidx.health.connect.client.time.TimeRangeFilter.between(dayStart, dayEnd)
-        )
-        entries = runCatching {
-            healthConnectManager.healthConnectClient.readRecords(request).records
-        }.getOrElse {
-            Toast.makeText(context, "Unable to load nutrition entries", Toast.LENGTH_SHORT).show()
-            emptyList()
-        }
-    }
-
-    val downloadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            isBuildingIndex = true
-            statusMessage = "Building nutrition index from selected ZIP..."
-            val result = nutritionIndexBuildManager.buildFromUri(uri)
-            result.onSuccess { build ->
-                statusMessage = "Nutrition index ready (${build.recordCount} foods). Build log: ${build.debugLogLocation}"
-                showLogFoodDialog = true
-            }.onFailure {
-                statusMessage = "Index build failed: ${it.message ?: "unknown error"}"
-            }
-            isBuildingIndex = false
-        }
-    }
-
-    val hasBundledZip by produceState<Boolean?>(initialValue = null) {
-        value = nutritionIndexBuildManager.hasBundledZip()
-    }
-    val rangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
-
-    LaunchedEffect(selectedDate) {
-        scope.launch { refreshDayEntries(selectedDate) }
-    }
-
-    if (showLogFoodDialog) {
-        LogFoodDialog(
-            nutritionProvider = nutritionProvider,
-            onDismiss = { showLogFoodDialog = false },
-            onLogFood = { candidate, grams ->
-                scope.launch {
-                    val now = Instant.now()
-                    val zoneOffset = ZoneId.systemDefault().rules.getOffset(now)
-                    val multiplier = if (candidate.baseAmount.value <= 0.0) 1.0 else grams / candidate.baseAmount.value
-                    val record = NutritionRecord(
-                        startTime = now,
-                        startZoneOffset = zoneOffset,
-                        endTime = now,
-                        endZoneOffset = zoneOffset,
-                        energy = Energy.calories(candidate.nutrientsPerBase.calories * multiplier),
-                        protein = Mass.grams(candidate.nutrientsPerBase.proteinGrams * multiplier),
-                        totalCarbohydrate = Mass.grams(candidate.nutrientsPerBase.carbsGrams * multiplier),
-                        totalFat = Mass.grams(candidate.nutrientsPerBase.fatGrams * multiplier)
-                    )
-
-                    runCatching {
-                        healthConnectManager.healthConnectClient.insertRecords(listOf(record))
-                    }.onSuccess {
-                        statusMessage = "Logged ${candidate.name} (${grams.toInt()} g)"
-                        refreshDayEntries(selectedDate)
-                        showLogFoodDialog = false
-                    }.onFailure {
-                        statusMessage = "Could not log food: ${it.message ?: "unknown error"}"
-                    }
-                }
-            }
-        )
-    }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Food tracking") },
-                actions = {
-                    TextButton(
-                        enabled = !isBuildingIndex && hasBundledZip != null,
-                        onClick = {
-                            val bundled = hasBundledZip == true
-                            if (bundled) {
-                                scope.launch {
-                                    isBuildingIndex = true
-                                    statusMessage = "Building nutrition index from bundled ZIP..."
-                                    val result = nutritionIndexBuildManager.buildFromBundledZip()
-                                    result.onSuccess { build ->
-                                        statusMessage = "Nutrition index ready (${build.recordCount} foods). Build log: ${build.debugLogLocation}"
-                                        showLogFoodDialog = true
-                                    }.onFailure {
-                                        statusMessage = "Index build failed: ${it.message ?: "unknown error"}"
-                                    }
-                                    isBuildingIndex = false
-                                }
-                            } else {
-                                downloadLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
-                            }
-                        }
-                    ) {
-                        Text(if (hasBundledZip == true) "Build index" else "Select ZIP")
-                    }
-                }
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showLogFoodDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Log food")
-            }
-        }
-    ) { padding ->
-        Column(modifier = Modifier.padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (isBuildingIndex) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
-            if (hasBundledZip == false) {
-                Text(
-                    text = "Dataset ZIP is not bundled in this build. Select a ZIP from your phone.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                TextButton(onClick = {
-                    val linkIntent = Intent(
-                        Intent.ACTION_VIEW,
-                        android.net.Uri.parse("https://downloads.opennutrition.app/opennutrition-dataset-2025.1.zip")
-                    )
-                    context.startActivity(linkIntent)
-                }) {
-                    Text("Download Open Nutrition dataset")
-                }
-            }
-            statusMessage?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-            }
-            Text("Selected day: $selectedDate")
-            Text("Past date range from settings: $rangeDays days")
-            OutlinedButton(onClick = {
-                selectedDate = selectedDate.minusDays(1)
-                val oldest = LocalDate.now().minusDays(rangeDays.toLong())
-                if (selectedDate.isBefore(oldest)) selectedDate = oldest
-            }) { Text("Previous day") }
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Daily summary", style = MaterialTheme.typography.titleMedium)
-                    Text("Nutrition entries tracked: ${entries.size}")
-                    Text("Use + to search and manually log food")
-                }
-            }
-            Text("Entries (${entries.size})", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(entries.sortedBy { it.endTime }) { item ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("Logged food")
-                            Text(item.endTime.toString(), style = MaterialTheme.typography.bodySmall)
-                            Text(item.metadata.id, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun LogFoodDialog(
-    nutritionProvider: AssetNutritionProvider,
-    onDismiss: () -> Unit,
-    onLogFood: (FoodCandidate, Double) -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var amountText by remember { mutableStateOf("100") }
-    var results by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Search & log food") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("Search foods") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = { amountText = it },
-                    label = { Text("Amount (grams)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        scope.launch {
-                            loading = true
-                            results = nutritionProvider.searchFoods(query.trim(), limit = 25)
-                            loading = false
-                        }
-                    }) {
-                        Text("Search")
-                    }
-                    TextButton(onClick = {
-                        query = ""
-                        results = emptyList()
-                    }) { Text("Clear") }
-                }
-                if (loading) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                if (!loading && query.isNotBlank() && results.isEmpty()) {
-                    Text("No foods found. Build/import index first.", style = MaterialTheme.typography.bodySmall)
-                }
-                LazyColumn(modifier = Modifier.heightIn(max = 280.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(results) { candidate ->
-                        Card(modifier = Modifier.fillMaxWidth().clickable {
-                            val grams = amountText.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 100.0
-                            onLogFood(candidate, grams)
-                        }) {
-                            Column(modifier = Modifier.padding(10.dp)) {
-                                Text(candidate.name, style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "${candidate.nutrientsPerBase.calories.toInt()} kcal / ${candidate.baseAmount.value.toInt()}g",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Done") }
-        }
-    )
-}
-
 
 sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Nutrition : Screen("nutrition")
     object Settings : Screen("settings")
+    object SleepSettings : Screen("sleep_settings")
+    object NutritionSettings : Screen("nutrition_settings")
     object EditSleepStages : Screen("edit_sleep_stages")
-    object AutoSleepSettings : Screen("auto_sleep_settings")
-    object AdvancedSleepSettings : Screen("advanced_sleep_settings")
+    object NutritionDay : Screen("nutrition/day/{date}") {
+        fun route(date: LocalDate) = "nutrition/day/$date"
+    }
+    object LogFood : Screen("nutrition/log/{date}") {
+        fun route(date: LocalDate) = "nutrition/log/$date"
+    }
 }
