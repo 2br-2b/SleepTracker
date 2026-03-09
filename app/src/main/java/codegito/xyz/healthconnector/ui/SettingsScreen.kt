@@ -20,6 +20,8 @@ import codegito.xyz.healthconnector.SleepTrackingService
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,9 +45,11 @@ fun SettingsScreen(
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
     val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
+    val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
 
     var versionTapCount by remember { mutableIntStateOf(0) }
     var isServiceActive by remember { mutableStateOf(false) }
+    var showRolloverPicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(developerModeEnabled) {
         if (!developerModeEnabled) return@LaunchedEffect
@@ -129,6 +133,25 @@ fun SettingsScreen(
             SectionHeader("General")
 
             ListItem(
+                headlineContent = { Text("Day cutover time") },
+                supportingContent = {
+                    Text(
+                        "You can't always get to bed before midnight. This controls when one day " +
+                        "ends and the next begins for grouping sleep and food data. It only affects " +
+                        "how this app displays entries — data already saved in Health Connect is not changed."
+                    )
+                },
+                trailingContent = {
+                    Text(
+                        LocalTime.of(rolloverHour, 0).format(DateTimeFormatter.ofPattern("h:mm a")),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                },
+                modifier = Modifier.clickable { showRolloverPicker = true }
+            )
+
+            ListItem(
                 headlineContent = { Text("Days to show") },
                 supportingContent = { Text("$historyDays days back — applies to sleep history, food log, and data retention") },
                 trailingContent = {
@@ -137,7 +160,7 @@ fun SettingsScreen(
                             onClick = { scope.launch { userPreferencesRepository.setHistoryDays((historyDays - 1).coerceAtLeast(1)) } }
                         ) { Text("-") }
                         OutlinedButton(
-                            onClick = { scope.launch { userPreferencesRepository.setHistoryDays((historyDays + 1).coerceAtMost(365)) } }
+                            onClick = { scope.launch { userPreferencesRepository.setHistoryDays((historyDays + 1).coerceAtMost(30)) } }
                         ) { Text("+") }
                     }
                 }
@@ -227,6 +250,18 @@ fun SettingsScreen(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
+    }
+
+    if (showRolloverPicker) {
+        AppTimePickerDialog(
+            initialHour = rolloverHour,
+            initialMinute = 0,
+            onConfirm = { hour, _ ->
+                scope.launch { userPreferencesRepository.setRolloverHour(hour) }
+                showRolloverPicker = false
+            },
+            onDismiss = { showRolloverPicker = false }
+        )
     }
 }
 

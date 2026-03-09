@@ -46,6 +46,23 @@ import codegito.xyz.healthconnector.nutrition.domain.formatAmount
 import codegito.xyz.healthconnector.nutrition.domain.gramsToAmountText
 import codegito.xyz.healthconnector.nutrition.domain.parseAmountToGrams
 import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.border
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -75,18 +92,21 @@ fun NutritionHomeScreen(
     val scope = rememberCoroutineScope()
 
     val rangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
+    val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
 
     var nutritionByDay by remember { mutableStateOf<Map<LocalDate, List<NutritionRecord>>>(emptyMap()) }
     var indexRecordCount by remember { mutableIntStateOf(-1) }
     var hasNutritionWrite by remember { mutableStateOf<Boolean?>(null) }
     var hasNutritionRead by remember { mutableStateOf<Boolean?>(null) }
+    var isRefreshing by remember { mutableStateOf(false) }
 
     fun loadData() {
         scope.launch {
             val zone = ZoneId.systemDefault()
             val today = LocalDate.now()
             val startDate = today.minusDays(rangeDays.toLong())
-            val dayStart = startDate.atStartOfDay(zone).toInstant()
+            // Extend range by 1 day each side to capture rollover entries
+            val dayStart = startDate.minusDays(1).atStartOfDay(zone).toInstant()
             val dayEnd = today.plusDays(1).atStartOfDay(zone).toInstant()
             val request = ReadRecordsRequest(
                 recordType = NutritionRecord::class,
@@ -99,7 +119,9 @@ fun NutritionHomeScreen(
             }.getOrDefault(emptyList())
 
             nutritionByDay = records.groupBy { record ->
-                LocalDateTime.ofInstant(record.endTime, zone).toLocalDate()
+                val dt = LocalDateTime.ofInstant(record.endTime, zone)
+                // Apply rollover: entries before rolloverHour belong to the previous calendar day
+                if (dt.hour < rolloverHour) dt.toLocalDate().minusDays(1) else dt.toLocalDate()
             }
 
             indexRecordCount = withContext(Dispatchers.IO) {
@@ -134,10 +156,21 @@ fun NutritionHomeScreen(
             }
         }
     ) { padding ->
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                scope.launch {
+                    hasNutritionWrite = healthConnectManager.hasNutritionWritePermission()
+                    loadData()
+                    isRefreshing = false
+                }
+            },
+            modifier = Modifier.padding(padding)
+        ) {
         LazyColumn(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(padding)
         ) {
             // Write permission banner
             if (hasNutritionWrite == false) {
@@ -181,7 +214,7 @@ fun NutritionHomeScreen(
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { navController.navigate("settings") }
+                            .clickable { navController.navigate("nutrition_settings?highlight=dataset") }
                     ) {
                         Column(
                             modifier = Modifier.padding(12.dp),
@@ -192,7 +225,7 @@ fun NutritionHomeScreen(
                                 style = MaterialTheme.typography.titleSmall
                             )
                             Text(
-                                "Tap to go to Settings → Nutrition to upload a dataset ZIP.",
+                                "Tap to go to Nutrition Settings to upload a dataset ZIP.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -212,6 +245,7 @@ fun NutritionHomeScreen(
                 )
             }
         }
+        } // end PullToRefreshBox
     }
 }
 
@@ -305,6 +339,7 @@ fun NutritionDayDetailScreen(
     var entries by remember { mutableStateOf<List<NutritionRecord>>(emptyList()) }
     var entryToDelete by remember { mutableStateOf<NutritionRecord?>(null) }
     var hasNutritionRead by remember { mutableStateOf<Boolean?>(null) }
+    var isRefreshing by remember { mutableStateOf(false) }
 
     val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
     val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
@@ -357,10 +392,17 @@ fun NutritionDayDetailScreen(
             }
         }
     ) { padding ->
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                scope.launch { loadEntries(); isRefreshing = false }
+            },
+            modifier = Modifier.padding(padding)
+        ) {
         LazyColumn(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(padding)
         ) {
             // Summary card
             item {
@@ -452,6 +494,7 @@ fun NutritionDayDetailScreen(
                 }
             }
         }
+        } // end PullToRefreshBox
     }
 
     // Delete confirmation
@@ -531,17 +574,18 @@ fun LogFoodScreen(
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
-    var amountText by remember { mutableStateOf("") }
+    var amountText by remember { mutableStateOf(TextFieldValue("")) }
     var isLogging by remember { mutableStateOf(false) }
 
     // When a food is selected, default the amount text in the current unit system.
     // Prefer the labeled oz serving size from the DB when available and in US mode.
     fun setDefaultAmount(candidate: FoodCandidate) {
-        amountText = if (unitSystem == NutritionUnitSystem.US && candidate.servingSizeOz != null) {
+        val text = if (unitSystem == NutritionUnitSystem.US && candidate.servingSizeOz != null) {
             "%.1f".format(candidate.servingSizeOz)
         } else {
             gramsToAmountText(candidate.baseAmount.value, unitSystem)
         }
+        amountText = TextFieldValue(text, selection = TextRange(0, text.length))
     }
 
     fun mealLabel(minuteOfDay: Int): String = when {
@@ -662,73 +706,6 @@ fun LogFoodScreen(
                     }
                 }
             )
-        },
-        bottomBar = {
-            selectedFood?.let { candidate ->
-                Surface(tonalElevation = 3.dp) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(candidate.name, style = MaterialTheme.typography.titleMedium)
-                        val baseNutrition = candidate.nutrientsPerBase
-                        val grams = parseAmountToGrams(amountText, unitSystem) ?: candidate.baseAmount.value
-                        val multiplier = if (candidate.baseAmount.value > 0.0) grams / candidate.baseAmount.value else 1.0
-                        // Show enabled nutrients in a brief summary
-                        val summaryParts = enabledNutrients.mapNotNull { key ->
-                            val displayVal = NutrientDefaults.getValueInDisplayUnit(baseNutrition, key) * multiplier
-                            if (displayVal <= 0.0) return@mapNotNull null
-                            val unit = NutrientDefaults.displayUnit[key] ?: ""
-                            val name = NutrientDefaults.displayName[key] ?: key.name
-                            if (key == NutrientKey.CALORIES) "${displayVal.toInt()} kcal"
-                            else "$name: ${if (displayVal < 10.0) "%.1f".format(displayVal) else displayVal.toInt().toString()}$unit"
-                        }.take(5)
-                        if (summaryParts.isNotEmpty()) {
-                            Text(
-                                summaryParts.joinToString("  "),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        // Eaten-time row — only shown when preference is enabled
-                        if (askEatenTime) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    "Eaten at: ${eatenTime.format(timeFormatter)}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                AssistChip(
-                                    onClick = { showEatenTimePicker = true },
-                                    label = { Text(mealLabel(eatenTime.hour * 60 + eatenTime.minute)) }
-                                )
-                            }
-                        }
-                        OutlinedTextField(
-                            value = amountText,
-                            onValueChange = { amountText = it },
-                            label = { Text("Amount (${amountUnitLabel(unitSystem)})") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = { selectedFood = null; amountText = "" },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Cancel") }
-                            Button(
-                                onClick = {
-                                    val g = parseAmountToGrams(amountText, unitSystem) ?: return@Button
-                                    scope.launch { logFood(candidate, g) }
-                                },
-                                enabled = !isLogging && parseAmountToGrams(amountText, unitSystem) != null,
-                                modifier = Modifier.weight(1f)
-                            ) { Text(if (isLogging) "Logging…" else "Log") }
-                        }
-                    }
-                }
-            }
         }
     ) { padding ->
         LazyColumn(
@@ -790,7 +767,8 @@ fun LogFoodScreen(
                             selected = selectedFood?.id == candidate.id,
                             onClick = {
                                 selectedFood = candidate
-                                amountText = gramsToAmountText(lastAmount.value, unitSystem)
+                                val t = gramsToAmountText(lastAmount.value, unitSystem)
+                                amountText = TextFieldValue(t, selection = TextRange(0, t.length))
                                 eatenTime = defaultEatenTime
                                 keyboardController?.hide()
                             }
@@ -805,6 +783,98 @@ fun LogFoodScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Enter manually") }
                 }
+            }
+        }
+    }
+
+    // Food detail bottom sheet – replaces old Scaffold bottomBar so keyboard only pushes the sheet up
+    selectedFood?.let { candidate ->
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val focusRequester = remember { FocusRequester() }
+
+        ModalBottomSheet(
+            onDismissRequest = { selectedFood = null; amountText = TextFieldValue("") },
+            sheetState = sheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(candidate.name, style = MaterialTheme.typography.titleMedium)
+                val baseNutrition = candidate.nutrientsPerBase
+                val grams = parseAmountToGrams(amountText.text, unitSystem) ?: candidate.baseAmount.value
+                val multiplier = if (candidate.baseAmount.value > 0.0) grams / candidate.baseAmount.value else 1.0
+                val summaryParts = enabledNutrients.mapNotNull { key ->
+                    val displayVal = NutrientDefaults.getValueInDisplayUnit(baseNutrition, key) * multiplier
+                    if (displayVal <= 0.0) return@mapNotNull null
+                    val unit = NutrientDefaults.displayUnit[key] ?: ""
+                    val name = NutrientDefaults.displayName[key] ?: key.name
+                    if (key == NutrientKey.CALORIES) "${displayVal.toInt()} kcal"
+                    else "$name: ${if (displayVal < 10.0) "%.1f".format(displayVal) else displayVal.toInt().toString()}$unit"
+                }.take(5)
+                if (summaryParts.isNotEmpty()) {
+                    Text(
+                        summaryParts.joinToString("  "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (askEatenTime) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Eaten at: ${eatenTime.format(timeFormatter)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        AssistChip(
+                            onClick = { showEatenTimePicker = true },
+                            label = { Text(mealLabel(eatenTime.hour * 60 + eatenTime.minute)) }
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { amountText = it },
+                    label = { Text("Amount (${amountUnitLabel(unitSystem)})") },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            val g = parseAmountToGrams(amountText.text, unitSystem) ?: return@KeyboardActions
+                            scope.launch { logFood(candidate, g) }
+                        }
+                    ),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { selectedFood = null; amountText = TextFieldValue("") },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Cancel") }
+                    Button(
+                        onClick = {
+                            val g = parseAmountToGrams(amountText.text, unitSystem) ?: return@Button
+                            scope.launch { logFood(candidate, g) }
+                        },
+                        enabled = !isLogging && parseAmountToGrams(amountText.text, unitSystem) != null,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (isLogging) "Logging…" else "Log") }
+                }
+            }
+
+            LaunchedEffect(Unit) {
+                delay(200) // allow sheet animation to settle
+                focusRequester.requestFocus()
             }
         }
     }
