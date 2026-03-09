@@ -158,36 +158,68 @@ fun MainApp(
     val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
     val nutritionProvider = remember(context) { AssetNutritionProvider(context) }
 
-    // If current route is nutrition but nutrition is disabled, navigate home
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
-    LaunchedEffect(nutritionEnabled) {
-        if (!nutritionEnabled && currentRoute == Screen.Nutrition.route) {
-            navController.navigate(Screen.Home.route) {
-                popUpTo(Screen.Home.route) { inclusive = false }
+    // One-shot initial redirect: if the natural start (Sleep/Home) is disabled, go somewhere sensible.
+    LaunchedEffect(Unit) {
+        if (!userPreferencesRepository.sleepEnabled.first()) {
+            val dest = if (userPreferencesRepository.nutritionEnabled.first())
+                Screen.Nutrition.route else Screen.Settings.route
+            navController.navigate(dest) {
+                popUpTo(Screen.Home.route) { inclusive = true }
+                launchSingleTop = true
             }
         }
     }
 
+    // When sleep gets toggled off while the user is on the Sleep screen, redirect away.
+    LaunchedEffect(sleepEnabled) {
+        if (!sleepEnabled && navController.currentDestination?.route == Screen.Home.route) {
+            val dest = if (nutritionEnabled) Screen.Nutrition.route else Screen.Settings.route
+            navController.navigate(dest) {
+                popUpTo(Screen.Home.route) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    // When nutrition gets toggled off while the user is on the Food screen, redirect away.
+    // Do NOT touch nav state for any other condition — that's what caused the food button to break.
+    LaunchedEffect(nutritionEnabled) {
+        if (!nutritionEnabled && navController.currentDestination?.route == Screen.Nutrition.route) {
+            navController.navigate(Screen.Settings.route) {
+                popUpTo(Screen.Home.route) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
     Scaffold(
         bottomBar = {
             // Only show bottom bar on top-level screens
-            val topLevelRoutes = listOf("home", "nutrition", "settings")
+            val topLevelRoutes = buildList {
+                if (sleepEnabled) add("home")
+                if (nutritionEnabled) add("nutrition")
+                add("settings")
+            }
             if (currentRoute in topLevelRoutes) {
                 NavigationBar {
-                    // Home tab: always shown
-                    NavigationBarItem(
-                        icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                        label = { Text("Home") },
-                        selected = currentRoute == "home",
-                        onClick = {
-                            navController.navigate("home") {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
+                    // Sleep tab: only when sleep tracking enabled
+                    if (sleepEnabled) {
+                        NavigationBarItem(
+                            icon = { Icon(Icons.Default.Home, contentDescription = "Sleep") },
+                            label = { Text("Sleep") },
+                            selected = currentRoute == "home",
+                            onClick = {
+                                navController.navigate("home") {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                     // Food tab: only if nutrition enabled
                     if (nutritionEnabled) {
                         NavigationBarItem(
@@ -233,7 +265,8 @@ fun MainApp(
                     healthConnectManager = healthConnectManager,
                     userPreferencesRepository = userPreferencesRepository,
                     nutritionIndexBuildManager = nutritionIndexBuildManager,
-                    navController = navController
+                    navController = navController,
+                    onNavigateToPermissions = { navController.navigate(Screen.Permissions.route) }
                 )
             }
             composable(Screen.NutritionDay.route) { backStack ->
