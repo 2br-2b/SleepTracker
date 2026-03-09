@@ -35,6 +35,7 @@ fun NutritionSettingsScreen(
     val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
     val nutritionProvider = remember(context) { AssetNutritionProvider(context) }
 
+    val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
     val showAdvanced by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
     val nutritionRangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
     val askEatenTime by userPreferencesRepository.nutritionAskEatenTime.collectAsState(initial = false)
@@ -92,6 +93,28 @@ fun NutritionSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
+            // ── Enable / Disable toggle ────────────────────────────────────
+            ListItem(
+                headlineContent = { Text("Nutrition Tracking Enabled") },
+                supportingContent = {
+                    Text(if (nutritionEnabled) "Nutrition is active and visible in the app."
+                         else "Nutrition is disabled. Food tab and settings below are hidden.")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = nutritionEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { userPreferencesRepository.setNutritionEnabled(enabled) }
+                        }
+                    )
+                }
+            )
+
+            HorizontalDivider()
+
+            val contentEnabled = nutritionEnabled
+            val contentAlpha = if (nutritionEnabled) 1f else 0.38f
+
             // ── Food database ─────────────────────────────────────────────
             SectionHeader("Food Database")
 
@@ -113,7 +136,7 @@ fun NutritionSettingsScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { zipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
-                    enabled = !isBuildingDataset, modifier = Modifier.weight(1f)
+                    enabled = contentEnabled && !isBuildingDataset, modifier = Modifier.weight(1f)
                 ) { Text("Upload ZIP") }
                 if (datasetRecordCount > 0) {
                     OutlinedButton(
@@ -125,7 +148,7 @@ fun NutritionSettingsScreen(
                                 refreshDatasetCount()
                             }
                         },
-                        enabled = !isBuildingDataset, modifier = Modifier.weight(1f)
+                        enabled = contentEnabled && !isBuildingDataset, modifier = Modifier.weight(1f)
                     ) { Text("Clear") }
                 }
             }
@@ -140,12 +163,14 @@ fun NutritionSettingsScreen(
                 supportingContent = { Text("$nutritionRangeDays days selectable in Food tab") },
                 trailingContent = {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays((nutritionRangeDays - 1).coerceAtLeast(1)) }
-                        }) { Text("-") }
-                        OutlinedButton(onClick = {
-                            scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays((nutritionRangeDays + 1).coerceAtMost(365)) }
-                        }) { Text("+") }
+                        OutlinedButton(
+                            onClick = { scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays((nutritionRangeDays - 1).coerceAtLeast(1)) } },
+                            enabled = contentEnabled
+                        ) { Text("-") }
+                        OutlinedButton(
+                            onClick = { scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays((nutritionRangeDays + 1).coerceAtMost(365)) } },
+                            enabled = contentEnabled
+                        ) { Text("+") }
                     }
                 }
             )
@@ -160,7 +185,7 @@ fun NutritionSettingsScreen(
             )
 
             // ── Advanced (inline) ─────────────────────────────────────────
-            if (showAdvanced) {
+            if (showAdvanced && contentEnabled) {
                 HorizontalDivider()
                 SectionHeader("Advanced")
 
