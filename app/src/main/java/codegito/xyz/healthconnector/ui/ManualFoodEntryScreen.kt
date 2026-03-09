@@ -232,8 +232,9 @@ fun ManualFoodEntryScreen(
                 val candidate = FoodCandidate(
                     id = "manual-${trimmedName.lowercase().replace(" ", "-")}",
                     name = trimmedName,
+                    servingInfo = null,
                     baseAmount = NutritionAmount(100.0, QuantityUnit.GRAM),
-                    nutrientsPerBase = NutrientVector(
+                    nutrientsPer100g = NutrientVector(
                         calories = nutrients.calories * scale,
                         proteinGrams = nutrients.proteinGrams * scale,
                         carbsGrams = nutrients.carbsGrams * scale,

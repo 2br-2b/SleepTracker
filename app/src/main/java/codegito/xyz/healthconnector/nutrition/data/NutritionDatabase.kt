@@ -20,7 +20,7 @@ import java.io.File
  * Generated at runtime from the bundled zip on first use. Located in
  * [Context.getFilesDir]/nutrition/foods.db — NOT in app assets.
  *
- * Uses FTS5 for fast full-text search across food names and alternate names.
+ * Uses FTS4 for fast full-text search across food names and alternate names.
  * Because this DB is always regenerated from scratch (never migrated), we use
  * raw SQLiteDatabase directly rather than Room.
  */
@@ -102,11 +102,9 @@ class NutritionDatabase private constructor(private val context: Context) {
         """.trimIndent())
 
         database.execSQL("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts5(
-                food_id UNINDEXED,
-                search_text,
-                content='',
-                tokenize='unicode61'
+            CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts4(
+                food_id,
+                search_text
             )
         """.trimIndent())
     }
@@ -180,8 +178,9 @@ class NutritionDatabase private constructor(private val context: Context) {
     private val insertFtsSql =
         "INSERT INTO foods_fts(food_id, search_text) VALUES (?, ?)"
 
-    private val insertFtsOrIgnoreSql =
-        "INSERT OR IGNORE INTO foods_fts(food_id, search_text) VALUES (?, ?)"
+    // FTS4 does not support INSERT OR IGNORE; for merge mode we always insert
+    // (duplicates in the FTS index don't affect correctness, only search ranking)
+    private val insertFtsOrIgnoreSql = insertFtsSql
 
     fun insertFood(
         database: SQLiteDatabase,
@@ -292,7 +291,7 @@ class NutritionDatabase private constructor(private val context: Context) {
     // -------------------------------------------------------------------------
 
     /**
-     * Search foods using FTS5 for full-text matching across name and alternate names.
+     * Search foods using FTS4 for full-text matching across name and alternate names.
      * Falls back to LIKE if FTS returns no results (handles special-character edge cases).
      */
     suspend fun searchFoods(query: String, limit: Int): List<FoodCandidate> =
@@ -300,7 +299,7 @@ class NutritionDatabase private constructor(private val context: Context) {
             val normalized = query.trim()
             if (normalized.isEmpty()) return@withContext emptyList()
 
-            // Try FTS5 first
+            // Try FTS4 first
             val ftsResults = runCatching {
                 val matchExpr = buildFtsMatchExpr(normalized)
                 val cursor = openDb().rawQuery(
@@ -308,7 +307,6 @@ class NutritionDatabase private constructor(private val context: Context) {
                     SELECT f.* FROM foods f
                     JOIN foods_fts ON foods_fts.food_id = f.id
                     WHERE foods_fts MATCH ?
-                    ORDER BY rank
                     LIMIT ?
                     """.trimIndent(),
                     arrayOf(matchExpr, limit.toString())
