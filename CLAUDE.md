@@ -16,6 +16,7 @@ SleepTracker is an Android app for automated sleep tracking via Health Connect. 
 ./gradlew installDebug           # Install on device/emulator
 ./gradlew test                   # Unit tests
 ./gradlew testDebugUnitTest      # Debug variant unit tests
+./gradlew testDebugUnitTest --tests "*.SleepDetectionEngineTest"  # Run single test class
 ./gradlew connectedAndroidTest   # Instrumented tests (needs device)
 ./gradlew clean                  # Clean build
 ```
@@ -32,7 +33,7 @@ The app supports two sleep detection modes (`SleepDetectionMode` enum):
 
 1. **Boot/App open** → `BootReceiver` or `MainActivity.ensureServiceRunning()` starts `SleepTrackingService`
 2. **Service** → Dynamically registers `ScreenStateReceiver` (must be dynamic, not manifest-declared, because `ACTION_SCREEN_OFF/ON` requires it on API 26+)
-3. **Screen events** → `ScreenStateReceiver` records LOCK/UNLOCK/PRESENT events to Room DB (`SleepEventDatabase`), but only if current time falls within configured bedtime or wakeup windows
+3. **Screen events** → `ScreenStateReceiver` records LOCK/UNLOCK/PRESENT events to Room DB (`AppDatabase`), but only if current time falls within configured bedtime or wakeup windows
 4. **Detection** → `SleepDetectionEngine` analyzes stored events to identify bedtime (last LOCK in bedtime window) and wakeup (first UNLOCK in wakeup window)
 5. **Notification** → `NotificationHelper` sends reminder via `ReminderReceiver` (first-unlock or deadline alarm) prompting user to review
 6. **Review** → `SleepDataLogger` activity shows auto-detected session (or existing Health Connect record); user edits via `SleepLogEditor`
@@ -61,16 +62,17 @@ Uses sealed `Screen` class with `NavHost`:
 - `Screen.AutoSleepSettings` — Bedtime/wakeup windows, awakening thresholds, reminders
 - `Screen.EditSleepStages` — Drag-reorderable sleep stage list with emoji customization
 
-Bottom `NavigationBar` shows Home and Settings tabs. Sub-screens navigate via `NavController`.
+Bottom `NavigationBar` shows 2–3 tabs (Sleep, Food, Settings) depending on which features are enabled. Sub-screens navigate via `NavController`.
 
 ### Data Layer
 
-- **Room** (`SleepEventDatabase`): Stores `ScreenEvent` entities (timestampMillis, type). Singleton via `getInstance()`.
+- **Room** (`AppDatabase`): Stores `ScreenEvent` (timestampMillis, type) and `RecentFoodEntity` tables. Singleton via `AppDatabase.getDatabase(context)`. DB file: `"sleep_tracker_database"`. Schema migrations use `addMigrations(MIGRATION_X_Y)` in the builder. (`SleepEventDatabase` is a deprecated wrapper — do not use.)
 - **DataStore** (`UserPreferencesRepository`): All user preferences as Kotlin Flows — rollover hour, detection mode, bedtime/wakeup windows, awakening thresholds, sleep stage config (JSON-serialized), manual template, reminder toggles, developer mode.
 - **Health Connect** (`HealthConnectManager`): Read/write/delete `SleepSessionRecord`. Handles permission checks for READ_SLEEP and WRITE_SLEEP.
 
 ### Key Implementation Details
 
+- **Feature flags**: `sleepEnabled` and `nutritionEnabled` in DataStore independently control entire modules; bottom nav adapts accordingly
 - **Rollover hour**: Day boundaries for sleep sessions roll over at a configurable hour (default 2 AM), so a session starting at 11 PM belongs to that calendar day, not the next
 - `ScreenStateReceiver` is **never** in the manifest — dynamic registration only
 - Health Connect permissions use `PermissionController.createRequestPermissionResultContract()` via Activity Result API
@@ -81,6 +83,16 @@ Bottom `NavigationBar` shows Home and Settings tabs. Sub-screens navigate via `N
 ### Key Permissions
 
 `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `SCHEDULE_EXACT_ALARM`, `OTHER_SENSORS` (conditional), `health.READ_SLEEP`, `health.WRITE_SLEEP`
+
+### Nutrition Feature
+
+A secondary feature alongside sleep tracking, in the `nutrition/` package:
+
+- **`nutrition/provider/`**: `AssetNutritionProvider` loads food data from a build-time-indexed dataset in `app/src/main/assets/nutrition/`. The Gradle task `generateNutritionIndex` (wired to `preBuild`) runs a Python script to generate a searchable index from the Open Nutrition dataset — re-run after updating the dataset.
+- **`nutrition/domain/`**: `NutritionModels.kt`, `NutrientConfig.kt` (customizable targets: calories, protein, carbs, fat), `NutritionMath.kt`
+- **`nutrition/data/`**: `NutritionRecentsRepository` — recent foods stored in `AppDatabase` (`recent_foods` table via `RecentFoodDao`)
+- **UI**: `NutritionScreens.kt`, `NutritionSettingsScreen.kt`, `EditNutrientsScreen.kt`, `ManualFoodEntryScreen.kt`
+- Health Connect: uses `READ_NUTRITION` / `WRITE_NUTRITION` permissions (declared in manifest, handled in `PermissionsScreen`)
 
 ### Dependencies
 
