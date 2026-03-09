@@ -3,9 +3,17 @@ package codegito.xyz.healthconnector.ui
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -14,6 +22,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
@@ -31,7 +41,8 @@ fun NutritionSettingsScreen(
     userPreferencesRepository: UserPreferencesRepository,
     nutritionProvider: AssetNutritionProvider,
     onBack: () -> Unit,
-    onEditNutrients: () -> Unit
+    onEditNutrients: () -> Unit,
+    scrollToDataset: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -52,6 +63,30 @@ fun NutritionSettingsScreen(
     var datasetRecordCount by remember { mutableIntStateOf(-1) }
     var isBuildingDataset by remember { mutableStateOf(false) }
     var datasetStatusMessage by remember { mutableStateOf<String?>(null) }
+
+    val scrollState = rememberScrollState()
+    var datasetSectionContentY by remember { mutableIntStateOf(0) }
+    // Blink highlight for 3 seconds when scrollToDataset is requested
+    var isHighlighting by remember(scrollToDataset) { mutableStateOf(scrollToDataset) }
+    val infiniteTransition = rememberInfiniteTransition(label = "datasetHighlight")
+    val highlightAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "highlightPulse"
+    )
+
+    LaunchedEffect(scrollToDataset) {
+        if (scrollToDataset) {
+            kotlinx.coroutines.delay(200) // let layout settle
+            scrollState.animateScrollTo(maxOf(0, datasetSectionContentY - 32))
+            kotlinx.coroutines.delay(3000)
+            isHighlighting = false
+        }
+    }
 
     fun refreshDatasetCount() {
         scope.launch {
@@ -93,7 +128,7 @@ fun NutritionSettingsScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
@@ -119,6 +154,24 @@ fun NutritionSettingsScreen(
             val contentEnabled = nutritionEnabled
 
             // ── Food database ─────────────────────────────────────────────
+            val datasetHighlightBorderColor = if (isHighlighting)
+                MaterialTheme.colorScheme.primary.copy(alpha = highlightAlpha)
+            else
+                MaterialTheme.colorScheme.primary.copy(alpha = 0f)
+
+            Column(
+                modifier = Modifier
+                    .onGloballyPositioned { coords ->
+                        datasetSectionContentY = (coords.positionInRoot().y + scrollState.value).toInt()
+                    }
+                    .border(
+                        width = 2.dp,
+                        color = datasetHighlightBorderColor,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .padding(if (isHighlighting) 8.dp else 0.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
             SectionHeader("Food Database")
 
             val datasetLabel = when {
@@ -155,6 +208,7 @@ fun NutritionSettingsScreen(
                     ) { Text("Clear") }
                 }
             }
+            } // end dataset section highlight Column
 
             HorizontalDivider()
 

@@ -92,6 +92,19 @@ fun PermissionsScreen(
 
     var permState by remember { mutableStateOf(PermissionState()) }
 
+    // When both sleep and nutrition are enabled, request all HC permissions at once
+    // so the user only sees a single system dialog instead of two back-to-back.
+    val combinedHcPermissions = buildSet {
+        if (sleepEnabled) {
+            add(healthConnectManager.sleepWritePermission)
+            add(healthConnectManager.sleepReadPermission)
+        }
+        if (nutritionEnabled) {
+            add(healthConnectManager.nutritionWritePermission)
+            add(healthConnectManager.nutritionReadPermission)
+        }
+    }
+
     fun refresh() {
         scope.launch { permState = loadPermissionState(context, healthConnectManager) }
     }
@@ -164,10 +177,7 @@ fun PermissionsScreen(
                 disabled = sleepSectionDisabled,
                 disabledNote = "Sleep tracking is disabled.",
                 onGrant = {
-                    onRequestHealthPermissions(setOf(
-                        healthConnectManager.sleepWritePermission,
-                        healthConnectManager.sleepReadPermission
-                    ))
+                    onRequestHealthPermissions(combinedHcPermissions)
                     refresh()
                 }
             )
@@ -180,7 +190,7 @@ fun PermissionsScreen(
                 disabled = sleepSectionDisabled,
                 disabledNote = "Sleep tracking is disabled.",
                 onGrant = {
-                    onRequestHealthPermissions(setOf(healthConnectManager.sleepReadPermission))
+                    onRequestHealthPermissions(combinedHcPermissions)
                     refresh()
                 }
             )
@@ -220,10 +230,7 @@ fun PermissionsScreen(
                 disabled = nutritionSectionDisabled,
                 disabledNote = "Nutrition tracking is disabled.",
                 onGrant = {
-                    onRequestHealthPermissions(setOf(
-                        healthConnectManager.nutritionWritePermission,
-                        healthConnectManager.nutritionReadPermission
-                    ))
+                    onRequestHealthPermissions(combinedHcPermissions)
                     refresh()
                 }
             )
@@ -236,7 +243,7 @@ fun PermissionsScreen(
                 disabled = nutritionSectionDisabled,
                 disabledNote = "Nutrition tracking is disabled.",
                 onGrant = {
-                    onRequestHealthPermissions(setOf(healthConnectManager.nutritionReadPermission))
+                    onRequestHealthPermissions(combinedHcPermissions)
                     refresh()
                 }
             )

@@ -302,7 +302,13 @@ private fun OnboardingFlow(
                                 userPreferencesRepository.setSleepEnabled(sleepSelected)
                                 userPreferencesRepository.setNutritionEnabled(nutritionSelected)
                             }
-                            step = OnboardingStep.HealthConnect
+                            // Skip Health Connect install screen if it's already installed
+                            step = if (isHealthConnectInstalled) {
+                                if (sleepSelected) OnboardingStep.AutoDetectionExplanation
+                                else OnboardingStep.Permissions
+                            } else {
+                                OnboardingStep.HealthConnect
+                            }
                         },
                         enabled = sleepSelected || nutritionSelected,
                         modifier = Modifier.fillMaxWidth()
@@ -518,6 +524,16 @@ private fun OnboardingFlow(
                         )
                     }
 
+                    // Build combined HC permission set — if both trackings are on, request all at once
+                    val combinedHcPermissions = buildSet {
+                        if (sleepSelected) {
+                            addAll(healthConnectManager.sleepPermissions)
+                        }
+                        if (nutritionSelected) {
+                            addAll(healthConnectManager.nutritionPermissions)
+                        }
+                    }
+
                     // Sleep-specific permissions
                     if (sleepSelected) {
                         HorizontalDivider()
@@ -528,7 +544,7 @@ private fun OnboardingFlow(
                             reason = "Required to save and read sleep sessions in Health Connect.",
                             granted = permState.sleepWriteGranted && permState.sleepReadGranted,
                             onGrant = {
-                                onRequestHealthPermissions(healthConnectManager.sleepPermissions)
+                                onRequestHealthPermissions(combinedHcPermissions)
                                 refreshPermissions()
                             }
                         )
@@ -556,7 +572,7 @@ private fun OnboardingFlow(
                             reason = "Required to save and read nutrition records in Health Connect.",
                             granted = permState.nutritionWriteGranted && permState.nutritionReadGranted,
                             onGrant = {
-                                onRequestHealthPermissions(healthConnectManager.nutritionPermissions)
+                                onRequestHealthPermissions(combinedHcPermissions)
                                 refreshPermissions()
                             }
                         )

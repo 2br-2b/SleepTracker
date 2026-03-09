@@ -23,8 +23,6 @@ import codegito.xyz.healthconnector.data.model.TimeRange
 import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.LocalDate
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,7 +36,6 @@ fun SleepSettingsScreen(
 
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val showAdvanced by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
-    val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val detectionMode by userPreferencesRepository.sleepDetectionMode.collectAsState(initial = SleepDetectionMode.AUTO)
     val bedtimeWindow by userPreferencesRepository.bedtimeWindow.collectAsState(initial = TimeRange.BEDTIME)
     val wakeupWindow by userPreferencesRepository.wakeupWindow.collectAsState(initial = TimeRange.WAKEUP)
@@ -51,7 +48,6 @@ fun SleepSettingsScreen(
     val reminderDeadlineSilent by userPreferencesRepository.reminderDeadlineSilentEnabled.collectAsState(initial = true)
     val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 10)
 
-    var showRolloverPicker by remember { mutableStateOf(false) }
     var showTemplateEditor by remember { mutableStateOf(false) }
 
     val currentTemplate = manualTemplateState
@@ -138,29 +134,6 @@ fun SleepSettingsScreen(
 
             // Gray-out alpha for all settings below when disabled
             val contentAlpha = if (sleepEnabled) 1f else 0.38f
-
-            // ── Rollover Time ──────────────────────────────────────────────
-            SectionHeader("Rollover Time")
-            ListItem(
-                headlineContent = {
-                    Text("Daily cutoff",
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha))
-                },
-                supportingContent = {
-                    Text("Sleep sessions starting before this hour count toward the previous calendar day.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha))
-                },
-                trailingContent = {
-                    Text(
-                        LocalTime.of(rolloverHour, 0).format(DateTimeFormatter.ofPattern("h:mm a")),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = contentAlpha)
-                    )
-                },
-                modifier = if (sleepEnabled) Modifier.clickable { showRolloverPicker = true } else Modifier
-            )
-
-            HorizontalDivider()
 
             // ── Detection Mode ─────────────────────────────────────────────
             SectionHeader("Default Template")
@@ -351,15 +324,4 @@ fun SleepSettingsScreen(
         }
     }
 
-    if (showRolloverPicker) {
-        AppTimePickerDialog(
-            initialHour = rolloverHour,
-            initialMinute = 0,
-            onConfirm = { hour, _ ->
-                scope.launch { userPreferencesRepository.setRolloverHour(hour) }
-                showRolloverPicker = false
-            },
-            onDismiss = { showRolloverPicker = false }
-        )
-    }
 }
