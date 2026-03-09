@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.MealType
@@ -325,9 +326,9 @@ fun NutritionDayDetailScreen(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            Text("P: ${totalProtein.toInt()}g", style = MaterialTheme.typography.bodySmall)
-                            Text("C: ${totalCarbs.toInt()}g", style = MaterialTheme.typography.bodySmall)
-                            Text("F: ${totalFat.toInt()}g", style = MaterialTheme.typography.bodySmall)
+                            Text("Protein: ${totalProtein.toInt()}g", style = MaterialTheme.typography.bodySmall)
+                            Text("Carbs: ${totalCarbs.toInt()}g", style = MaterialTheme.typography.bodySmall)
+                            Text("Fat: ${totalFat.toInt()}g", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -418,6 +419,7 @@ fun LogFoodScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     val recentsRepo = remember(context) {
         NutritionRecentsRepository(AppDatabase.getDatabase(context).recentFoodDao())
@@ -431,10 +433,15 @@ fun LogFoodScreen(
     val dinnerRange by userPreferencesRepository.nutritionDinnerRange.collectAsState(initial = TimeRange.DINNER)
     val unitSystem by userPreferencesRepository.nutritionUnitSystem.collectAsState(initial = NutritionUnitSystem.US)
     val nutrientConfigList by userPreferencesRepository.nutrientConfig.collectAsState(initial = NutrientDefaults.defaultConfig())
+    val applyFilterToSearch by userPreferencesRepository.nutritionApplyNutrientFilterToSearch.collectAsState(initial = false)
+    // Nutritional facts are always included; extra micronutrients come from config
     val enabledNutrients = remember(nutrientConfigList) {
-        nutrientConfigList
+        val configEnabled = nutrientConfigList
             .filter { it.enabled }
             .mapNotNull { cfg -> runCatching { NutrientKey.valueOf(cfg.key) }.getOrNull() }
+            .toSet()
+        val micronutrientsEnabled = configEnabled.filter { it !in NutrientDefaults.nutritionalFactsKeys }
+        NutrientDefaults.nutritionalFactsKeys.toList() + micronutrientsEnabled
     }
 
     // Eaten time state — defaults to now (or noon for past dates)
@@ -505,6 +512,11 @@ fun LogFoodScreen(
         val multiplier = if (candidate.baseAmount.value > 0.0) grams / candidate.baseAmount.value else 1.0
         val n = candidate.nutrientsPerBase
         fun mass(v: Double) = if (v * multiplier > 0.0) Mass.grams(v * multiplier) else null
+        // Returns null for optional micronutrients when the filter is active and they're not enabled
+        fun massFiltered(v: Double, key: NutrientKey): Mass? {
+            if (applyFilterToSearch && key !in NutrientDefaults.nutritionalFactsKeys && key !in enabledNutrients) return null
+            return mass(v)
+        }
 
         val record = NutritionRecord(
             name = candidate.name,
@@ -518,31 +530,31 @@ fun LogFoodScreen(
             totalCarbohydrate = mass(n.carbsGrams),
             totalFat = mass(n.fatGrams),
             saturatedFat = mass(n.saturatedFatGrams),
-            polyunsaturatedFat = mass(n.polyunsaturatedFatGrams),
-            monounsaturatedFat = mass(n.monounsaturatedFatGrams),
+            polyunsaturatedFat = massFiltered(n.polyunsaturatedFatGrams, NutrientKey.POLYUNSATURATED_FAT),
+            monounsaturatedFat = massFiltered(n.monounsaturatedFatGrams, NutrientKey.MONOUNSATURATED_FAT),
             transFat = mass(n.transFatGrams),
             dietaryFiber = mass(n.fiberGrams),
             sugar = mass(n.sugarGrams),
             sodium = mass(n.sodiumGrams),
             cholesterol = mass(n.cholesterolGrams),
-            potassium = mass(n.potassiumGrams),
-            calcium = mass(n.calciumGrams),
-            iron = mass(n.ironGrams),
-            magnesium = mass(n.magnesiumGrams),
-            phosphorus = mass(n.phosphorusGrams),
-            zinc = mass(n.zincGrams),
-            vitaminA = mass(n.vitaminAGrams),
-            vitaminC = mass(n.vitaminCGrams),
-            vitaminD = mass(n.vitaminDGrams),
-            vitaminE = mass(n.vitaminEGrams),
-            vitaminK = mass(n.vitaminKGrams),
-            vitaminB6 = mass(n.vitaminB6Grams),
-            vitaminB12 = mass(n.vitaminB12Grams),
-            thiamin = mass(n.thiaminGrams),
-            riboflavin = mass(n.riboflavinGrams),
-            niacin = mass(n.niacinGrams),
-            folate = mass(n.folateGrams),
-            caffeine = mass(n.caffeineGrams),
+            potassium = massFiltered(n.potassiumGrams, NutrientKey.POTASSIUM),
+            calcium = massFiltered(n.calciumGrams, NutrientKey.CALCIUM),
+            iron = massFiltered(n.ironGrams, NutrientKey.IRON),
+            magnesium = massFiltered(n.magnesiumGrams, NutrientKey.MAGNESIUM),
+            phosphorus = massFiltered(n.phosphorusGrams, NutrientKey.PHOSPHORUS),
+            zinc = massFiltered(n.zincGrams, NutrientKey.ZINC),
+            vitaminA = massFiltered(n.vitaminAGrams, NutrientKey.VITAMIN_A),
+            vitaminC = massFiltered(n.vitaminCGrams, NutrientKey.VITAMIN_C),
+            vitaminD = massFiltered(n.vitaminDGrams, NutrientKey.VITAMIN_D),
+            vitaminE = massFiltered(n.vitaminEGrams, NutrientKey.VITAMIN_E),
+            vitaminK = massFiltered(n.vitaminKGrams, NutrientKey.VITAMIN_K),
+            vitaminB6 = massFiltered(n.vitaminB6Grams, NutrientKey.VITAMIN_B6),
+            vitaminB12 = massFiltered(n.vitaminB12Grams, NutrientKey.VITAMIN_B12),
+            thiamin = massFiltered(n.thiaminGrams, NutrientKey.THIAMIN),
+            riboflavin = massFiltered(n.riboflavinGrams, NutrientKey.RIBOFLAVIN),
+            niacin = massFiltered(n.niacinGrams, NutrientKey.NIACIN),
+            folate = massFiltered(n.folateGrams, NutrientKey.FOLATE),
+            caffeine = massFiltered(n.caffeineGrams, NutrientKey.CAFFEINE),
         )
 
         runCatching {
@@ -582,9 +594,9 @@ fun LogFoodScreen(
                             val displayVal = NutrientDefaults.getValueInDisplayUnit(baseNutrition, key) * multiplier
                             if (displayVal <= 0.0) return@mapNotNull null
                             val unit = NutrientDefaults.displayUnit[key] ?: ""
-                            val short = NutrientDefaults.displayName[key]?.take(3) ?: key.name.take(3)
+                            val name = NutrientDefaults.displayName[key] ?: key.name
                             if (key == NutrientKey.CALORIES) "${displayVal.toInt()} kcal"
-                            else "$short: ${if (displayVal < 10.0) "%.1f".format(displayVal) else displayVal.toInt().toString()}$unit"
+                            else "$name: ${if (displayVal < 10.0) "%.1f".format(displayVal) else displayVal.toInt().toString()}$unit"
                         }.take(5)
                         if (summaryParts.isNotEmpty()) {
                             Text(
@@ -673,6 +685,7 @@ fun LogFoodScreen(
                                 selectedFood = candidate
                                 setDefaultAmount(candidate)
                                 eatenTime = defaultEatenTime
+                                keyboardController?.hide()
                             }
                         )
                     }
@@ -697,6 +710,7 @@ fun LogFoodScreen(
                                 selectedFood = candidate
                                 amountText = gramsToAmountText(lastAmount.value, unitSystem)
                                 eatenTime = defaultEatenTime
+                                keyboardController?.hide()
                             }
                         )
                     }

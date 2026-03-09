@@ -42,6 +42,7 @@ fun SettingsScreen(
     val showAdvancedSettings by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
+    val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
 
     var versionTapCount by remember { mutableIntStateOf(0) }
     var isServiceActive by remember { mutableStateOf(false) }
@@ -119,6 +120,26 @@ fun SettingsScreen(
                             scope.launch { userPreferencesRepository.setAmoledPitchBlackEnabled(enabled) }
                         }
                     )
+                }
+            )
+
+            HorizontalDivider()
+
+            // ── General ───────────────────────────────────────────────────
+            SectionHeader("General")
+
+            ListItem(
+                headlineContent = { Text("Days to show") },
+                supportingContent = { Text("$historyDays days back — applies to sleep history, food log, and data retention") },
+                trailingContent = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { scope.launch { userPreferencesRepository.setHistoryDays((historyDays - 1).coerceAtLeast(1)) } }
+                        ) { Text("-") }
+                        OutlinedButton(
+                            onClick = { scope.launch { userPreferencesRepository.setHistoryDays((historyDays + 1).coerceAtMost(365)) } }
+                        ) { Text("+") }
+                    }
                 }
             )
 

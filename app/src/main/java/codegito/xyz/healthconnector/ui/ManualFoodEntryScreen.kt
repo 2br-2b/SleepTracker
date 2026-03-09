@@ -55,10 +55,14 @@ fun ManualFoodEntryScreen(
     val lunchRange by userPreferencesRepository.nutritionLunchRange.collectAsState(initial = TimeRange.LUNCH)
     val dinnerRange by userPreferencesRepository.nutritionDinnerRange.collectAsState(initial = TimeRange.DINNER)
 
+    // Nutritional facts are always shown; extra micronutrients come from config
     val enabledNutrients = remember(nutrientConfigList) {
-        nutrientConfigList
+        val configEnabled = nutrientConfigList
             .filter { it.enabled }
             .mapNotNull { cfg -> runCatching { NutrientKey.valueOf(cfg.key) }.getOrNull() }
+            .toSet()
+        val micronutrientsEnabled = configEnabled.filter { it !in NutrientDefaults.nutritionalFactsKeys }
+        NutrientDefaults.nutritionalFactsKeys.toList() + micronutrientsEnabled
     }
 
     var foodName by remember { mutableStateOf("") }
@@ -338,7 +342,7 @@ fun ManualFoodEntryScreen(
 
             if (enabledNutrients.isEmpty()) {
                 Text(
-                    "No nutrients enabled. Configure in Settings → Nutrition → Advanced.",
+                    "No extra nutrients enabled. Configure in Settings → Nutrition → Extra Nutrients.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )

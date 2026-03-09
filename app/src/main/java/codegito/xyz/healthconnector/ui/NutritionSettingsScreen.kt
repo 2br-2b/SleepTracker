@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,9 +19,6 @@ import androidx.compose.ui.unit.dp
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
-import codegito.xyz.healthconnector.nutrition.domain.NutrientConfig
-import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
-import codegito.xyz.healthconnector.nutrition.domain.NutrientKey
 import codegito.xyz.healthconnector.nutrition.domain.NutritionUnitSystem
 import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
 import kotlinx.coroutines.Dispatchers
@@ -31,17 +29,17 @@ import kotlinx.coroutines.withContext
 @Composable
 fun NutritionSettingsScreen(
     userPreferencesRepository: UserPreferencesRepository,
-    onBack: () -> Unit
+    nutritionProvider: AssetNutritionProvider,
+    onBack: () -> Unit,
+    onEditNutrients: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
-    val nutritionProvider = remember(context) { AssetNutritionProvider(context) }
 
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
     val showAdvanced by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
-    val nutritionRangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
     val askEatenTime by userPreferencesRepository.nutritionAskEatenTime.collectAsState(initial = false)
     val breakfastRange by userPreferencesRepository.nutritionBreakfastRange.collectAsState(initial = TimeRange.BREAKFAST)
     val lunchRange by userPreferencesRepository.nutritionLunchRange.collectAsState(initial = TimeRange.LUNCH)
@@ -49,7 +47,7 @@ fun NutritionSettingsScreen(
     val mealDuration by userPreferencesRepository.nutritionMealDurationMinutes.collectAsState(initial = 30)
     val snackDuration by userPreferencesRepository.nutritionSnackDurationMinutes.collectAsState(initial = 10)
     val unitSystem by userPreferencesRepository.nutritionUnitSystem.collectAsState(initial = NutritionUnitSystem.US)
-    val nutrientConfigList by userPreferencesRepository.nutrientConfig.collectAsState(initial = NutrientDefaults.defaultConfig())
+    val applyFilterToSearch by userPreferencesRepository.nutritionApplyNutrientFilterToSearch.collectAsState(initial = false)
 
     var datasetRecordCount by remember { mutableIntStateOf(-1) }
     var isBuildingDataset by remember { mutableStateOf(false) }
@@ -119,7 +117,6 @@ fun NutritionSettingsScreen(
             HorizontalDivider()
 
             val contentEnabled = nutritionEnabled
-            val contentAlpha = if (nutritionEnabled) 1f else 0.38f
 
             // ── Food database ─────────────────────────────────────────────
             SectionHeader("Food Database")
@@ -161,33 +158,14 @@ fun NutritionSettingsScreen(
 
             HorizontalDivider()
 
-            // ── Display ───────────────────────────────────────────────────
-            SectionHeader("Display")
+            // ── Nutrients ─────────────────────────────────────────────────
+            SectionHeader("Nutrients")
 
             ListItem(
-                headlineContent = { Text("Past date range") },
-                supportingContent = { Text("$nutritionRangeDays days selectable in Food tab") },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = { scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays((nutritionRangeDays - 1).coerceAtLeast(1)) } },
-                            enabled = contentEnabled
-                        ) { Text("-") }
-                        OutlinedButton(
-                            onClick = { scope.launch { userPreferencesRepository.setNutritionPastDateRangeDays((nutritionRangeDays + 1).coerceAtMost(365)) } },
-                            enabled = contentEnabled
-                        ) { Text("+") }
-                    }
-                }
-            )
-
-            ListItem(
-                headlineContent = { Text("Nutrition Dataset License") },
-                supportingContent = { Text("See README + bundled metadata for dataset attribution and licensing.") },
-                leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
-                modifier = Modifier.clickable {
-                    Toast.makeText(context, "See README + bundled metadata for nutrition dataset licensing.", Toast.LENGTH_LONG).show()
-                }
+                headlineContent = { Text("Extra Nutrients") },
+                supportingContent = { Text("Choose which optional nutrients to track and their display order") },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                modifier = if (contentEnabled) Modifier.clickable { onEditNutrients() } else Modifier
             )
 
             HorizontalDivider()
@@ -218,73 +196,37 @@ fun NutritionSettingsScreen(
                 }
             }
 
+            ListItem(
+                headlineContent = { Text("Nutrition Dataset License") },
+                supportingContent = { Text("See README + bundled metadata for dataset attribution and licensing.") },
+                leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
+                modifier = Modifier.clickable {
+                    Toast.makeText(context, "See README + bundled metadata for nutrition dataset licensing.", Toast.LENGTH_LONG).show()
+                }
+            )
+
             // ── Advanced (inline) ─────────────────────────────────────────
             if (showAdvanced && contentEnabled) {
                 HorizontalDivider()
                 SectionHeader("Advanced")
 
-                // ── Nutrients ─────────────────────────────────────────────
-                Text("Nutrients", style = MaterialTheme.typography.labelLarge)
-                Text(
-                    "Choose which nutrients to track and their display order. Use ↑↓ to reorder.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                nutrientConfigList.forEachIndexed { index, cfg ->
-                    val key = runCatching { NutrientKey.valueOf(cfg.key) }.getOrNull()
-                    val name = key?.let { NutrientDefaults.displayName[it] } ?: cfg.key
-                    val unit = key?.let { NutrientDefaults.displayUnit[it] }?.let { " ($it)" } ?: ""
-                    ListItem(
-                        headlineContent = { Text("$name$unit") },
-                        leadingContent = {
-                            Checkbox(
-                                checked = cfg.enabled,
-                                onCheckedChange = { checked ->
-                                    val updated = nutrientConfigList.toMutableList().also {
-                                        it[index] = cfg.copy(enabled = checked)
-                                    }
-                                    scope.launch { userPreferencesRepository.saveNutrientConfig(updated) }
-                                }
-                            )
-                        },
-                        trailingContent = {
-                            Row {
-                                IconButton(
-                                    onClick = {
-                                        if (index > 0) {
-                                            val updated = nutrientConfigList.toMutableList()
-                                            val tmp = updated[index - 1]
-                                            updated[index - 1] = updated[index]
-                                            updated[index] = tmp
-                                            scope.launch { userPreferencesRepository.saveNutrientConfig(updated) }
-                                        }
-                                    },
-                                    enabled = index > 0
-                                ) { Text("↑") }
-                                IconButton(
-                                    onClick = {
-                                        if (index < nutrientConfigList.size - 1) {
-                                            val updated = nutrientConfigList.toMutableList()
-                                            val tmp = updated[index + 1]
-                                            updated[index + 1] = updated[index]
-                                            updated[index] = tmp
-                                            scope.launch { userPreferencesRepository.saveNutrientConfig(updated) }
-                                        }
-                                    },
-                                    enabled = index < nutrientConfigList.size - 1
-                                ) { Text("↓") }
-                            }
-                        }
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = {
-                        scope.launch { userPreferencesRepository.saveNutrientConfig(NutrientDefaults.defaultConfig()) }
+                ListItem(
+                    headlineContent = { Text("Apply nutrient filter to searched foods") },
+                    supportingContent = {
+                        Text(
+                            if (applyFilterToSearch)
+                                "Only enabled extra nutrients are stored when logging from search results."
+                            else
+                                "All available nutrient data is stored when logging from search results."
+                        )
                     },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Reset nutrients to defaults") }
+                    trailingContent = {
+                        Switch(
+                            checked = applyFilterToSearch,
+                            onCheckedChange = { scope.launch { userPreferencesRepository.setNutritionApplyNutrientFilterToSearch(it) } }
+                        )
+                    }
+                )
 
                 HorizontalDivider()
 

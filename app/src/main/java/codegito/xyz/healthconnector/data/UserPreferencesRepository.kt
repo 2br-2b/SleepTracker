@@ -79,6 +79,7 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val NUTRITION_DINNER_END_KEY        = intPreferencesKey("nutrition_dinner_end_min")
     private val NUTRIENT_CONFIG_JSON_KEY        = stringPreferencesKey("nutrient_config_json")
     private val NUTRITION_UNIT_SYSTEM_KEY       = stringPreferencesKey("nutrition_unit_system")
+    private val NUTRITION_APPLY_FILTER_TO_SEARCH_KEY = booleanPreferencesKey("nutrition_apply_filter_to_search")
 
     // ── Sleep flows ───────────────────────────────────────────────────────
 
@@ -169,8 +170,8 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     // ── Nutrition flows ───────────────────────────────────────────────────
 
-    val nutritionPastDateRangeDays: Flow<Int> = context.dataStore.data
-        .map { prefs -> prefs[NUTRITION_PAST_DATE_RANGE_DAYS_KEY] ?: 7 }
+    // Consolidated: nutrition and sleep history use the same days setting
+    val nutritionPastDateRangeDays: Flow<Int> get() = historyDays
 
     val nutritionMealDurationMinutes: Flow<Int> = context.dataStore.data
         .map { prefs -> prefs[NUTRITION_MEAL_DURATION_MINUTES_KEY] ?: 30 }
@@ -211,6 +212,9 @@ class UserPreferencesRepository private constructor(private val context: Context
             try { NutritionUnitSystem.valueOf(prefs[NUTRITION_UNIT_SYSTEM_KEY] ?: NutritionUnitSystem.US.name) }
             catch (_: Exception) { NutritionUnitSystem.US }
         }
+
+    val nutritionApplyNutrientFilterToSearch: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] ?: false }
 
     // ── Sleep setters ─────────────────────────────────────────────────────
 
@@ -306,9 +310,8 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     // ── Nutrition setters ─────────────────────────────────────────────────
 
-    suspend fun setNutritionPastDateRangeDays(days: Int) {
-        context.dataStore.edit { prefs -> prefs[NUTRITION_PAST_DATE_RANGE_DAYS_KEY] = days }
-    }
+    // Consolidated with historyDays
+    suspend fun setNutritionPastDateRangeDays(days: Int) = setHistoryDays(days)
 
     suspend fun setNutritionMealDurationMinutes(minutes: Int) {
         context.dataStore.edit { prefs -> prefs[NUTRITION_MEAL_DURATION_MINUTES_KEY] = minutes }
@@ -349,6 +352,10 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setNutritionUnitSystem(system: NutritionUnitSystem) {
         context.dataStore.edit { prefs -> prefs[NUTRITION_UNIT_SYSTEM_KEY] = system.name }
+    }
+
+    suspend fun setNutritionApplyNutrientFilterToSearch(apply: Boolean) {
+        context.dataStore.edit { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] = apply }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

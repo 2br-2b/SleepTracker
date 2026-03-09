@@ -49,7 +49,6 @@ fun SleepSettingsScreen(
     val reminderFirstUnlock by userPreferencesRepository.reminderFirstUnlockEnabled.collectAsState(initial = true)
     val reminderDeadlineLoud by userPreferencesRepository.reminderDeadlineLoudEnabled.collectAsState(initial = true)
     val reminderDeadlineSilent by userPreferencesRepository.reminderDeadlineSilentEnabled.collectAsState(initial = true)
-    val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
     val awakeningThreshold by userPreferencesRepository.awakeningThresholdMinutes.collectAsState(initial = 10)
 
     var showRolloverPicker by remember { mutableStateOf(false) }
@@ -332,22 +331,6 @@ fun SleepSettingsScreen(
             if (showAdvanced && sleepEnabled) {
                 HorizontalDivider()
                 SectionHeader("Advanced")
-
-                Text("History & Retention", style = MaterialTheme.typography.labelLarge)
-                Text(
-                    "Number of days shown on the home screen and how long raw screen events are kept.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedTextField(
-                    value = historyDays.toString(),
-                    onValueChange = { raw ->
-                        raw.toIntOrNull()?.takeIf { it > 0 }?.let {
-                            scope.launch { userPreferencesRepository.setHistoryDays(it) }
-                        }
-                    },
-                    label = { Text("History / retention days") },
-                    modifier = Modifier.fillMaxWidth()
-                )
 
                 Text("Awakening Threshold", style = MaterialTheme.typography.labelLarge)
                 Text(
