@@ -1,5 +1,8 @@
 package codegito.xyz.healthconnector.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -76,6 +79,7 @@ fun NutritionHomeScreen(
     var nutritionByDay by remember { mutableStateOf<Map<LocalDate, List<NutritionRecord>>>(emptyMap()) }
     var indexRecordCount by remember { mutableIntStateOf(-1) }
     var hasNutritionWrite by remember { mutableStateOf<Boolean?>(null) }
+    var hasNutritionRead by remember { mutableStateOf<Boolean?>(null) }
 
     fun loadData() {
         scope.launch {
@@ -110,7 +114,10 @@ fun NutritionHomeScreen(
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 loadData()
-                scope.launch { hasNutritionWrite = healthConnectManager.hasNutritionWritePermission() }
+                scope.launch {
+                    hasNutritionWrite = healthConnectManager.hasNutritionWritePermission()
+                    hasNutritionRead = healthConnectManager.hasNutritionReadPermission()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -199,6 +206,8 @@ fun NutritionHomeScreen(
                 NutritionDayCard(
                     date = date,
                     entries = nutritionByDay[date] ?: emptyList(),
+                    readPermissionGranted = hasNutritionRead != false,
+                    onGrantReadPermission = onNavigateToPermissions,
                     onClick = { navController.navigate(Screen.NutritionDay.route(date)) }
                 )
             }
@@ -210,8 +219,11 @@ fun NutritionHomeScreen(
 private fun NutritionDayCard(
     date: LocalDate,
     entries: List<NutritionRecord>,
+    readPermissionGranted: Boolean = true,
+    onGrantReadPermission: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
     val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
     val isToday = date == LocalDate.now()
     val totalCal = entries.sumOf { it.energy?.inCalories ?: 0.0 }
@@ -229,7 +241,35 @@ private fun NutritionDayCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(4.dp))
-            if (entries.isEmpty()) {
+            if (!readPermissionGranted) {
+                Text(
+                    "-- kcal",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+                Text(
+                    "To view entered records, grant permission to read nutrition data.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onGrantReadPermission != null) {
+                        TextButton(onClick = onGrantReadPermission) { Text("Grant read permission") }
+                    }
+                    TextButton(onClick = {
+                        val intent = Intent("androidx.health.ACTION_HEALTH_CONNECT_SETTINGS")
+                        if (intent.resolveActivity(context.packageManager) != null) {
+                            context.startActivity(intent)
+                        } else {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.fromParts("package", context.packageName, null)
+                                }
+                            )
+                        }
+                    }) { Text("View in Health Connect") }
+                }
+            } else if (entries.isEmpty()) {
                 Text(
                     "No entries",
                     style = MaterialTheme.typography.bodyMedium,
@@ -255,7 +295,8 @@ private fun NutritionDayCard(
 fun NutritionDayDetailScreen(
     date: LocalDate,
     healthConnectManager: HealthConnectManager,
-    navController: NavController
+    navController: NavController,
+    onNavigateToPermissions: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -263,24 +304,28 @@ fun NutritionDayDetailScreen(
 
     var entries by remember { mutableStateOf<List<NutritionRecord>>(emptyList()) }
     var entryToDelete by remember { mutableStateOf<NutritionRecord?>(null) }
+    var hasNutritionRead by remember { mutableStateOf<Boolean?>(null) }
 
     val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
     val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
 
     fun loadEntries() {
         scope.launch {
-            val dayStart = date.atStartOfDay(zone).toInstant()
-            val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant()
-            entries = runCatching {
-                healthConnectManager.healthConnectClient.readRecords(
-                    ReadRecordsRequest(
-                        recordType = NutritionRecord::class,
-                        timeRangeFilter = TimeRangeFilter.between(dayStart, dayEnd)
-                    )
-                ).records
-            }.onFailure {
-                Toast.makeText(context, "Unable to load entries", Toast.LENGTH_SHORT).show()
-            }.getOrDefault(emptyList())
+            hasNutritionRead = healthConnectManager.hasNutritionReadPermission()
+            if (hasNutritionRead == true) {
+                val dayStart = date.atStartOfDay(zone).toInstant()
+                val dayEnd = date.plusDays(1).atStartOfDay(zone).toInstant()
+                entries = runCatching {
+                    healthConnectManager.healthConnectClient.readRecords(
+                        ReadRecordsRequest(
+                            recordType = NutritionRecord::class,
+                            timeRangeFilter = TimeRangeFilter.between(dayStart, dayEnd)
+                        )
+                    ).records
+                }.onFailure {
+                    Toast.makeText(context, "Unable to load entries", Toast.LENGTH_SHORT).show()
+                }.getOrDefault(emptyList())
+            }
         }
     }
 
@@ -290,6 +335,8 @@ fun NutritionDayDetailScreen(
     val totalProtein = entries.sumOf { it.protein?.inGrams ?: 0.0 }
     val totalCarbs = entries.sumOf { it.totalCarbohydrate?.inGrams ?: 0.0 }
     val totalFat = entries.sumOf { it.totalFat?.inGrams ?: 0.0 }
+
+    val readGranted = hasNutritionRead != false
 
     Scaffold(
         topBar = {
@@ -320,21 +367,53 @@ fun NutritionDayDetailScreen(
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Daily summary", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "${totalCal.toInt()} kcal",
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            Text("Protein: ${totalProtein.toInt()}g", style = MaterialTheme.typography.bodySmall)
-                            Text("Carbs: ${totalCarbs.toInt()}g", style = MaterialTheme.typography.bodySmall)
-                            Text("Fat: ${totalFat.toInt()}g", style = MaterialTheme.typography.bodySmall)
+                        if (!readGranted) {
+                            Text(
+                                "-- kcal",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                            Text(
+                                "To view entered records, grant permission to read nutrition data.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (onNavigateToPermissions != null) {
+                                    TextButton(onClick = onNavigateToPermissions) { Text("Grant read permission") }
+                                }
+                                TextButton(onClick = {
+                                    val intent = Intent("androidx.health.ACTION_HEALTH_CONNECT_SETTINGS")
+                                    if (intent.resolveActivity(context.packageManager) != null) {
+                                        context.startActivity(intent)
+                                    } else {
+                                        context.startActivity(
+                                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                data = Uri.fromParts("package", context.packageName, null)
+                                            }
+                                        )
+                                    }
+                                }) { Text("View in Health Connect") }
+                            }
+                        } else {
+                            Text(
+                                "${totalCal.toInt()} kcal",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Text("Protein: ${totalProtein.toInt()}g", style = MaterialTheme.typography.bodySmall)
+                                Text("Carbs: ${totalCarbs.toInt()}g", style = MaterialTheme.typography.bodySmall)
+                                Text("Fat: ${totalFat.toInt()}g", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
             }
 
-            if (entries.isEmpty()) {
+            if (!readGranted) {
+                // No entry list when read not granted - summary card covers it
+            } else if (entries.isEmpty()) {
                 item {
                     Text(
                         "No entries for this day. Tap + to log food.",

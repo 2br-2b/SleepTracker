@@ -277,7 +277,8 @@ fun MainApp(
                 NutritionDayDetailScreen(
                     date = date,
                     healthConnectManager = healthConnectManager,
-                    navController = navController
+                    navController = navController,
+                    onNavigateToPermissions = { navController.navigate(Screen.Permissions.route) }
                 )
             }
             composable(Screen.LogFood.route) { backStack ->
@@ -361,6 +362,7 @@ fun HomeScreen(
 ) {
     var sleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
     var hasSleepWrite by remember { mutableStateOf<Boolean?>(null) }
+    var hasSleepRead by remember { mutableStateOf<Boolean?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -378,6 +380,7 @@ fun HomeScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 scope.launch {
                     hasSleepWrite = healthConnectManager.hasSleepWritePermission()
+                    hasSleepRead = healthConnectManager.hasSleepReadPermission()
                     if (hasSleepWrite == true) {
                         val endTime = Instant.now()
                         val startTime = endTime.minus(Duration.ofDays(historyDisplayDays.toLong()))
@@ -463,6 +466,7 @@ fun HomeScreen(
                         developerModeEnabled = developerModeEnabled,
                         rolloverHour = rolloverHour,
                         writePermissionGranted = writeGranted,
+                        readPermissionGranted = hasSleepRead != false,
                         onClick = {
                             if (!writeGranted) return@SleepDayCard
                             when {
@@ -615,6 +619,7 @@ fun SleepDayCard(
     developerModeEnabled: Boolean = false,
     rolloverHour: Int = 2,
     writePermissionGranted: Boolean = true,
+    readPermissionGranted: Boolean = true,
     onClick: () -> Unit
 ) {
     val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
@@ -722,7 +727,7 @@ fun SleepDayCard(
                     )
                 }
             } else {
-                if (!isToday) {
+                if (!isToday && readPermissionGranted) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "No data",
