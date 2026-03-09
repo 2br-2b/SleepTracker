@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.records.MealType
 import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
@@ -406,10 +407,10 @@ fun LogFoodScreen(
     }
 
     fun mealTypeInt(minuteOfDay: Int): Int = when {
-        minuteOfDay in breakfastRange -> NutritionRecord.MEAL_TYPE_BREAKFAST
-        minuteOfDay in lunchRange -> NutritionRecord.MEAL_TYPE_LUNCH
-        minuteOfDay in dinnerRange -> NutritionRecord.MEAL_TYPE_DINNER
-        else -> NutritionRecord.MEAL_TYPE_SNACK
+        minuteOfDay in breakfastRange -> MealType.MEAL_TYPE_BREAKFAST
+        minuteOfDay in lunchRange -> MealType.MEAL_TYPE_LUNCH
+        minuteOfDay in dinnerRange -> MealType.MEAL_TYPE_DINNER
+        else -> MealType.MEAL_TYPE_SNACK
     }
 
     // Live search with debounce
@@ -440,7 +441,7 @@ fun LogFoodScreen(
 
         val effectiveTime = if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
         val mealType = mealTypeInt(effectiveTime.hour * 60 + effectiveTime.minute)
-        val durationMinutes = if (mealType == NutritionRecord.MEAL_TYPE_SNACK) snackDurationMinutes
+        val durationMinutes = if (mealType == MealType.MEAL_TYPE_SNACK) snackDurationMinutes
                               else mealDurationMinutes
 
         val startTime = endTime.minusSeconds(durationMinutes * 60L)

@@ -81,7 +81,7 @@ class ReminderReceiver : BroadcastReceiver() {
                     }
 
                     // Reschedule for next day
-                    val wakeupEnd = prefs.wakeupWindowEnd.first()
+                    val wakeupEnd = prefs.wakeupWindow.first().endMinutes
                     NotificationHelper.scheduleDeadlineAlarm(context, wakeupEnd)
                 }
             }

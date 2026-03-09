@@ -134,8 +134,10 @@ object NotificationHelper {
             return
         }
 
-        val bedtimeStart = prefs.bedtimeWindowStart.first()
-        val wakeupEnd = prefs.wakeupWindowEnd.first()
+        val bedtimeWindow = prefs.bedtimeWindow.first()
+        val wakeupWindow = prefs.wakeupWindow.first()
+        val bedtimeStart = bedtimeWindow.startMinutes
+        val wakeupEnd = wakeupWindow.endMinutes
 
         // Always ensure alarms are scheduled
         scheduleServiceLifecycle(context, bedtimeStart, wakeupEnd)
