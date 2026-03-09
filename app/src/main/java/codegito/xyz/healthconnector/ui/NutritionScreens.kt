@@ -513,15 +513,13 @@ fun LogFoodScreen(
     val unitSystem by userPreferencesRepository.nutritionUnitSystem.collectAsState(initial = NutritionUnitSystem.US)
     val nutrientConfigList by userPreferencesRepository.nutrientConfig.collectAsState(initial = NutrientDefaults.defaultConfig())
     val applyFilterToSearch by userPreferencesRepository.nutritionApplyNutrientFilterToSearch.collectAsState(initial = false)
-    // Nutritional facts are always included; extra micronutrients come from config
+    // Use the full ordered + enabled config list for display
     val enabledNutrients = remember(nutrientConfigList) {
-        val configEnabled = nutrientConfigList
+        nutrientConfigList
             .filter { it.enabled }
             .mapNotNull { cfg -> runCatching { NutrientKey.valueOf(cfg.key) }.getOrNull() }
-            .toSet()
-        val micronutrientsEnabled = configEnabled.filter { it !in NutrientDefaults.nutritionalFactsKeys }
-        NutrientDefaults.nutritionalFactsKeys.toList() + micronutrientsEnabled
     }
+    val enabledNutrientSet = remember(enabledNutrients) { enabledNutrients.toSet() }
 
     // Eaten time state — defaults to now (or noon for past dates)
     val defaultEatenTime = remember(date) {
@@ -536,9 +534,14 @@ fun LogFoodScreen(
     var amountText by remember { mutableStateOf("") }
     var isLogging by remember { mutableStateOf(false) }
 
-    // When a food is selected, default the amount text in the current unit system
+    // When a food is selected, default the amount text in the current unit system.
+    // Prefer the labeled oz serving size from the DB when available and in US mode.
     fun setDefaultAmount(candidate: FoodCandidate) {
-        amountText = gramsToAmountText(candidate.baseAmount.value, unitSystem)
+        amountText = if (unitSystem == NutritionUnitSystem.US && candidate.servingSizeOz != null) {
+            "%.1f".format(candidate.servingSizeOz)
+        } else {
+            gramsToAmountText(candidate.baseAmount.value, unitSystem)
+        }
     }
 
     fun mealLabel(minuteOfDay: Int): String = when {
@@ -593,7 +596,7 @@ fun LogFoodScreen(
         fun mass(v: Double) = if (v * multiplier > 0.0) Mass.grams(v * multiplier) else null
         // Returns null for optional micronutrients when the filter is active and they're not enabled
         fun massFiltered(v: Double, key: NutrientKey): Mass? {
-            if (applyFilterToSearch && key !in NutrientDefaults.nutritionalFactsKeys && key !in enabledNutrients) return null
+            if (applyFilterToSearch && key !in NutrientDefaults.nutritionalFactsKeys && key !in enabledNutrientSet) return null
             return mass(v)
         }
 

@@ -11,9 +11,11 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +31,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -200,6 +203,27 @@ private fun OnboardingFlow(
     var showTemplateEditor by remember { mutableStateOf(false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Determine the previous step for back navigation
+    val previousStep: OnboardingStep? = when (step) {
+        OnboardingStep.TrackingTypeSelection -> null // first step — back blocked by activity
+        OnboardingStep.HealthConnect -> OnboardingStep.TrackingTypeSelection
+        OnboardingStep.AutoDetectionExplanation -> OnboardingStep.HealthConnect
+        OnboardingStep.LoggingMode -> OnboardingStep.AutoDetectionExplanation
+        OnboardingStep.AutoConfig -> OnboardingStep.LoggingMode
+        OnboardingStep.ManualInfo -> OnboardingStep.LoggingMode
+        OnboardingStep.Permissions -> when {
+            sleepSelected && selectedMode == SleepDetectionMode.AUTO -> OnboardingStep.AutoConfig
+            sleepSelected -> OnboardingStep.ManualInfo
+            else -> OnboardingStep.HealthConnect
+        }
+        OnboardingStep.Completion -> OnboardingStep.Permissions
+    }
+
+    // Handle back: go to previous step (activity-level callback blocks exit on first step)
+    BackHandler(enabled = previousStep != null) {
+        step = previousStep!!
+    }
 
     fun refreshHealthConnectStatus() {
         isHealthConnectInstalled = runCatching {
@@ -401,20 +425,41 @@ private fun OnboardingFlow(
                     Text("How do you want to log sleep?", style = MaterialTheme.typography.headlineMedium)
 
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Checkbox(
-                                    checked = selectedMode == SleepDetectionMode.AUTO,
-                                    onCheckedChange = { selectedMode = SleepDetectionMode.AUTO }
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { selectedMode = SleepDetectionMode.AUTO }
+                            ) {
+                                RadioButton(
+                                    selected = selectedMode == SleepDetectionMode.AUTO,
+                                    onClick = { selectedMode = SleepDetectionMode.AUTO }
                                 )
-                                Text("Auto detection")
+                                Column(modifier = Modifier.padding(start = 4.dp)) {
+                                    Text("Auto detection", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "SleepTracker watches your screen to build a suggested sleep draft.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Checkbox(
-                                    checked = selectedMode == SleepDetectionMode.MANUAL,
-                                    onCheckedChange = { selectedMode = SleepDetectionMode.MANUAL }
+                            HorizontalDivider()
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { selectedMode = SleepDetectionMode.MANUAL }
+                            ) {
+                                RadioButton(
+                                    selected = selectedMode == SleepDetectionMode.MANUAL,
+                                    onClick = { selectedMode = SleepDetectionMode.MANUAL }
                                 )
-                                Text("Manual logging")
+                                Column(modifier = Modifier.padding(start = 4.dp)) {
+                                    Text("Manual logging", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "Fill in a sleep template yourself each day.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }
@@ -436,6 +481,7 @@ private fun OnboardingFlow(
                 // ── Step 4: Auto Config ───────────────────────────────────
                 OnboardingStep.AutoConfig -> {
                     Text("Set up automatic detection", style = MaterialTheme.typography.headlineMedium)
+                    Text("Tell SleepTracker when you typically go to bed and wake up. It will only record screen events during these windows.")
 
                     Text("Bedtime window", style = MaterialTheme.typography.labelLarge)
                     Text(
@@ -460,16 +506,27 @@ private fun OnboardingFlow(
                         onRangeChange = { wakeupRange = it }
                     )
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         Switch(checked = awakeningsEnabled, onCheckedChange = { awakeningsEnabled = it })
-                        Text("Track waking up + falling asleep")
+                        Column {
+                            Text("Track brief night-time wake-ups", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            Text(
+                                "Records short periods when you check your phone during the night, adding awake segments to your sleep session.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
                     if (awakeningsEnabled) {
                         OutlinedTextField(
                             value = awakeningThresholdMinutes.toString(),
                             onValueChange = { awakeningThresholdMinutes = it.toIntOrNull() ?: awakeningThresholdMinutes },
-                            label = { Text("Wake/fall-asleep threshold (minutes)") },
+                            label = { Text("Min wake duration to record (minutes)") },
+                            supportingText = { Text("Wake-ups shorter than this are ignored; longer ones are added as awake segments.") },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -477,7 +534,8 @@ private fun OnboardingFlow(
                     OutlinedTextField(
                         value = defaultAwakeMinutes.toString(),
                         onValueChange = { defaultAwakeMinutes = it.toIntOrNull() ?: defaultAwakeMinutes },
-                        label = { Text("Default time from lock to sleep (minutes)") },
+                        label = { Text("Time awake before falling asleep (minutes)") },
+                        supportingText = { Text("Estimated time between locking your phone and actually falling asleep.") },
                         modifier = Modifier.fillMaxWidth()
                     )
 
