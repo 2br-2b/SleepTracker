@@ -28,6 +28,12 @@
         android:roundIcon="@mipmap/ic_launcher_v2_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.SleepTracker">
+        <!-- WorkManager's SystemForegroundService requires a foregroundServiceType on targetSdk 35+ -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="shortService"
+            tools:node="merge" />
+
         <service
             android:name=".SleepTrackingService"
             android:enabled="true"
