@@ -1,18 +1,20 @@
 package codegito.xyz.healthconnector.data.db
 
 import android.content.Context
-import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
+import androidx.room.InvalidationTracker
 import androidx.room.PrimaryKey
-import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 
 @Entity(tableName = "screen_events")
 data class ScreenEvent(
@@ -36,28 +38,93 @@ data class RecentFoodEntity(
     val nutrientsJson: String = "{}"
 )
 
-@Dao
-interface ScreenEventDao {
-    @Insert
-    suspend fun insert(event: ScreenEvent)
+class ScreenEventDao(private val db: AppDatabase) {
+    suspend fun insert(event: ScreenEvent) = withContext(Dispatchers.IO) {
+        db.openHelper.writableDatabase.execSQL(
+            "INSERT INTO screen_events (timestampMillis, type) VALUES (?, ?)",
+            arrayOf(event.timestampMillis, event.type)
+        )
+    }
 
-    @Query("SELECT * FROM screen_events WHERE timestampMillis BETWEEN :startTime AND :endTime ORDER BY timestampMillis ASC")
-    fun getEventsInRange(startTime: Long, endTime: Long): Flow<List<ScreenEvent>>
+    fun getEventsInRange(startTime: Long, endTime: Long): Flow<List<ScreenEvent>> = callbackFlow {
+        fun doQuery(): List<ScreenEvent> = buildList {
+            db.openHelper.readableDatabase.rawQuery(
+                "SELECT id, timestampMillis, type FROM screen_events WHERE timestampMillis BETWEEN ? AND ? ORDER BY timestampMillis ASC",
+                arrayOf(startTime.toString(), endTime.toString())
+            ).use { c ->
+                while (c.moveToNext()) {
+                    add(ScreenEvent(c.getLong(0), c.getLong(1), c.getString(2)))
+                }
+            }
+        }
 
-    @Query("DELETE FROM screen_events WHERE timestampMillis < :threshold")
-    suspend fun deleteOldEvents(threshold: Long)
+        trySend(doQuery())
+
+        val observer = object : InvalidationTracker.Observer("screen_events") {
+            override fun onInvalidated(tables: Set<String>) {
+                trySend(doQuery())
+            }
+        }
+        db.invalidationTracker.addObserver(observer)
+        awaitClose { db.invalidationTracker.removeObserver(observer) }
+    }.flowOn(Dispatchers.IO)
+
+    suspend fun deleteOldEvents(threshold: Long) = withContext(Dispatchers.IO) {
+        db.openHelper.writableDatabase.execSQL(
+            "DELETE FROM screen_events WHERE timestampMillis < ?",
+            arrayOf(threshold)
+        )
+    }
 }
 
-@Dao
-interface RecentFoodDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(item: RecentFoodEntity)
+class RecentFoodDao(private val db: AppDatabase) {
+    suspend fun upsert(item: RecentFoodEntity) = withContext(Dispatchers.IO) {
+        db.openHelper.writableDatabase.execSQL(
+            "INSERT OR REPLACE INTO recent_foods (foodKey, displayName, quantity, unit, calories, proteinGrams, carbsGrams, fatGrams, lastUsedAtMillis, sourceType, nutrientsJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            arrayOf(item.foodKey, item.displayName, item.quantity, item.unit, item.calories,
+                item.proteinGrams, item.carbsGrams, item.fatGrams, item.lastUsedAtMillis,
+                item.sourceType, item.nutrientsJson)
+        )
+    }
 
-    @Query("SELECT * FROM recent_foods ORDER BY lastUsedAtMillis DESC LIMIT :limit")
-    fun getRecents(limit: Int = 30): Flow<List<RecentFoodEntity>>
+    fun getRecents(limit: Int = 30): Flow<List<RecentFoodEntity>> = callbackFlow {
+        fun doQuery(): List<RecentFoodEntity> = buildList {
+            db.openHelper.readableDatabase.rawQuery(
+                "SELECT foodKey, displayName, quantity, unit, calories, proteinGrams, carbsGrams, fatGrams, lastUsedAtMillis, sourceType, nutrientsJson FROM recent_foods ORDER BY lastUsedAtMillis DESC LIMIT ?",
+                arrayOf(limit.toString())
+            ).use { c ->
+                while (c.moveToNext()) {
+                    add(RecentFoodEntity(
+                        foodKey = c.getString(0),
+                        displayName = c.getString(1),
+                        quantity = c.getDouble(2),
+                        unit = c.getString(3),
+                        calories = c.getDouble(4),
+                        proteinGrams = c.getDouble(5),
+                        carbsGrams = c.getDouble(6),
+                        fatGrams = c.getDouble(7),
+                        lastUsedAtMillis = c.getLong(8),
+                        sourceType = c.getString(9),
+                        nutrientsJson = c.getString(10)
+                    ))
+                }
+            }
+        }
 
-    @Query("DELETE FROM recent_foods")
-    suspend fun clearAll()
+        trySend(doQuery())
+
+        val observer = object : InvalidationTracker.Observer("recent_foods") {
+            override fun onInvalidated(tables: Set<String>) {
+                trySend(doQuery())
+            }
+        }
+        db.invalidationTracker.addObserver(observer)
+        awaitClose { db.invalidationTracker.removeObserver(observer) }
+    }.flowOn(Dispatchers.IO)
+
+    suspend fun clearAll() = withContext(Dispatchers.IO) {
+        db.openHelper.writableDatabase.execSQL("DELETE FROM recent_foods")
+    }
 }
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -68,8 +135,8 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 
 @Database(entities = [ScreenEvent::class, RecentFoodEntity::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun screenEventDao(): ScreenEventDao
-    abstract fun recentFoodDao(): RecentFoodDao
+    fun screenEventDao(): ScreenEventDao = ScreenEventDao(this)
+    fun recentFoodDao(): RecentFoodDao = RecentFoodDao(this)
 
     companion object {
         @Volatile
