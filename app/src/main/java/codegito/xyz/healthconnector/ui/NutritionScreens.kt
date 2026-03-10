@@ -40,7 +40,9 @@ import codegito.xyz.healthconnector.Screen
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.db.AppDatabase
 import codegito.xyz.healthconnector.data.model.TimeRange
+import androidx.work.WorkInfo
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
+import codegito.xyz.healthconnector.nutrition.data.NutritionIndexWorker
 import codegito.xyz.healthconnector.nutrition.data.NutritionRecentsRepository
 import codegito.xyz.healthconnector.nutrition.domain.FoodCandidate
 import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
@@ -90,6 +92,16 @@ fun NutritionHomeScreen(
     var hasNutritionWrite by remember { mutableStateOf<Boolean?>(null) }
     var hasNutritionRead by remember { mutableStateOf<Boolean?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
+
+    // Observe WorkManager for in-progress database build
+    val homeWorkInfos by NutritionIndexWorker.observeInfo(context).collectAsState(initial = emptyList())
+    val homeWorkInfo = homeWorkInfos.firstOrNull()
+    val isDbBuilding = homeWorkInfo?.state == WorkInfo.State.RUNNING ||
+            homeWorkInfo?.state == WorkInfo.State.ENQUEUED
+    val homeDbProgress = homeWorkInfo?.progress?.getInt(NutritionIndexWorker.KEY_PROGRESS, 0) ?: 0
+    val homeDbTotal = homeWorkInfo?.progress?.getInt(NutritionIndexWorker.KEY_TOTAL, -1) ?: -1
+    val homeDbProgressText = if (homeDbTotal > 0 && homeDbTotal != homeDbProgress)
+        "$homeDbProgress / $homeDbTotal" else "$homeDbProgress"
 
     fun loadData() {
         scope.launch {
@@ -575,6 +587,16 @@ fun LogFoodScreen(
     var servingAmountText by remember { mutableStateOf("1.0") }
     var isLogging by remember { mutableStateOf(false) }
 
+    // Observe WorkManager for in-progress database build
+    val workInfos by NutritionIndexWorker.observeInfo(context).collectAsState(initial = emptyList())
+    val buildWorkInfo = workInfos.firstOrNull()
+    val isDbBuilding = buildWorkInfo?.state == WorkInfo.State.RUNNING ||
+            buildWorkInfo?.state == WorkInfo.State.ENQUEUED
+    val dbBuildProgress = buildWorkInfo?.progress?.getInt(NutritionIndexWorker.KEY_PROGRESS, 0) ?: 0
+    val dbBuildTotal = buildWorkInfo?.progress?.getInt(NutritionIndexWorker.KEY_TOTAL, -1) ?: -1
+    val dbBuildProgressText = if (dbBuildTotal > 0 && dbBuildTotal != dbBuildProgress)
+        "$dbBuildProgress / $dbBuildTotal" else "$dbBuildProgress"
+
     // When a food is selected, set up the appropriate amount input mode.
     fun setDefaultAmount(candidate: FoodCandidate) {
         val si = candidate.servingInfo
@@ -724,12 +746,30 @@ fun LogFoodScreen(
                 )
             }
 
+            // Build-in-progress banner
+            if (isDbBuilding) {
+                item {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text(
+                            "Indexing food database… $dbBuildProgressText foods so far",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+            }
+
             // Search results
             if (query.isNotBlank()) {
                 if (searchResults.isEmpty()) {
                     item {
                         Text(
-                            "No results found. Build a nutrition dataset in Settings first.",
+                            if (isDbBuilding)
+                                "No results yet — database is still building ($dbBuildProgressText foods so far)"
+                            else
+                                "No results found. Build a nutrition dataset in Settings first.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )

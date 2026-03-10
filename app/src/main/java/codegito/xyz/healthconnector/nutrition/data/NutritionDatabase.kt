@@ -47,6 +47,8 @@ class NutritionDatabase private constructor(private val context: Context) {
     }
 
     private fun createTablesIfNeeded(database: SQLiteDatabase) {
+        // WAL mode allows concurrent reads while the build transaction writes
+        database.execSQL("PRAGMA journal_mode=WAL")
         database.execSQL("""
             CREATE TABLE IF NOT EXISTS foods (
                 id TEXT PRIMARY KEY,

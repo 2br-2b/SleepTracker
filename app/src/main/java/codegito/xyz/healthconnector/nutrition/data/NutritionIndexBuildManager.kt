@@ -99,7 +99,7 @@ class NutritionIndexBuildManager(
                     if (!entry.isDirectory && entry.name.lowercase().endsWith(".tsv")) {
                         val reader = BufferedReader(InputStreamReader(NonClosingInputStream(zip)))
                         val written = writeFoodsFromTsv(reader, sqliteDb, nutritionDb, mergeMode) { current ->
-                            progressCallback(totalWritten + current, -1)
+                            progressCallback(totalWritten + current, 326760)
                         }
                         if (written > 0) {
                             totalWritten += written
@@ -121,7 +121,7 @@ class NutritionIndexBuildManager(
 
         // Write metadata for Settings screen record count display
         writeMetadata(source = bestSource, recordCount = totalWritten)
-        progressCallback(totalWritten, totalWritten)
+        progressCallback(totalWritten, totalWritten) // final call: total = actual count
 
         BuildResult(recordCount = totalWritten, sourceLocation = bestSource)
     }
@@ -294,6 +294,6 @@ class NutritionIndexBuildManager(
 
     companion object {
         private const val BUNDLED_ZIP_ASSET_PATH = "nutrition/opennutrition-dataset-2025.1.zip"
-        private const val MAX_RECORDS = 200_000
+        private const val MAX_RECORDS = 400_000
     }
 }

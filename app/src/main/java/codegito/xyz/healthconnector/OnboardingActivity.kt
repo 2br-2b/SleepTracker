@@ -64,7 +64,8 @@ import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.model.TrackingType
-import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
+import codegito.xyz.healthconnector.nutrition.data.NutritionIndexWorker
+import androidx.work.WorkInfo
 import codegito.xyz.healthconnector.ui.AppTimePickerDialog
 import codegito.xyz.healthconnector.ui.PermissionCard
 import codegito.xyz.healthconnector.ui.PermissionState
@@ -72,7 +73,6 @@ import codegito.xyz.healthconnector.ui.SleepLogEditor
 import codegito.xyz.healthconnector.ui.TimeRangeSetting
 import codegito.xyz.healthconnector.ui.loadPermissionState
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.LocalDate
@@ -81,7 +81,6 @@ class OnboardingActivity : ComponentActivity() {
 
     private val healthConnectManager by lazy { HealthConnectManager(this) }
     private val userPreferencesRepository by lazy { UserPreferencesRepository.getInstance(this) }
-    private val nutritionIndexBuildManager by lazy { NutritionIndexBuildManager(this) }
 
     private val requestHealthPermissions =
         registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { }
@@ -109,7 +108,6 @@ class OnboardingActivity : ComponentActivity() {
                 OnboardingFlow(
                     userPreferencesRepository = userPreferencesRepository,
                     healthConnectManager = healthConnectManager,
-                    nutritionIndexBuildManager = nutritionIndexBuildManager,
                     onInstallHealthConnect = { openHealthConnectInstall() },
                     onRequestHealthPermissions = { perms ->
                         requestHealthPermissions.launch(perms)
@@ -181,7 +179,6 @@ private enum class OnboardingStep {
 private fun OnboardingFlow(
     userPreferencesRepository: UserPreferencesRepository,
     healthConnectManager: HealthConnectManager,
-    nutritionIndexBuildManager: NutritionIndexBuildManager,
     onInstallHealthConnect: () -> Unit,
     onRequestHealthPermissions: (Set<String>) -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -211,30 +208,32 @@ private fun OnboardingFlow(
     var permState by remember { mutableStateOf(PermissionState()) }
     var showTemplateEditor by remember { mutableStateOf(false) }
 
-    // Nutrition index extraction state
-    var extractionJob by remember { mutableStateOf<Job?>(null) }
-    var extractionProgress by remember { mutableIntStateOf(0) }
-    var extractionDone by remember { mutableStateOf(false) }
-    var extractionError by remember { mutableStateOf<String?>(null) }
+    // Nutrition index extraction state — driven by WorkManager
+    val workInfos by NutritionIndexWorker.observeInfo(context).collectAsState(initial = emptyList())
+    val workInfo = workInfos.firstOrNull()
+    val extractionRunning = workInfo?.state == WorkInfo.State.RUNNING || workInfo?.state == WorkInfo.State.ENQUEUED
+    val extractionDone = workInfo?.state == WorkInfo.State.SUCCEEDED
+    val extractionError = if (workInfo?.state == WorkInfo.State.FAILED)
+        workInfo.outputData.getString(NutritionIndexWorker.KEY_ERROR) ?: "Unknown error"
+    else null
+    val extractionProgress = when {
+        extractionDone -> workInfo?.outputData?.getInt(NutritionIndexWorker.KEY_RECORD_COUNT, 0) ?: 0
+        extractionRunning -> workInfo?.progress?.getInt(NutritionIndexWorker.KEY_PROGRESS, 0) ?: 0
+        else -> 0
+    }
+    val extractionTotal = when {
+        extractionDone -> extractionProgress
+        extractionRunning -> workInfo?.progress?.getInt(NutritionIndexWorker.KEY_TOTAL, -1) ?: -1
+        else -> -1
+    }
+    val extractionProgressText = if (extractionTotal > 0 && extractionTotal != extractionProgress)
+        "$extractionProgress / $extractionTotal" else "$extractionProgress"
     var showCancelExtractionDialog by remember { mutableStateOf(false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
 
     fun startExtraction() {
-        if (extractionJob?.isActive == true) return
-        extractionDone = false
-        extractionError = null
-        extractionProgress = 0
-        extractionJob = scope.launch {
-            nutritionIndexBuildManager.buildFromBundledZip(
-                progressCallback = { current, _ -> extractionProgress = current }
-            ).onSuccess { result ->
-                extractionDone = true
-                extractionProgress = result.recordCount
-            }.onFailure { e ->
-                extractionError = e.message ?: "Unknown error"
-            }
-        }
+        NutritionIndexWorker.enqueue(context)
     }
 
     // Determine the previous step for back navigation
@@ -255,12 +254,9 @@ private fun OnboardingFlow(
     }
 
     // Handle back: go to previous step (activity-level callback blocks exit on first step)
+    // Extraction runs as a WorkManager job — back navigation never cancels it
     BackHandler(enabled = previousStep != null) {
-        if (extractionJob?.isActive == true) {
-            showCancelExtractionDialog = true
-        } else {
-            step = previousStep!!
-        }
+        step = previousStep!!
     }
 
     fun refreshHealthConnectStatus() {
@@ -335,10 +331,11 @@ private fun OnboardingFlow(
         AlertDialog(
             onDismissRequest = { showCancelExtractionDialog = false },
             title = { Text("Stop building food database?") },
-            text = { Text("You can build it later from Settings.") },
+            text = { Text("The database will stop building. You can rebuild it later from Settings.") },
             confirmButton = {
                 TextButton(onClick = {
-                    extractionJob?.cancel()
+                    androidx.work.WorkManager.getInstance(context)
+                        .cancelUniqueWork(NutritionIndexWorker.WORK_NAME)
                     showCancelExtractionDialog = false
                 }) { Text("Stop") }
             },
@@ -354,14 +351,18 @@ private fun OnboardingFlow(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // Top progress banner shown while extraction is in progress
-            if (nutritionSelected && extractionJob != null && !extractionDone && extractionError == null) {
+            // Top progress banner — shown on all steps except NutritionIndex (which shows inline progress)
+            // Clickable to show the stop/cancel dialog
+            if (nutritionSelected && extractionRunning && step != OnboardingStep.NutritionIndex) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 Text(
-                    "Building food database\u2026 ${extractionProgress} foods",
+                    "Building food database\u2026 $extractionProgressText foods  \u2014 tap to stop",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showCancelExtractionDialog = true }
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
                 )
             }
         Column(
@@ -753,11 +754,14 @@ private fun OnboardingFlow(
                     Text("Building food database", style = MaterialTheme.typography.headlineMedium)
                     Text("We're indexing the bundled food dataset for fast search. This only happens once.")
 
-                    val isRunning = extractionJob?.isActive == true
                     when {
-                        isRunning -> {
+                        extractionRunning -> {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            Text("$extractionProgress foods indexed so far…")
+                            Text("$extractionProgressText foods indexed so far…")
+                            TextButton(
+                                onClick = { showCancelExtractionDialog = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Stop building") }
                         }
                         extractionDone -> {
                             Text(
@@ -791,10 +795,9 @@ private fun OnboardingFlow(
 
                     Button(
                         onClick = { step = OnboardingStep.Completion },
-                        enabled = !isRunning,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (extractionDone) "Continue" else "Skip for now")
+                        Text(if (extractionDone) "Continue" else if (extractionRunning) "Continue in background" else "Skip for now")
                     }
                 }
 
