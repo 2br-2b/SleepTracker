@@ -1,6 +1,7 @@
 package codegito.xyz.healthconnector.data.db
 
 import android.content.Context
+import android.database.Cursor
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.InvalidationTracker
@@ -46,28 +47,32 @@ class ScreenEventDao(private val db: AppDatabase) {
         )
     }
 
-    fun getEventsInRange(startTime: Long, endTime: Long): Flow<List<ScreenEvent>> = callbackFlow {
-        fun doQuery(): List<ScreenEvent> = buildList {
-            db.openHelper.readableDatabase.rawQuery(
-                "SELECT id, timestampMillis, type FROM screen_events WHERE timestampMillis BETWEEN ? AND ? ORDER BY timestampMillis ASC",
-                arrayOf(startTime.toString(), endTime.toString())
-            ).use { c ->
-                while (c.moveToNext()) {
-                    add(ScreenEvent(c.getLong(0), c.getLong(1), c.getString(2)))
+    fun getEventsInRange(startTime: Long, endTime: Long): Flow<List<ScreenEvent>> =
+        callbackFlow<List<ScreenEvent>> {
+            fun doQuery(): List<ScreenEvent> {
+                val list = mutableListOf<ScreenEvent>()
+                val cursor: Cursor = db.openHelper.readableDatabase.query(
+                    "SELECT id, timestampMillis, type FROM screen_events WHERE timestampMillis BETWEEN ? AND ? ORDER BY timestampMillis ASC",
+                    arrayOf(startTime, endTime)
+                )
+                cursor.use { c ->
+                    while (c.moveToNext()) {
+                        list.add(ScreenEvent(c.getLong(0), c.getLong(1), c.getString(2)))
+                    }
+                }
+                return list
+            }
+
+            trySend(doQuery())
+
+            val observer = object : InvalidationTracker.Observer("screen_events") {
+                override fun onInvalidated(tables: Set<String>) {
+                    trySend(doQuery())
                 }
             }
-        }
-
-        trySend(doQuery())
-
-        val observer = object : InvalidationTracker.Observer("screen_events") {
-            override fun onInvalidated(tables: Set<String>) {
-                trySend(doQuery())
-            }
-        }
-        db.invalidationTracker.addObserver(observer)
-        awaitClose { db.invalidationTracker.removeObserver(observer) }
-    }.flowOn(Dispatchers.IO)
+            db.invalidationTracker.addObserver(observer)
+            awaitClose { db.invalidationTracker.removeObserver(observer) }
+        }.flowOn(Dispatchers.IO)
 
     suspend fun deleteOldEvents(threshold: Long) = withContext(Dispatchers.IO) {
         db.openHelper.writableDatabase.execSQL(
@@ -87,40 +92,44 @@ class RecentFoodDao(private val db: AppDatabase) {
         )
     }
 
-    fun getRecents(limit: Int = 30): Flow<List<RecentFoodEntity>> = callbackFlow {
-        fun doQuery(): List<RecentFoodEntity> = buildList {
-            db.openHelper.readableDatabase.rawQuery(
-                "SELECT foodKey, displayName, quantity, unit, calories, proteinGrams, carbsGrams, fatGrams, lastUsedAtMillis, sourceType, nutrientsJson FROM recent_foods ORDER BY lastUsedAtMillis DESC LIMIT ?",
-                arrayOf(limit.toString())
-            ).use { c ->
-                while (c.moveToNext()) {
-                    add(RecentFoodEntity(
-                        foodKey = c.getString(0),
-                        displayName = c.getString(1),
-                        quantity = c.getDouble(2),
-                        unit = c.getString(3),
-                        calories = c.getDouble(4),
-                        proteinGrams = c.getDouble(5),
-                        carbsGrams = c.getDouble(6),
-                        fatGrams = c.getDouble(7),
-                        lastUsedAtMillis = c.getLong(8),
-                        sourceType = c.getString(9),
-                        nutrientsJson = c.getString(10)
-                    ))
+    fun getRecents(limit: Int = 30): Flow<List<RecentFoodEntity>> =
+        callbackFlow<List<RecentFoodEntity>> {
+            fun doQuery(): List<RecentFoodEntity> {
+                val list = mutableListOf<RecentFoodEntity>()
+                val cursor: Cursor = db.openHelper.readableDatabase.query(
+                    "SELECT foodKey, displayName, quantity, unit, calories, proteinGrams, carbsGrams, fatGrams, lastUsedAtMillis, sourceType, nutrientsJson FROM recent_foods ORDER BY lastUsedAtMillis DESC LIMIT ?",
+                    arrayOf(limit)
+                )
+                cursor.use { c ->
+                    while (c.moveToNext()) {
+                        list.add(RecentFoodEntity(
+                            foodKey = c.getString(0),
+                            displayName = c.getString(1),
+                            quantity = c.getDouble(2),
+                            unit = c.getString(3),
+                            calories = c.getDouble(4),
+                            proteinGrams = c.getDouble(5),
+                            carbsGrams = c.getDouble(6),
+                            fatGrams = c.getDouble(7),
+                            lastUsedAtMillis = c.getLong(8),
+                            sourceType = c.getString(9),
+                            nutrientsJson = c.getString(10)
+                        ))
+                    }
+                }
+                return list
+            }
+
+            trySend(doQuery())
+
+            val observer = object : InvalidationTracker.Observer("recent_foods") {
+                override fun onInvalidated(tables: Set<String>) {
+                    trySend(doQuery())
                 }
             }
-        }
-
-        trySend(doQuery())
-
-        val observer = object : InvalidationTracker.Observer("recent_foods") {
-            override fun onInvalidated(tables: Set<String>) {
-                trySend(doQuery())
-            }
-        }
-        db.invalidationTracker.addObserver(observer)
-        awaitClose { db.invalidationTracker.removeObserver(observer) }
-    }.flowOn(Dispatchers.IO)
+            db.invalidationTracker.addObserver(observer)
+            awaitClose { db.invalidationTracker.removeObserver(observer) }
+        }.flowOn(Dispatchers.IO)
 
     suspend fun clearAll() = withContext(Dispatchers.IO) {
         db.openHelper.writableDatabase.execSQL("DELETE FROM recent_foods")
