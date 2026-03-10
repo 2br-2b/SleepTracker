@@ -145,16 +145,17 @@ class NutritionDatabase private constructor(private val context: Context) {
      */
     fun beginBulkInsert(): SQLiteDatabase {
         val database = openDb()
-        database.execSQL("BEGIN IMMEDIATE TRANSACTION")
+        database.beginTransactionNonExclusive() // BEGIN IMMEDIATE — allows concurrent readers
         return database
     }
 
     fun commitBulkInsert(database: SQLiteDatabase) {
-        database.execSQL("COMMIT")
+        database.setTransactionSuccessful()
+        database.endTransaction()
     }
 
     fun rollbackBulkInsert(database: SQLiteDatabase) {
-        runCatching { database.execSQL("ROLLBACK") }
+        runCatching { database.endTransaction() } // no setTransactionSuccessful → rollback
     }
 
     private val insertFoodSql = """
