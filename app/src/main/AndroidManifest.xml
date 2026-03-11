@@ -12,6 +12,7 @@
     <uses-permission android:name="android.permission.health.READ_NUTRITION" />
     <uses-permission android:name="android.permission.health.WRITE_NUTRITION" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
@@ -28,6 +29,12 @@
         android:roundIcon="@mipmap/ic_launcher_v2_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.SleepTracker">
+        <!-- Override WorkManager's SystemForegroundService to declare a foregroundServiceType,
+             required on targetSdk 35+ (Android 14+) where type "none" is prohibited. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
         <service
             android:name=".SleepTrackingService"
             android:enabled="true"

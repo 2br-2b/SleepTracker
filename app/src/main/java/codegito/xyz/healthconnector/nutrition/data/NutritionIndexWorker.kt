@@ -1,6 +1,8 @@
 package codegito.xyz.healthconnector.nutrition.data
 
 import android.content.Context
+import android.content.pm.ServiceInfo
+import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
@@ -67,6 +69,7 @@ class NutritionIndexWorker(
                 Result.success(workDataOf(KEY_RECORD_COUNT to build.recordCount))
             },
             onFailure = { e ->
+                android.util.Log.e("NutritionIndexWorker", "Build failed: ${e.message}", e)
                 Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Unknown error")))
             }
         )
@@ -101,7 +104,11 @@ class NutritionIndexWorker(
             .setOngoing(true)
             .setProgress(total.coerceAtLeast(0), current.coerceAtLeast(0), total <= 0)
             .build()
-        return ForegroundInfo(NOTIFICATION_ID, notification)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            ForegroundInfo(NOTIFICATION_ID, notification)
+        }
     }
 
     companion object {

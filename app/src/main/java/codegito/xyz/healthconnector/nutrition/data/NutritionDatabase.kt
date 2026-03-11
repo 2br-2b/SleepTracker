@@ -48,7 +48,7 @@ class NutritionDatabase private constructor(private val context: Context) {
 
     private fun createTablesIfNeeded(database: SQLiteDatabase) {
         // WAL mode allows concurrent reads while the build transaction writes
-        database.execSQL("PRAGMA journal_mode=WAL")
+        database.rawQuery("PRAGMA journal_mode=WAL", null).close()
         database.execSQL("""
             CREATE TABLE IF NOT EXISTS foods (
                 id TEXT PRIMARY KEY,
@@ -145,16 +145,17 @@ class NutritionDatabase private constructor(private val context: Context) {
      */
     fun beginBulkInsert(): SQLiteDatabase {
         val database = openDb()
-        database.execSQL("BEGIN IMMEDIATE TRANSACTION")
+        database.beginTransactionNonExclusive() // BEGIN IMMEDIATE — allows concurrent readers
         return database
     }
 
     fun commitBulkInsert(database: SQLiteDatabase) {
-        database.execSQL("COMMIT")
+        database.setTransactionSuccessful()
+        database.endTransaction()
     }
 
     fun rollbackBulkInsert(database: SQLiteDatabase) {
-        runCatching { database.execSQL("ROLLBACK") }
+        runCatching { database.endTransaction() } // no setTransactionSuccessful → rollback
     }
 
     private val insertFoodSql = """
