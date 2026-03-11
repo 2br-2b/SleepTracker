@@ -24,10 +24,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -35,6 +37,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +64,8 @@ import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.model.TrackingType
+import codegito.xyz.healthconnector.nutrition.data.NutritionIndexWorker
+import androidx.work.WorkInfo
 import codegito.xyz.healthconnector.ui.AppTimePickerDialog
 import codegito.xyz.healthconnector.ui.PermissionCard
 import codegito.xyz.healthconnector.ui.PermissionState
@@ -166,6 +171,7 @@ private enum class OnboardingStep {
     AutoConfig,
     ManualInfo,
     Permissions,
+    NutritionIndex,
     Completion
 }
 
@@ -202,7 +208,33 @@ private fun OnboardingFlow(
     var permState by remember { mutableStateOf(PermissionState()) }
     var showTemplateEditor by remember { mutableStateOf(false) }
 
+    // Nutrition index extraction state — driven by WorkManager
+    val workInfos by NutritionIndexWorker.observeInfo(context).collectAsState(initial = emptyList())
+    val workInfo = workInfos.firstOrNull()
+    val extractionRunning = workInfo?.state == WorkInfo.State.RUNNING || workInfo?.state == WorkInfo.State.ENQUEUED
+    val extractionDone = workInfo?.state == WorkInfo.State.SUCCEEDED
+    val extractionError = if (workInfo?.state == WorkInfo.State.FAILED)
+        workInfo.outputData.getString(NutritionIndexWorker.KEY_ERROR) ?: "Unknown error"
+    else null
+    val extractionProgress = when {
+        extractionDone -> workInfo?.outputData?.getInt(NutritionIndexWorker.KEY_RECORD_COUNT, 0) ?: 0
+        extractionRunning -> workInfo?.progress?.getInt(NutritionIndexWorker.KEY_PROGRESS, 0) ?: 0
+        else -> 0
+    }
+    val extractionTotal = when {
+        extractionDone -> extractionProgress
+        extractionRunning -> workInfo?.progress?.getInt(NutritionIndexWorker.KEY_TOTAL, -1) ?: -1
+        else -> -1
+    }
+    val extractionProgressText = if (extractionTotal > 0 && extractionTotal != extractionProgress)
+        "$extractionProgress / $extractionTotal" else "$extractionProgress"
+    var showCancelExtractionDialog by remember { mutableStateOf(false) }
+
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    fun startExtraction() {
+        NutritionIndexWorker.enqueue(context)
+    }
 
     // Determine the previous step for back navigation
     val previousStep: OnboardingStep? = when (step) {
@@ -217,10 +249,12 @@ private fun OnboardingFlow(
             sleepSelected -> OnboardingStep.ManualInfo
             else -> OnboardingStep.HealthConnect
         }
-        OnboardingStep.Completion -> OnboardingStep.Permissions
+        OnboardingStep.NutritionIndex -> OnboardingStep.Permissions
+        OnboardingStep.Completion -> if (nutritionSelected) OnboardingStep.NutritionIndex else OnboardingStep.Permissions
     }
 
     // Handle back: go to previous step (activity-level callback blocks exit on first step)
+    // Extraction runs as a WorkManager job — back navigation never cancels it
     BackHandler(enabled = previousStep != null) {
         step = previousStep!!
     }
@@ -293,11 +327,47 @@ private fun OnboardingFlow(
         return
     }
 
+    if (showCancelExtractionDialog) {
+        AlertDialog(
+            onDismissRequest = { showCancelExtractionDialog = false },
+            title = { Text("Stop building food database?") },
+            text = { Text("The database will stop building. You can rebuild it later from Settings.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    androidx.work.WorkManager.getInstance(context)
+                        .cancelUniqueWork(NutritionIndexWorker.WORK_NAME)
+                    showCancelExtractionDialog = false
+                }) { Text("Stop") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelExtractionDialog = false }) { Text("Keep going") }
+            }
+        )
+    }
+
     Scaffold { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(innerPadding),
+        ) {
+            // Top progress banner — shown on all steps except NutritionIndex (which shows inline progress)
+            // Clickable to show the stop/cancel dialog
+            if (nutritionSelected && extractionRunning && step != OnboardingStep.NutritionIndex) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(
+                    "Building food database\u2026 $extractionProgressText foods  \u2014 tap to stop",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showCancelExtractionDialog = true }
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
                 .padding(20.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -341,6 +411,8 @@ private fun OnboardingFlow(
                                 userPreferencesRepository.setSleepEnabled(sleepSelected)
                                 userPreferencesRepository.setNutritionEnabled(nutritionSelected)
                             }
+                            // Start extraction in background as soon as nutrition is selected
+                            if (nutritionSelected) startExtraction()
                             // Skip Health Connect install screen if it's already installed
                             step = if (isHealthConnectInstalled) {
                                 if (sleepSelected) OnboardingStep.AutoDetectionExplanation
@@ -666,7 +738,10 @@ private fun OnboardingFlow(
                     }
 
                     Button(
-                        onClick = { step = OnboardingStep.Completion },
+                        onClick = {
+                            step = if (nutritionSelected) OnboardingStep.NutritionIndex
+                                   else OnboardingStep.Completion
+                        },
                         enabled = allRequired,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -674,7 +749,59 @@ private fun OnboardingFlow(
                     }
                 }
 
-                // ── Step 7: Done ──────────────────────────────────────────
+                // ── Step 7: Nutrition Index ───────────────────────────────
+                OnboardingStep.NutritionIndex -> {
+                    Text("Building food database", style = MaterialTheme.typography.headlineMedium)
+                    Text("We're indexing the bundled food dataset for fast search. This only happens once.")
+
+                    when {
+                        extractionRunning -> {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text("$extractionProgressText foods indexed so far…")
+                            TextButton(
+                                onClick = { showCancelExtractionDialog = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Stop building") }
+                        }
+                        extractionDone -> {
+                            Text(
+                                "$extractionProgress foods ready.",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        extractionError != null -> {
+                            Text(
+                                "Error: $extractionError",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Button(onClick = { startExtraction() }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Retry")
+                            }
+                        }
+                        else -> {
+                            Button(onClick = { startExtraction() }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Start indexing")
+                            }
+                        }
+                    }
+
+                    Text(
+                        "Data from OpenNutrition (opennutrition.app)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Button(
+                        onClick = { step = OnboardingStep.Completion },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (extractionDone) "Continue" else if (extractionRunning) "Continue in background" else "Skip for now")
+                    }
+                }
+
+                // ── Step 8: Done ──────────────────────────────────────────
                 OnboardingStep.Completion -> {
                     Text("You're all set", style = MaterialTheme.typography.headlineMedium)
                     Text("Health Connect is ready, your preferences are configured, and permissions are complete.")
@@ -695,6 +822,7 @@ private fun OnboardingFlow(
 
             HorizontalDivider()
         }
+        } // end inner scrollable Column
     }
 }
 

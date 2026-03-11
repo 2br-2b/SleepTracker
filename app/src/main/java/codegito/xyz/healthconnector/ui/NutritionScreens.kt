@@ -22,6 +22,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -39,7 +40,9 @@ import codegito.xyz.healthconnector.Screen
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.db.AppDatabase
 import codegito.xyz.healthconnector.data.model.TimeRange
+import androidx.work.WorkInfo
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
+import codegito.xyz.healthconnector.nutrition.data.NutritionIndexWorker
 import codegito.xyz.healthconnector.nutrition.data.NutritionRecentsRepository
 import codegito.xyz.healthconnector.nutrition.domain.FoodCandidate
 import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
@@ -52,7 +55,7 @@ import codegito.xyz.healthconnector.nutrition.domain.amountUnitLabel
 import codegito.xyz.healthconnector.nutrition.domain.formatAmount
 import codegito.xyz.healthconnector.nutrition.domain.gramsToAmountText
 import codegito.xyz.healthconnector.nutrition.domain.parseAmountToGrams
-import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
+import codegito.xyz.healthconnector.nutrition.provider.NutritionProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -89,6 +92,16 @@ fun NutritionHomeScreen(
     var hasNutritionWrite by remember { mutableStateOf<Boolean?>(null) }
     var hasNutritionRead by remember { mutableStateOf<Boolean?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
+
+    // Observe WorkManager for in-progress database build
+    val homeWorkInfos by NutritionIndexWorker.observeInfo(context).collectAsState(initial = emptyList())
+    val homeWorkInfo = homeWorkInfos.firstOrNull()
+    val isDbBuilding = homeWorkInfo?.state == WorkInfo.State.RUNNING ||
+            homeWorkInfo?.state == WorkInfo.State.ENQUEUED
+    val homeDbProgress = homeWorkInfo?.progress?.getInt(NutritionIndexWorker.KEY_PROGRESS, 0) ?: 0
+    val homeDbTotal = homeWorkInfo?.progress?.getInt(NutritionIndexWorker.KEY_TOTAL, -1) ?: -1
+    val homeDbProgressText = if (homeDbTotal > 0 && homeDbTotal != homeDbProgress)
+        "$homeDbProgress / $homeDbTotal" else "$homeDbProgress"
 
     fun loadData() {
         scope.launch {
@@ -215,7 +228,7 @@ fun NutritionHomeScreen(
                                 style = MaterialTheme.typography.titleSmall
                             )
                             Text(
-                                "Tap to go to Nutrition Settings to upload a dataset ZIP.",
+                                "Tap to open Nutrition Settings and build the food database.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -234,6 +247,8 @@ fun NutritionHomeScreen(
                     onClick = { navController.navigate(Screen.NutritionDay.route(date)) }
                 )
             }
+
+            item { NutritionAttributionFooter() }
         }
         } // end PullToRefreshBox
     }
@@ -483,6 +498,8 @@ fun NutritionDayDetailScreen(
                     }
                 }
             }
+
+            item { NutritionAttributionFooter() }
         }
         } // end PullToRefreshBox
     }
@@ -526,7 +543,7 @@ fun LogFoodScreen(
     date: LocalDate,
     healthConnectManager: HealthConnectManager,
     userPreferencesRepository: UserPreferencesRepository,
-    nutritionProvider: AssetNutritionProvider,
+    nutritionProvider: NutritionProvider,
     navController: NavController
 ) {
     val context = LocalContext.current
@@ -565,17 +582,32 @@ fun LogFoodScreen(
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
     var amountText by remember { mutableStateOf(TextFieldValue("")) }
+    // Serving mode: true = show "How many [commonUnit]?" input; false = raw gram/oz input
+    var servingInputMode by remember { mutableStateOf(false) }
+    var servingAmountText by remember { mutableStateOf("1.0") }
     var isLogging by remember { mutableStateOf(false) }
 
-    // When a food is selected, default the amount text in the current unit system.
-    // Prefer the labeled oz serving size from the DB when available and in US mode.
+    // Observe WorkManager for in-progress database build
+    val workInfos by NutritionIndexWorker.observeInfo(context).collectAsState(initial = emptyList())
+    val buildWorkInfo = workInfos.firstOrNull()
+    val isDbBuilding = buildWorkInfo?.state == WorkInfo.State.RUNNING ||
+            buildWorkInfo?.state == WorkInfo.State.ENQUEUED
+    val dbBuildProgress = buildWorkInfo?.progress?.getInt(NutritionIndexWorker.KEY_PROGRESS, 0) ?: 0
+    val dbBuildTotal = buildWorkInfo?.progress?.getInt(NutritionIndexWorker.KEY_TOTAL, -1) ?: -1
+    val dbBuildProgressText = if (dbBuildTotal > 0 && dbBuildTotal != dbBuildProgress)
+        "$dbBuildProgress / $dbBuildTotal" else "$dbBuildProgress"
+
+    // When a food is selected, set up the appropriate amount input mode.
     fun setDefaultAmount(candidate: FoodCandidate) {
-        val text = if (unitSystem == NutritionUnitSystem.US && candidate.servingSizeOz != null) {
-            "%.1f".format(candidate.servingSizeOz)
+        val si = candidate.servingInfo
+        if (si?.commonUnit != null) {
+            servingInputMode = true
+            servingAmountText = "%.1f".format(si.commonQuantity ?: 1.0)
         } else {
-            gramsToAmountText(candidate.baseAmount.value, unitSystem)
+            servingInputMode = false
+            val text = gramsToAmountText(candidate.baseAmount.value, unitSystem)
+            amountText = TextFieldValue(text, selection = TextRange(0, text.length))
         }
-        amountText = TextFieldValue(text, selection = TextRange(0, text.length))
     }
 
     fun mealLabel(minuteOfDay: Int): String = when {
@@ -714,12 +746,30 @@ fun LogFoodScreen(
                 )
             }
 
+            // Build-in-progress banner
+            if (isDbBuilding) {
+                item {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text(
+                            "Indexing food database… $dbBuildProgressText foods so far",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+            }
+
             // Search results
             if (query.isNotBlank()) {
                 if (searchResults.isEmpty()) {
                     item {
                         Text(
-                            "No results found. Build a nutrition dataset in Settings first.",
+                            if (isDbBuilding)
+                                "No results yet — database is still building ($dbBuildProgressText foods so far)"
+                            else
+                                "No results found. Build a nutrition dataset in Settings first.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
@@ -757,6 +807,8 @@ fun LogFoodScreen(
                             selected = selectedFood?.id == candidate.id,
                             onClick = {
                                 selectedFood = candidate
+                                // Recents have no serving info — always raw gram/oz mode
+                                servingInputMode = false
                                 val t = gramsToAmountText(lastAmount.value, unitSystem)
                                 amountText = TextFieldValue(t, selection = TextRange(0, t.length))
                                 eatenTime = defaultEatenTime
@@ -774,6 +826,8 @@ fun LogFoodScreen(
                     ) { Text("Enter manually") }
                 }
             }
+
+            item { NutritionAttributionFooter() }
         }
     }
 
@@ -781,6 +835,26 @@ fun LogFoodScreen(
     selectedFood?.let { candidate ->
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val focusRequester = remember { FocusRequester() }
+        val si = candidate.servingInfo
+
+        // Derived grams from whichever input mode is active
+        val gramsFromInput: Double? = if (servingInputMode && si != null) {
+            servingAmountText.toDoubleOrNull()?.takeIf { it > 0.0 }?.let { qty ->
+                qty * si.gramsPerCommonUnit
+            }
+        } else {
+            parseAmountToGrams(amountText.text, unitSystem)
+        }
+
+        // When unit system changes while in raw-gram mode, re-sync the displayed text
+        LaunchedEffect(unitSystem) {
+            if (!servingInputMode) {
+                val currentGrams = parseAmountToGrams(amountText.text, unitSystem)
+                    ?: candidate.baseAmount.value
+                val text = gramsToAmountText(currentGrams, unitSystem)
+                amountText = TextFieldValue(text, selection = TextRange(0, text.length))
+            }
+        }
 
         ModalBottomSheet(
             onDismissRequest = { selectedFood = null; amountText = TextFieldValue("") },
@@ -795,8 +869,30 @@ fun LogFoodScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(candidate.name, style = MaterialTheme.typography.titleMedium)
+
+                // Label chips
+                if (candidate.labels.isNotEmpty()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        candidate.labels.take(4).forEach { label ->
+                            SuggestionChip(
+                                onClick = {},
+                                label = {
+                                    Text(
+                                        label.replaceFirstChar { it.uppercase() },
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                },
+                                modifier = Modifier.height(24.dp)
+                            )
+                        }
+                    }
+                }
+
                 val baseNutrition = candidate.nutrientsPerBase
-                val grams = parseAmountToGrams(amountText.text, unitSystem) ?: candidate.baseAmount.value
+                val grams = gramsFromInput ?: candidate.baseAmount.value
                 val multiplier = if (candidate.baseAmount.value > 0.0) grams / candidate.baseAmount.value else 1.0
                 val summaryParts = enabledNutrients.mapNotNull { key ->
                     val displayVal = NutrientDefaults.getValueInDisplayUnit(baseNutrition, key) * multiplier
@@ -813,6 +909,7 @@ fun LogFoodScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+
                 if (askEatenTime) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -829,23 +926,64 @@ fun LogFoodScreen(
                         )
                     }
                 }
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = { amountText = it },
-                    label = { Text("Amount (${amountUnitLabel(unitSystem)})") },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Decimal,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = {
-                            val g = parseAmountToGrams(amountText.text, unitSystem) ?: return@KeyboardActions
-                            scope.launch { logFood(candidate, g) }
+
+                // Amount input — serving mode or raw gram/oz mode
+                if (servingInputMode && si?.commonUnit != null) {
+                    OutlinedTextField(
+                        value = servingAmountText,
+                        onValueChange = { servingAmountText = it },
+                        label = { Text("How many ${si.commonUnit}?") },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                val g = gramsFromInput ?: return@KeyboardActions
+                                scope.launch { logFood(candidate, g) }
+                            }
+                        ),
+                        singleLine = true,
+                        supportingText = gramsFromInput?.let {
+                            { Text("≈ ${it.toInt()}g", style = MaterialTheme.typography.labelSmall) }
+                        },
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                    )
+                    TextButton(
+                        onClick = {
+                            servingInputMode = false
+                            val text = gramsToAmountText(gramsFromInput ?: candidate.baseAmount.value, unitSystem)
+                            amountText = TextFieldValue(text, selection = TextRange(0, text.length))
                         }
-                    ),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
-                )
+                    ) { Text("Switch to ${amountUnitLabel(unitSystem)}") }
+                } else {
+                    OutlinedTextField(
+                        value = amountText,
+                        onValueChange = { amountText = it },
+                        label = { Text("Amount (${amountUnitLabel(unitSystem)})") },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                val g = gramsFromInput ?: return@KeyboardActions
+                                scope.launch { logFood(candidate, g) }
+                            }
+                        ),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                    )
+                    if (si?.commonUnit != null) {
+                        TextButton(
+                            onClick = {
+                                servingInputMode = true
+                                servingAmountText = "%.1f".format(si.commonQuantity ?: 1.0)
+                            }
+                        ) { Text("Switch to ${si.commonUnit}") }
+                    }
+                }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { selectedFood = null; amountText = TextFieldValue("") },
@@ -853,10 +991,10 @@ fun LogFoodScreen(
                     ) { Text("Cancel") }
                     Button(
                         onClick = {
-                            val g = parseAmountToGrams(amountText.text, unitSystem) ?: return@Button
+                            val g = gramsFromInput ?: return@Button
                             scope.launch { logFood(candidate, g) }
                         },
-                        enabled = !isLogging && parseAmountToGrams(amountText.text, unitSystem) != null,
+                        enabled = !isLogging && gramsFromInput != null,
                         modifier = Modifier.weight(1f)
                     ) { Text(if (isLogging) "Logging…" else "Log") }
                 }
@@ -908,20 +1046,52 @@ private fun FoodCandidateRow(
                              else MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(candidate.name, style = MaterialTheme.typography.bodyMedium)
-                val sub = subtitle ?: "${candidate.baseAmount.value.toInt()}g"
-                Text(
-                    "$sub · ${candidate.nutrientsPerBase.calories.toInt()} kcal",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(candidate.name, style = MaterialTheme.typography.bodyMedium)
+            val sub = subtitle ?: "${candidate.baseAmount.value.toInt()}g"
+            Text(
+                "$sub · ${candidate.nutrientsPerBase.calories.toInt()} kcal",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+            if (candidate.labels.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(top = 4.dp)
+                ) {
+                    candidate.labels.take(3).forEach { label ->
+                        SuggestionChip(
+                            onClick = {},
+                            label = {
+                                Text(
+                                    label.replaceFirstChar { it.uppercase() },
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            },
+                            modifier = Modifier.height(20.dp)
+                        )
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun NutritionAttributionFooter() {
+    val uriHandler = LocalUriHandler.current
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "Nutrition data: OpenNutrition",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.clickable { uriHandler.openUri("https://opennutrition.app") }
+        )
     }
 }
 

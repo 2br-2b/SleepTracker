@@ -19,8 +19,9 @@ class NutritionRecentsRepository(
                 FoodCandidate(
                     id = it.foodKey,
                     name = it.displayName,
+                    servingInfo = null,
+                    nutrientsPer100g = nutrientsFromJson(it.nutrientsJson, it),
                     baseAmount = NutritionAmount(100.0, QuantityUnit.GRAM),
-                    nutrientsPerBase = nutrientsFromJson(it.nutrientsJson, it)
                 ) to NutritionAmount(it.quantity, parseUnit(it.unit))
             }
         }
@@ -33,13 +34,13 @@ class NutritionRecentsRepository(
                 displayName = candidate.name,
                 quantity = amount.value,
                 unit = amount.unit.name,
-                calories = candidate.nutrientsPerBase.calories,
-                proteinGrams = candidate.nutrientsPerBase.proteinGrams,
-                carbsGrams = candidate.nutrientsPerBase.carbsGrams,
-                fatGrams = candidate.nutrientsPerBase.fatGrams,
+                calories = candidate.nutrientsPer100g.calories,
+                proteinGrams = candidate.nutrientsPer100g.proteinGrams,
+                carbsGrams = candidate.nutrientsPer100g.carbsGrams,
+                fatGrams = candidate.nutrientsPer100g.fatGrams,
                 lastUsedAtMillis = System.currentTimeMillis(),
                 sourceType = sourceType,
-                nutrientsJson = nutrientsToJson(candidate.nutrientsPerBase)
+                nutrientsJson = nutrientsToJson(candidate.nutrientsPer100g)
             )
         )
     }

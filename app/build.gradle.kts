@@ -69,6 +69,9 @@ dependencies {
     // Health Connect
     implementation("androidx.health.connect:connect-client:1.1.0-alpha11")
 
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -78,13 +81,3 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
-
-val generateNutritionIndex by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Generate nutrition search index from bundled dataset zip"
-    commandLine("python3", "${projectDir}/scripts/build_nutrition_index.py")
-}
-
-tasks.named("preBuild") {
-    dependsOn(generateNutritionIndex)
-}

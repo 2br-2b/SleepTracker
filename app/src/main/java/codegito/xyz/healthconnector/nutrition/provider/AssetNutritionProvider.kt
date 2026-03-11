@@ -25,9 +25,10 @@ class AssetNutritionProvider(
                     FoodCandidate(
                         id = obj.getString("id"),
                         name = obj.getString("name"),
+                        servingInfo = null,
                         baseAmount = NutritionAmount(obj.optDouble("baseAmount", 100.0), QuantityUnit.GRAM),
                         servingSizeOz = if (obj.has("servingSizeOz")) obj.getDouble("servingSizeOz") else null,
-                        nutrientsPerBase = NutrientVector(
+                        nutrientsPer100g = NutrientVector(
                             calories = obj.optDouble("calories", 0.0),
                             proteinGrams = obj.optDouble("protein", 0.0),
                             carbsGrams = obj.optDouble("carbs", 0.0),
@@ -76,9 +77,17 @@ class AssetNutritionProvider(
         return runCatching { context.assets.open("nutrition/index.jsonl").bufferedReader() }.getOrNull()
     }
 
-    fun invalidateCache() {
+    override fun invalidateCache() {
         cached = null
     }
+
+    override suspend fun getFoodByName(name: String): FoodCandidate? =
+        loadData().firstOrNull { it.name.equals(name, ignoreCase = true) }
+
+    override suspend fun getFoodById(id: String): FoodCandidate? =
+        loadData().firstOrNull { it.id == id }
+
+    override suspend fun resolveAmount(food: FoodCandidate, humanQuantity: Double, humanUnit: String?): NutritionAmount? = null
 
     override suspend fun searchFoods(query: String, limit: Int): List<FoodCandidate> {
         val normalized = query.trim().lowercase()

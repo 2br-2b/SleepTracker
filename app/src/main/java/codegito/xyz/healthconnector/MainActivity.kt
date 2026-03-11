@@ -44,7 +44,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
-import codegito.xyz.healthconnector.nutrition.provider.AssetNutritionProvider
+import codegito.xyz.healthconnector.nutrition.data.NutritionDatabaseProvider
 import codegito.xyz.healthconnector.ui.EditNutrientsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.LogFoodScreen
@@ -166,7 +166,7 @@ fun MainApp(
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
 
     val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
-    val nutritionProvider = remember(context) { AssetNutritionProvider(context) }
+    val nutritionProvider = remember(context) { NutritionDatabaseProvider(context) }
 
     // One-shot initial redirect: if the natural start (Sleep/Home) is disabled, go somewhere sensible.
     LaunchedEffect(Unit) {
