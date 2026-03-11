@@ -69,6 +69,7 @@ class NutritionIndexWorker(
                 Result.success(workDataOf(KEY_RECORD_COUNT to build.recordCount))
             },
             onFailure = { e ->
+                android.util.Log.e("NutritionIndexWorker", "Build failed: ${e.message}", e)
                 Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Unknown error")))
             }
         )

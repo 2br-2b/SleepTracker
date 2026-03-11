@@ -41,10 +41,14 @@ data class RecentFoodEntity(
 
 class ScreenEventDao(private val db: AppDatabase) {
     suspend fun insert(event: ScreenEvent) = withContext(Dispatchers.IO) {
-        db.openHelper.writableDatabase.execSQL(
-            "INSERT INTO screen_events (timestampMillis, type) VALUES (?, ?)",
-            arrayOf(event.timestampMillis, event.type)
+        val stmt = db.openHelper.writableDatabase.compileStatement(
+            "INSERT INTO screen_events (timestampMillis, type) VALUES (?, ?)"
         )
+        stmt.use {
+            it.bindLong(1, event.timestampMillis)
+            it.bindString(2, event.type)
+            it.executeInsert()
+        }
     }
 
     fun getEventsInRange(startTime: Long, endTime: Long): Flow<List<ScreenEvent>> =
@@ -53,7 +57,7 @@ class ScreenEventDao(private val db: AppDatabase) {
                 val list = mutableListOf<ScreenEvent>()
                 val cursor: Cursor = db.openHelper.readableDatabase.query(
                     "SELECT id, timestampMillis, type FROM screen_events WHERE timestampMillis BETWEEN ? AND ? ORDER BY timestampMillis ASC",
-                    arrayOf(startTime, endTime)
+                    arrayOf(startTime.toString(), endTime.toString())
                 )
                 cursor.use { c ->
                     while (c.moveToNext()) {
@@ -75,21 +79,35 @@ class ScreenEventDao(private val db: AppDatabase) {
         }.flowOn(Dispatchers.IO)
 
     suspend fun deleteOldEvents(threshold: Long) = withContext(Dispatchers.IO) {
-        db.openHelper.writableDatabase.execSQL(
-            "DELETE FROM screen_events WHERE timestampMillis < ?",
-            arrayOf(threshold)
+        val stmt = db.openHelper.writableDatabase.compileStatement(
+            "DELETE FROM screen_events WHERE timestampMillis < ?"
         )
+        stmt.use {
+            it.bindLong(1, threshold)
+            it.executeUpdateDelete()
+        }
     }
 }
 
 class RecentFoodDao(private val db: AppDatabase) {
     suspend fun upsert(item: RecentFoodEntity) = withContext(Dispatchers.IO) {
-        db.openHelper.writableDatabase.execSQL(
-            "INSERT OR REPLACE INTO recent_foods (foodKey, displayName, quantity, unit, calories, proteinGrams, carbsGrams, fatGrams, lastUsedAtMillis, sourceType, nutrientsJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            arrayOf(item.foodKey, item.displayName, item.quantity, item.unit, item.calories,
-                item.proteinGrams, item.carbsGrams, item.fatGrams, item.lastUsedAtMillis,
-                item.sourceType, item.nutrientsJson)
+        val stmt = db.openHelper.writableDatabase.compileStatement(
+            "INSERT OR REPLACE INTO recent_foods (foodKey, displayName, quantity, unit, calories, proteinGrams, carbsGrams, fatGrams, lastUsedAtMillis, sourceType, nutrientsJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
+        stmt.use {
+            it.bindString(1, item.foodKey)
+            it.bindString(2, item.displayName)
+            it.bindDouble(3, item.quantity)
+            it.bindString(4, item.unit)
+            it.bindDouble(5, item.calories)
+            it.bindDouble(6, item.proteinGrams)
+            it.bindDouble(7, item.carbsGrams)
+            it.bindDouble(8, item.fatGrams)
+            it.bindLong(9, item.lastUsedAtMillis)
+            it.bindString(10, item.sourceType)
+            it.bindString(11, item.nutrientsJson)
+            it.executeInsert()
+        }
     }
 
     fun getRecents(limit: Int = 30): Flow<List<RecentFoodEntity>> =
@@ -98,7 +116,7 @@ class RecentFoodDao(private val db: AppDatabase) {
                 val list = mutableListOf<RecentFoodEntity>()
                 val cursor: Cursor = db.openHelper.readableDatabase.query(
                     "SELECT foodKey, displayName, quantity, unit, calories, proteinGrams, carbsGrams, fatGrams, lastUsedAtMillis, sourceType, nutrientsJson FROM recent_foods ORDER BY lastUsedAtMillis DESC LIMIT ?",
-                    arrayOf(limit)
+                    arrayOf(limit.toString())
                 )
                 cursor.use { c ->
                     while (c.moveToNext()) {
@@ -132,7 +150,9 @@ class RecentFoodDao(private val db: AppDatabase) {
         }.flowOn(Dispatchers.IO)
 
     suspend fun clearAll() = withContext(Dispatchers.IO) {
-        db.openHelper.writableDatabase.execSQL("DELETE FROM recent_foods")
+        db.openHelper.writableDatabase.compileStatement("DELETE FROM recent_foods").use {
+            it.executeUpdateDelete()
+        }
     }
 }
 
