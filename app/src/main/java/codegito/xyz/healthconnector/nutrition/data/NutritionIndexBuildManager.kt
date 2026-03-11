@@ -5,7 +5,6 @@ import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStream
@@ -88,7 +87,7 @@ class NutritionIndexBuildManager(
             nutritionDb.deleteDatabase()
         }
 
-        val sqliteDb = nutritionDb.beginBulkInsert()
+        val inserter = nutritionDb.beginBulkInsert(mergeMode)
         var totalWritten = 0
         var bestSource = source
 
@@ -97,8 +96,8 @@ class NutritionIndexBuildManager(
                 var entry = zip.nextEntry
                 while (entry != null && isActive) {
                     if (!entry.isDirectory && entry.name.lowercase().endsWith(".tsv")) {
-                        val reader = BufferedReader(InputStreamReader(NonClosingInputStream(zip)))
-                        val written = writeFoodsFromTsv(reader, sqliteDb, nutritionDb, mergeMode) { current ->
+                        val reader = BufferedReader(InputStreamReader(NonClosingInputStream(zip)), 65536)
+                        val written = writeFoodsFromTsv(reader, inserter, nutritionDb) { current ->
                             progressCallback(totalWritten + current, 326760)
                         }
                         if (written > 0) {
@@ -110,13 +109,16 @@ class NutritionIndexBuildManager(
                     entry = zip.nextEntry
                 }
             }
-            nutritionDb.commitBulkInsert(sqliteDb)
+            nutritionDb.rebuildFtsFromFoods(inserter)
+            nutritionDb.commitBulkInsert(inserter)
         } catch (e: Exception) {
-            nutritionDb.rollbackBulkInsert(sqliteDb)
+            nutritionDb.rollbackBulkInsert(inserter)
             if (!mergeMode) {
                 nutritionDb.deleteDatabase()
             }
             throw e
+        } finally {
+            inserter.close()
         }
 
         // Write metadata for Settings screen record count display
@@ -128,9 +130,8 @@ class NutritionIndexBuildManager(
 
     private fun writeFoodsFromTsv(
         reader: BufferedReader,
-        sqliteDb: android.database.sqlite.SQLiteDatabase,
+        inserter: NutritionDatabase.BulkInserter,
         nutritionDb: NutritionDatabase,
-        mergeMode: Boolean,
         onProgress: (Int) -> Unit
     ): Int {
         val header = reader.readLine() ?: return 0
@@ -157,54 +158,172 @@ class NutritionIndexBuildManager(
         var rowIndex = 0
         var written = 0
 
-        reader.forEachLine { rawLine ->
-            if (written >= MAX_RECORDS) return@forEachLine
-            val row = rawLine.split("\t")
-            val name = row.getOrNull(nameIdx)?.trim().orEmpty()
-            if (name.isEmpty()) { rowIndex++; return@forEachLine }
+        // Sorted list of all column indices we need, used for single-pass splitting
+        val neededCols = intArrayOf(idIdx, nameIdx, altNamesIdx, typeIdx, servingIdx, nutritionIdx, labelsIdx)
+        val maxNeededCol = neededCols.maxOrNull() ?: 0
 
-            val id = row.getOrNull(idIdx)?.takeIf { it.isNotBlank() } ?: "tsv-$rowIndex"
+        // Reusable array: colVals[i] holds the value for column i (up to maxNeededCol)
+        val colVals = arrayOfNulls<String>(maxNeededCol + 1)
 
-            // Parse serving JSON: {"common":{"unit":"oz","quantity":3},"metric":{"unit":"g","quantity":85}}
-            val servingRaw = if (servingIdx >= 0) row.getOrNull(servingIdx)?.trim().orEmpty() else ""
-            val serving = runCatching { JSONObject(servingRaw) }.getOrNull()
-            val commonServing = serving?.optJSONObject("common")
-            val metricServing = serving?.optJSONObject("metric")
-            val servingCommonUnit = commonServing?.optString("unit")?.takeIf { it.isNotEmpty() }
-            val servingCommonQty = commonServing?.let { if (it.has("quantity")) it.optDouble("quantity") else null }
-            val servingMetricUnit = metricServing?.optString("unit")?.takeIf { it.isNotEmpty() } ?: "g"
-            val servingMetricQty = metricServing?.optDouble("quantity", 100.0) ?: 100.0
+        val lineBuffer = StringBuilder(512)
 
-            // Parse labels: ["cooked"] → stored as JSON array string
-            val labelsRaw = if (labelsIdx >= 0) row.getOrNull(labelsIdx)?.trim().orEmpty() else ""
-            val labelsJson = runCatching { JSONArray(labelsRaw).toString() }.getOrDefault("[]")
-
-            // Parse alternate_names for FTS search_text
-            val altNamesRaw = if (altNamesIdx >= 0) row.getOrNull(altNamesIdx)?.trim().orEmpty() else ""
-            val altNamesArray = runCatching { JSONArray(altNamesRaw) }.getOrNull()
-            val altNames = (0 until (altNamesArray?.length() ?: 0))
-                .mapNotNull { altNamesArray?.optString(it)?.trim()?.takeIf { s -> s.isNotEmpty() } }
-            val searchText = (listOf(name) + altNames).joinToString(" ").lowercase()
-
-            val foodType = if (typeIdx >= 0) row.getOrNull(typeIdx)?.trim()?.takeIf { it.isNotEmpty() } else null
-
-            // Parse nutrition_100g JSON
-            val nutritionRaw = if (nutritionIdx >= 0) row.getOrNull(nutritionIdx)?.trim().orEmpty() else ""
-            val n = if (nutritionRaw.isNotEmpty()) runCatching { JSONObject(nutritionRaw) }.getOrNull() else null
-
-            fun d(vararg keys: String): Double = n?.let { obj ->
-                keys.firstNotNullOfOrNull { k -> obj.optDouble(k).takeIf { !it.isNaN() && it != 0.0 } }
-            } ?: 0.0
-
-            // Heuristic: minerals/vitamins > 10 in a per-100g context are likely in mg → convert to g
-            fun mg(vararg keys: String): Double {
-                val raw = d(*keys)
-                return if (raw > 10.0) raw / 1000.0 else raw
+        // Split only up to the highest needed column index, store in colVals
+        fun splitCols(line: String) {
+            var col = 0
+            var start = 0
+            while (col <= maxNeededCol) {
+                val tab = line.indexOf('\t', start)
+                val end = if (tab < 0) line.length else tab
+                colVals[col] = line.substring(start, end)
+                if (tab < 0) {
+                    col++
+                    while (col <= maxNeededCol) { colVals[col++] = "" }
+                    break
+                }
+                start = tab + 1
+                col++
             }
+        }
 
-            runCatching {
+        fun col(idx: Int) = if (idx < 0 || idx > maxNeededCol) "" else colVals[idx] ?: ""
+
+        // Parse a flat JSON object {"key":val,...} into a Double map without JSONObject
+        fun parseNumericJson(json: String): HashMap<String, Double>? {
+            if (json.length < 3) return null
+            val map = HashMap<String, Double>(64)
+            var i = json.indexOf('"')
+            while (i in 0 until json.length) {
+                val keyEnd = json.indexOf('"', i + 1)
+                if (keyEnd < 0) break
+                val key = json.substring(i + 1, keyEnd)
+                val colon = json.indexOf(':', keyEnd + 1)
+                if (colon < 0) break
+                var vs = colon + 1
+                while (vs < json.length && json[vs] == ' ') vs++
+                if (vs >= json.length) break
+                val c = json[vs]
+                if (c == '-' || c in '0'..'9') {
+                    var ve = vs + 1
+                    while (ve < json.length && json[ve] != ',' && json[ve] != '}') ve++
+                    json.substring(vs, ve).toDoubleOrNull()?.let { map[key] = it }
+                    i = json.indexOf('"', ve)
+                } else {
+                    i = json.indexOf('"', vs)
+                }
+            }
+            return map.ifEmpty { null }
+        }
+
+        // Inline nutrient lookup -- avoids vararg String[] allocation per call
+        fun HashMap<String, Double>?.n(k1: String): Double {
+            val v = this?.get(k1); return if (v != null && !v.isNaN() && v != 0.0) v else 0.0
+        }
+        fun HashMap<String, Double>?.n(k1: String, k2: String): Double {
+            var v = this?.get(k1); if (v != null && !v.isNaN() && v != 0.0) return v
+            v = this?.get(k2); return if (v != null && !v.isNaN() && v != 0.0) v else 0.0
+        }
+        fun HashMap<String, Double>?.n(k1: String, k2: String, k3: String): Double {
+            var v = this?.get(k1); if (v != null && !v.isNaN() && v != 0.0) return v
+            v = this?.get(k2); if (v != null && !v.isNaN() && v != 0.0) return v
+            v = this?.get(k3); return if (v != null && !v.isNaN() && v != 0.0) v else 0.0
+        }
+        fun HashMap<String, Double>?.n(k1: String, k2: String, k3: String, k4: String): Double {
+            var v = this?.get(k1); if (v != null && !v.isNaN() && v != 0.0) return v
+            v = this?.get(k2); if (v != null && !v.isNaN() && v != 0.0) return v
+            v = this?.get(k3); if (v != null && !v.isNaN() && v != 0.0) return v
+            v = this?.get(k4); return if (v != null && !v.isNaN() && v != 0.0) v else 0.0
+        }
+        fun HashMap<String, Double>?.mg1(k1: String): Double { val r = n(k1); return if (r > 10.0) r / 1000.0 else r }
+        fun HashMap<String, Double>?.mg3(k1: String, k2: String, k3: String): Double { val r = n(k1, k2, k3); return if (r > 10.0) r / 1000.0 else r }
+
+        // Inline serving JSON parser -- avoids JSONObject for the serving field
+        // Format: {"common":{"unit":"oz","quantity":3},"metric":{"unit":"g","quantity":85}}
+        var servingCommonUnit: String? = null
+        var servingCommonQty: Double? = null
+        var servingMetricUnit: String = "g"
+        var servingMetricQty: Double = 100.0
+
+        fun parseServing(json: String) {
+            servingCommonUnit = null; servingCommonQty = null
+            servingMetricUnit = "g"; servingMetricQty = 100.0
+            if (json.length < 3) return
+            // Find "common" and "metric" sub-objects by scanning for their start braces
+            fun extractSubObject(tag: String): String? {
+                val tagIdx = json.indexOf("\"$tag\"")
+                if (tagIdx < 0) return null
+                val brace = json.indexOf('{', tagIdx + tag.length + 2)
+                if (brace < 0) return null
+                var depth = 1; var k = brace + 1
+                while (k < json.length && depth > 0) {
+                    when (json[k]) { '{' -> depth++; '}' -> depth-- }
+                    k++
+                }
+                return json.substring(brace, k)
+            }
+            fun getString(obj: String, key: String): String? {
+                val ki = obj.indexOf("\"$key\""); if (ki < 0) return null
+                val q1 = obj.indexOf('"', ki + key.length + 3); if (q1 < 0) return null
+                val q2 = obj.indexOf('"', q1 + 1); if (q2 < 0) return null
+                return obj.substring(q1 + 1, q2).takeIf { it.isNotEmpty() }
+            }
+            fun getDouble(obj: String, key: String): Double? {
+                val ki = obj.indexOf("\"$key\""); if (ki < 0) return null
+                val colon = obj.indexOf(':', ki + key.length + 2); if (colon < 0) return null
+                var vs = colon + 1
+                while (vs < obj.length && obj[vs] == ' ') vs++
+                var ve = vs; while (ve < obj.length && obj[ve] != ',' && obj[ve] != '}') ve++
+                return obj.substring(vs, ve).trim().toDoubleOrNull()
+            }
+            extractSubObject("common")?.let { c ->
+                servingCommonUnit = getString(c, "unit")
+                servingCommonQty = getDouble(c, "quantity")
+            }
+            extractSubObject("metric")?.let { m ->
+                servingMetricUnit = getString(m, "unit") ?: "g"
+                servingMetricQty = getDouble(m, "quantity") ?: 100.0
+            }
+        }
+
+        var line = reader.readLine()
+        while (line != null) {
+            if (written >= MAX_RECORDS) break
+
+            splitCols(line)
+
+            val name = col(nameIdx).trim()
+            if (name.isEmpty()) { rowIndex++; line = reader.readLine(); continue }
+
+            val id = col(idIdx).takeIf { it.isNotBlank() } ?: "tsv-$rowIndex"
+
+            parseServing(col(servingIdx).trim())
+
+            val labelsRaw = col(labelsIdx).trim()
+            val labelsJson = if (labelsRaw.startsWith('[')) labelsRaw else "[]"
+
+            // Build FTS search text: name + alternate names
+            lineBuffer.setLength(0)
+            lineBuffer.append(name.lowercase())
+            val altNamesRaw = col(altNamesIdx).trim()
+            if (altNamesRaw.startsWith('[') && altNamesRaw.length > 2) {
+                var ai = altNamesRaw.indexOf('"')
+                while (ai >= 0) {
+                    val ae = altNamesRaw.indexOf('"', ai + 1)
+                    if (ae < 0) break
+                    val alt = altNamesRaw.substring(ai + 1, ae).trim()
+                    if (alt.isNotEmpty()) { lineBuffer.append(' '); lineBuffer.append(alt.lowercase()) }
+                    ai = altNamesRaw.indexOf('"', ae + 1)
+                }
+            }
+            val searchText = lineBuffer.toString()
+
+            val foodType = col(typeIdx).trim().takeIf { it.isNotEmpty() }
+
+            val nutritionRaw = col(nutritionIdx).trim()
+            val n = if (nutritionRaw.startsWith('{')) parseNumericJson(nutritionRaw) else null
+
+            try {
                 nutritionDb.insertFood(
-                    database = sqliteDb,
+                    inserter = inserter,
                     id = id,
                     name = name,
                     servingCommonUnit = servingCommonUnit,
@@ -213,44 +332,47 @@ class NutritionIndexBuildManager(
                     servingMetricQuantity = servingMetricQty,
                     labels = labelsJson,
                     foodType = foodType,
-                    calories = d("energy_kcal", "calories", "energy"),
-                    protein = d("protein"),
-                    carbs = d("carbohydrates", "carbs", "carbohydrate"),
-                    fat = d("fat", "total_fat"),
-                    saturatedFat = d("saturated_fats", "saturated_fat", "saturated_fatty_acids", "saturates"),
-                    polyunsaturatedFat = d("polyunsaturated_fats", "polyunsaturated_fat", "polyunsaturated_fatty_acids"),
-                    monounsaturatedFat = d("monounsaturated_fats", "monounsaturated_fat", "monounsaturated_fatty_acids"),
-                    transFat = d("trans_fats", "trans_fat", "trans_fatty_acids"),
-                    fiber = d("dietary_fiber", "fiber", "fibre", "dietary_fibre"),
-                    sugar = d("total_sugars", "sugars", "sugar"),
-                    sodium = mg("sodium"),
-                    cholesterol = mg("cholesterol"),
-                    potassium = mg("potassium"),
-                    calcium = mg("calcium"),
-                    iron = mg("iron"),
-                    magnesium = mg("magnesium"),
-                    phosphorus = mg("phosphorus"),
-                    zinc = mg("zinc"),
-                    vitaminA = mg("vitamin_a", "vitamina", "retinol"),
-                    vitaminC = mg("vitamin_c", "vitaminc", "ascorbic_acid"),
-                    vitaminD = mg("vitamin_d", "vitamind"),
-                    vitaminE = mg("vitamin_e", "vitamine"),
-                    vitaminK = mg("vitamin_k", "vitamink"),
-                    vitaminB6 = mg("vitamin_b6", "vitaminb6", "pyridoxine"),
-                    vitaminB12 = mg("vitamin_b12", "vitaminb12", "cobalamin"),
-                    thiamin = mg("thiamin", "thiamine", "vitamin_b1"),
-                    riboflavin = mg("riboflavin", "vitamin_b2"),
-                    niacin = mg("niacin", "vitamin_b3"),
-                    folate = mg("folate_dfe", "folate", "folic_acid", "vitamin_b9"),
-                    caffeine = mg("caffeine"),
-                    mergeMode = mergeMode
+                    searchText = searchText,
+                    calories = n.n("energy_kcal", "calories", "energy"),
+                    protein = n.n("protein"),
+                    carbs = n.n("carbohydrates", "carbs", "carbohydrate"),
+                    fat = n.n("fat", "total_fat"),
+                    saturatedFat = n.n("saturated_fats", "saturated_fat", "saturated_fatty_acids", "saturates"),
+                    polyunsaturatedFat = n.n("polyunsaturated_fats", "polyunsaturated_fat", "polyunsaturated_fatty_acids"),
+                    monounsaturatedFat = n.n("monounsaturated_fats", "monounsaturated_fat", "monounsaturated_fatty_acids"),
+                    transFat = n.n("trans_fats", "trans_fat", "trans_fatty_acids"),
+                    fiber = n.n("dietary_fiber", "fiber", "fibre", "dietary_fibre"),
+                    sugar = n.n("total_sugars", "sugars", "sugar"),
+                    sodium = n.mg1("sodium"),
+                    cholesterol = n.mg1("cholesterol"),
+                    potassium = n.mg1("potassium"),
+                    calcium = n.mg1("calcium"),
+                    iron = n.mg1("iron"),
+                    magnesium = n.mg1("magnesium"),
+                    phosphorus = n.mg1("phosphorus"),
+                    zinc = n.mg1("zinc"),
+                    vitaminA = n.mg3("vitamin_a", "vitamina", "retinol"),
+                    vitaminC = n.mg3("vitamin_c", "vitaminc", "ascorbic_acid"),
+                    vitaminD = n.n("vitamin_d", "vitamind").let { if (it > 10.0) it / 1000.0 else it },
+                    vitaminE = n.n("vitamin_e", "vitamine").let { if (it > 10.0) it / 1000.0 else it },
+                    vitaminK = n.n("vitamin_k", "vitamink").let { if (it > 10.0) it / 1000.0 else it },
+                    vitaminB6 = n.mg3("vitamin_b6", "vitaminb6", "pyridoxine"),
+                    vitaminB12 = n.mg3("vitamin_b12", "vitaminb12", "cobalamin"),
+                    thiamin = n.mg3("thiamin", "thiamine", "vitamin_b1"),
+                    riboflavin = n.n("riboflavin", "vitamin_b2").let { if (it > 10.0) it / 1000.0 else it },
+                    niacin = n.n("niacin", "vitamin_b3").let { if (it > 10.0) it / 1000.0 else it },
+                    folate = n.n("folate_dfe", "folate", "folic_acid", "vitamin_b9").let { if (it > 10.0) it / 1000.0 else it },
+                    caffeine = n.mg1("caffeine"),
                 )
-                nutritionDb.insertFts(sqliteDb, id, searchText, mergeMode)
                 written++
-            }
+                if (written % BATCH_SIZE == 0) {
+                    nutritionDb.rotateBatch(inserter)
+                    onProgress(written)
+                }
+            } catch (_: Exception) { }
 
             rowIndex++
-            if (written % 1000 == 0) onProgress(written)
+            line = reader.readLine()
         }
 
         onProgress(written)
@@ -294,6 +416,7 @@ class NutritionIndexBuildManager(
 
     companion object {
         private const val BUNDLED_ZIP_ASSET_PATH = "nutrition/opennutrition-dataset-2025.1.zip"
-        private const val MAX_RECORDS = 400_000
+        private const val MAX_RECORDS = 500_000
+        private const val BATCH_SIZE = 10_000
     }
 }

@@ -18,7 +18,7 @@ import java.io.File
  * Raw SQLite database for the nutrition food index.
  *
  * Generated at runtime from the bundled zip on first use. Located in
- * [Context.getFilesDir]/nutrition/foods.db — NOT in app assets.
+ * [Context.getFilesDir]/nutrition/foods.db -- NOT in app assets.
  *
  * Uses FTS4 for fast full-text search across food names and alternate names.
  * Because this DB is always regenerated from scratch (never migrated), we use
@@ -59,6 +59,7 @@ class NutritionDatabase private constructor(private val context: Context) {
                 serving_metric_quantity REAL DEFAULT 100.0,
                 labels TEXT DEFAULT '[]',
                 food_type TEXT,
+                search_text TEXT,
                 calories REAL DEFAULT 0,
                 protein REAL DEFAULT 0,
                 carbs REAL DEFAULT 0,
@@ -109,6 +110,30 @@ class NutritionDatabase private constructor(private val context: Context) {
                 search_text
             )
         """.trimIndent())
+
+        ensureColumn(database, "foods", "search_text", "TEXT")
+    }
+
+    private fun ensureColumn(
+        database: SQLiteDatabase,
+        table: String,
+        column: String,
+        type: String
+    ) {
+        val cursor = database.rawQuery("PRAGMA table_info($table)", null)
+        val hasColumn = cursor.use {
+            var found = false
+            while (it.moveToNext()) {
+                if (it.getString(it.getColumnIndexOrThrow("name")) == column) {
+                    found = true
+                    break
+                }
+            }
+            found
+        }
+        if (!hasColumn) {
+            database.execSQL("ALTER TABLE $table ADD COLUMN $column $type")
+        }
     }
 
     fun isPopulated(): Boolean = runCatching {
@@ -139,54 +164,94 @@ class NutritionDatabase private constructor(private val context: Context) {
     // -------------------------------------------------------------------------
 
     /**
-     * Open the database and begin an exclusive transaction for bulk inserts.
-     * Returns the [SQLiteDatabase] to pass to [insertFood] and [insertFts].
-     * Call [commitBulkInsert] when done.
+     * Holds pre-compiled insert statements for the duration of a bulk insert.
+     * Avoids recompiling SQL on every row (326K+ rows -> significant overhead).
+     * Must be closed after use.
      */
-    fun beginBulkInsert(): SQLiteDatabase {
+    inner class BulkInserter(
+        val database: SQLiteDatabase,
+        mergeMode: Boolean,
+        private val prevSynchronous: Int,
+        private val prevTempStore: Int,
+        private val prevCacheSize: Int
+    ) : AutoCloseable {
+
+        private val insertFoodSql = """
+            INSERT OR REPLACE INTO foods (
+                id, name,
+                serving_common_unit, serving_common_quantity,
+                serving_metric_unit, serving_metric_quantity,
+                labels, food_type, search_text,
+                calories, protein, carbs, fat,
+                saturated_fat, polyunsaturated_fat, monounsaturated_fat, trans_fat,
+                fiber, sugar,
+                sodium, cholesterol, potassium, calcium, iron, magnesium, phosphorus, zinc,
+                vitamin_a, vitamin_c, vitamin_d, vitamin_e, vitamin_k,
+                vitamin_b6, vitamin_b12, thiamin, riboflavin, niacin, folate, caffeine
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """.trimIndent()
+
+        private val insertFoodOrIgnoreSql = insertFoodSql.replace(
+            "INSERT OR REPLACE INTO foods",
+            "INSERT OR IGNORE INTO foods"
+        )
+
+        private val insertFtsSql = "INSERT INTO foods_fts(food_id, search_text) VALUES (?, ?)"
+
+        val foodStmt: SQLiteStatement = database.compileStatement(
+            if (mergeMode) insertFoodOrIgnoreSql else insertFoodSql
+        )
+        val ftsStmt: SQLiteStatement = database.compileStatement(insertFtsSql)
+
+        override fun close() {
+            foodStmt.close()
+            ftsStmt.close()
+            database.execSQL("PRAGMA synchronous=$prevSynchronous")
+            database.execSQL("PRAGMA temp_store=$prevTempStore")
+            database.execSQL("PRAGMA cache_size=$prevCacheSize")
+        }
+    }
+
+    private fun readPragmaInt(database: SQLiteDatabase, name: String): Int {
+        val cursor = database.rawQuery("PRAGMA $name", null)
+        return cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
+    }
+
+    /**
+     * Open the database, begin a transaction, and pre-compile insert statements.
+     * Call [commitBulkInsert] or [rollbackBulkInsert] when done, then close the inserter.
+     */
+    fun beginBulkInsert(mergeMode: Boolean = false): BulkInserter {
         val database = openDb()
-        database.beginTransactionNonExclusive() // BEGIN IMMEDIATE — allows concurrent readers
-        return database
+        val prevSynchronous = readPragmaInt(database, "synchronous")
+        val prevTempStore = readPragmaInt(database, "temp_store")
+        val prevCacheSize = readPragmaInt(database, "cache_size")
+        // Optimize bulk load speed; restored in BulkInserter.close()
+        database.execSQL("PRAGMA synchronous=OFF")
+        database.execSQL("PRAGMA temp_store=MEMORY")
+        database.execSQL("PRAGMA cache_size=-32768")
+        database.beginTransactionNonExclusive()
+        return BulkInserter(database, mergeMode, prevSynchronous, prevTempStore, prevCacheSize)
     }
 
-    fun commitBulkInsert(database: SQLiteDatabase) {
-        database.setTransactionSuccessful()
-        database.endTransaction()
+    fun commitBulkInsert(inserter: BulkInserter) {
+        inserter.database.setTransactionSuccessful()
+        inserter.database.endTransaction()
     }
 
-    fun rollbackBulkInsert(database: SQLiteDatabase) {
-        runCatching { database.endTransaction() } // no setTransactionSuccessful → rollback
+    fun rollbackBulkInsert(inserter: BulkInserter) {
+        runCatching { inserter.database.endTransaction() }
     }
 
-    private val insertFoodSql = """
-        INSERT OR REPLACE INTO foods (
-            id, name,
-            serving_common_unit, serving_common_quantity,
-            serving_metric_unit, serving_metric_quantity,
-            labels, food_type,
-            calories, protein, carbs, fat,
-            saturated_fat, polyunsaturated_fat, monounsaturated_fat, trans_fat,
-            fiber, sugar,
-            sodium, cholesterol, potassium, calcium, iron, magnesium, phosphorus, zinc,
-            vitamin_a, vitamin_c, vitamin_d, vitamin_e, vitamin_k,
-            vitamin_b6, vitamin_b12, thiamin, riboflavin, niacin, folate, caffeine
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    """.trimIndent()
-
-    private val insertFoodOrIgnoreSql = insertFoodSql.replace(
-        "INSERT OR REPLACE INTO foods",
-        "INSERT OR IGNORE INTO foods"
-    )
-
-    private val insertFtsSql =
-        "INSERT INTO foods_fts(food_id, search_text) VALUES (?, ?)"
-
-    // FTS4 does not support INSERT OR IGNORE; for merge mode we always insert
-    // (duplicates in the FTS index don't affect correctness, only search ranking)
-    private val insertFtsOrIgnoreSql = insertFtsSql
+    /** Commit the current batch and immediately begin the next one. */
+    fun rotateBatch(inserter: BulkInserter) {
+        inserter.database.setTransactionSuccessful()
+        inserter.database.endTransaction()
+        inserter.database.beginTransactionNonExclusive()
+    }
 
     fun insertFood(
-        database: SQLiteDatabase,
+        inserter: BulkInserter,
         id: String,
         name: String,
         servingCommonUnit: String?,
@@ -195,6 +260,7 @@ class NutritionDatabase private constructor(private val context: Context) {
         servingMetricQuantity: Double,
         labels: String,
         foodType: String?,
+        searchText: String,
         calories: Double,
         protein: Double,
         carbs: Double,
@@ -225,68 +291,64 @@ class NutritionDatabase private constructor(private val context: Context) {
         niacin: Double,
         folate: Double,
         caffeine: Double,
-        mergeMode: Boolean = false
     ) {
-        val stmt: SQLiteStatement = database.compileStatement(
-            if (mergeMode) insertFoodOrIgnoreSql else insertFoodSql
-        )
-        stmt.use {
-            it.bindString(1, id)
-            it.bindString(2, name)
-            if (servingCommonUnit != null) it.bindString(3, servingCommonUnit) else it.bindNull(3)
-            if (servingCommonQuantity != null) it.bindDouble(4, servingCommonQuantity) else it.bindNull(4)
-            it.bindString(5, servingMetricUnit)
-            it.bindDouble(6, servingMetricQuantity)
-            it.bindString(7, labels)
-            if (foodType != null) it.bindString(8, foodType) else it.bindNull(8)
-            it.bindDouble(9, calories)
-            it.bindDouble(10, protein)
-            it.bindDouble(11, carbs)
-            it.bindDouble(12, fat)
-            it.bindDouble(13, saturatedFat)
-            it.bindDouble(14, polyunsaturatedFat)
-            it.bindDouble(15, monounsaturatedFat)
-            it.bindDouble(16, transFat)
-            it.bindDouble(17, fiber)
-            it.bindDouble(18, sugar)
-            it.bindDouble(19, sodium)
-            it.bindDouble(20, cholesterol)
-            it.bindDouble(21, potassium)
-            it.bindDouble(22, calcium)
-            it.bindDouble(23, iron)
-            it.bindDouble(24, magnesium)
-            it.bindDouble(25, phosphorus)
-            it.bindDouble(26, zinc)
-            it.bindDouble(27, vitaminA)
-            it.bindDouble(28, vitaminC)
-            it.bindDouble(29, vitaminD)
-            it.bindDouble(30, vitaminE)
-            it.bindDouble(31, vitaminK)
-            it.bindDouble(32, vitaminB6)
-            it.bindDouble(33, vitaminB12)
-            it.bindDouble(34, thiamin)
-            it.bindDouble(35, riboflavin)
-            it.bindDouble(36, niacin)
-            it.bindDouble(37, folate)
-            it.bindDouble(38, caffeine)
-            it.executeInsert()
+        inserter.foodStmt.run {
+            bindString(1, id)
+            bindString(2, name)
+            if (servingCommonUnit != null) bindString(3, servingCommonUnit) else bindNull(3)
+            if (servingCommonQuantity != null) bindDouble(4, servingCommonQuantity) else bindNull(4)
+            bindString(5, servingMetricUnit)
+            bindDouble(6, servingMetricQuantity)
+            bindString(7, labels)
+            if (foodType != null) bindString(8, foodType) else bindNull(8)
+            bindString(9, searchText)
+            bindDouble(10, calories)
+            bindDouble(11, protein)
+            bindDouble(12, carbs)
+            bindDouble(13, fat)
+            bindDouble(14, saturatedFat)
+            bindDouble(15, polyunsaturatedFat)
+            bindDouble(16, monounsaturatedFat)
+            bindDouble(17, transFat)
+            bindDouble(18, fiber)
+            bindDouble(19, sugar)
+            bindDouble(20, sodium)
+            bindDouble(21, cholesterol)
+            bindDouble(22, potassium)
+            bindDouble(23, calcium)
+            bindDouble(24, iron)
+            bindDouble(25, magnesium)
+            bindDouble(26, phosphorus)
+            bindDouble(27, zinc)
+            bindDouble(28, vitaminA)
+            bindDouble(29, vitaminC)
+            bindDouble(30, vitaminD)
+            bindDouble(31, vitaminE)
+            bindDouble(32, vitaminK)
+            bindDouble(33, vitaminB6)
+            bindDouble(34, vitaminB12)
+            bindDouble(35, thiamin)
+            bindDouble(36, riboflavin)
+            bindDouble(37, niacin)
+            bindDouble(38, folate)
+            bindDouble(39, caffeine)
+            executeInsert()
         }
     }
 
-    fun insertFts(
-        database: SQLiteDatabase,
-        foodId: String,
-        searchText: String,
-        mergeMode: Boolean = false
-    ) {
-        val stmt = database.compileStatement(
-            if (mergeMode) insertFtsOrIgnoreSql else insertFtsSql
-        )
-        stmt.use {
-            it.bindString(1, foodId)
-            it.bindString(2, searchText)
-            it.executeInsert()
+    fun insertFts(inserter: BulkInserter, foodId: String, searchText: String) {
+        inserter.ftsStmt.run {
+            bindString(1, foodId)
+            bindString(2, searchText)
+            executeInsert()
         }
+    }
+
+    fun rebuildFtsFromFoods(inserter: BulkInserter) {
+        inserter.database.execSQL("DELETE FROM foods_fts")
+        inserter.database.execSQL(
+            "INSERT INTO foods_fts(food_id, search_text) SELECT id, search_text FROM foods"
+        )
     }
 
     // -------------------------------------------------------------------------
