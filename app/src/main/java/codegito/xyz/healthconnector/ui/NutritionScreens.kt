@@ -208,8 +208,8 @@ fun NutritionHomeScreen(
                 }
             }
 
-            // Dataset banner – hide once index has > 10 foods
-            if (indexRecordCount in 0..10) {
+            // Dataset banner – show while building or when empty (< 10 foods)
+            if (isDbBuilding || indexRecordCount in 0..10) {
                 item {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -217,20 +217,35 @@ fun NutritionHomeScreen(
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { navController.navigate("nutrition_settings?highlight=dataset") }
+                            .clickable {
+                                if (!isDbBuilding)
+                                    navController.navigate("nutrition_settings?highlight=dataset")
+                            }
                     ) {
                         Column(
                             modifier = Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text(
-                                "No food database loaded",
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                "Tap to open Nutrition Settings and build the food database.",
-                                style = MaterialTheme.typography.bodySmall
-                            )
+                            if (isDbBuilding) {
+                                Text(
+                                    "Building food database…",
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                Text(
+                                    "$homeDbProgressText foods indexed so far",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            } else {
+                                Text(
+                                    "No food database loaded",
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Text(
+                                    "Tap to open Nutrition Settings and build the food database.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                         }
                     }
                 }
