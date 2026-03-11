@@ -223,6 +223,7 @@ class NutritionDatabase private constructor(private val context: Context) {
         database.execSQL("PRAGMA synchronous=OFF")
         database.execSQL("PRAGMA temp_store=MEMORY")
         database.execSQL("PRAGMA cache_size=-32768")
+        createFtsTableIfNeeded(database)
         database.beginTransactionNonExclusive()
         return BulkInserter(database, mergeMode, prevSynchronous, prevTempStore, prevCacheSize)
     }

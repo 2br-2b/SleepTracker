@@ -7,6 +7,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.time.Instant
@@ -97,10 +100,14 @@ class NutritionIndexBuildManager(
                 var entry = zip.nextEntry
                 while (entry != null && isActive) {
                     if (!entry.isDirectory && entry.name.lowercase().endsWith(".tsv")) {
-                        val reader = BufferedReader(InputStreamReader(NonClosingInputStream(zip)), 65536)
-                        val written = writeFoodsFromTsv(reader, inserter, nutritionDb) { current ->
-                            progressCallback(totalWritten + current, 326760)
+                        val extracted = extractZipEntryToTempFile(zip, entry.name)
+                        val written = FileInputStream(extracted).use { fis ->
+                            val reader = BufferedReader(InputStreamReader(fis), 262144)
+                            writeFoodsFromTsv(reader, inserter, nutritionDb) { current ->
+                                progressCallback(totalWritten + current, 326760)
+                            }
                         }
+                        extracted.delete()
                         if (written > 0) {
                             totalWritten += written
                             bestSource = "$source::${entry.name}"
@@ -378,8 +385,9 @@ class NutritionIndexBuildManager(
             }
         }
 
-        val batchSize = 500
-        val values = StringBuilder(1024 * 16)
+        val batchSize = 300
+        val maxSqlChars = 600_000
+        val values = StringBuilder(1024 * 64)
         var pending = 0
         fun sqlQuote(s: String): String = "'" + s.replace("'", "''") + "'"
         fun sqlNull(s: String?): String = if (s == null) "NULL" else sqlQuote(s)
@@ -503,7 +511,7 @@ class NutritionIndexBuildManager(
                 values.append(caffeine)
                 values.append(')')
                 pending++
-                if (pending >= batchSize) {
+                if (pending >= batchSize || values.length >= maxSqlChars) {
                     flushBatch()
                 }
                 written++
@@ -520,6 +528,22 @@ class NutritionIndexBuildManager(
         flushBatch()
         onProgress(written)
         return written
+    }
+
+    private fun extractZipEntryToTempFile(zip: ZipInputStream, name: String): File {
+        val outDir = context.cacheDir.resolve("nutrition")
+        outDir.mkdirs()
+        val safeName = name.replace('\\', '_').replace('/', '_')
+        val outFile = File.createTempFile("opennutrition-", "-$safeName", outDir)
+        FileOutputStream(outFile).use { out ->
+            val buffer = ByteArray(1024 * 1024)
+            while (true) {
+                val read = zip.read(buffer)
+                if (read <= 0) break
+                out.write(buffer, 0, read)
+            }
+        }
+        return outFile
     }
 
     private fun writeMetadata(source: String, recordCount: Int) {

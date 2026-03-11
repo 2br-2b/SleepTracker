@@ -233,7 +233,7 @@ fun NutritionHomeScreen(
                                 )
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                                 Text(
-                                    "$homeDbProgressText foods indexed so far",
+                                    "Unzipping dataset…",
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             } else {
@@ -767,7 +767,7 @@ fun LogFoodScreen(
                     Column(modifier = Modifier.fillMaxWidth()) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         Text(
-                            "Indexing food database… $dbBuildProgressText foods so far",
+                            "Unzipping dataset…",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 2.dp)
@@ -782,7 +782,7 @@ fun LogFoodScreen(
                     item {
                         Text(
                             if (isDbBuilding)
-                                "No results yet — database is still building ($dbBuildProgressText foods so far)"
+                                "No results yet — database is still building (unzipping dataset…)"
                             else
                                 "No results found. Build a nutrition dataset in Settings first.",
                             style = MaterialTheme.typography.bodySmall,
