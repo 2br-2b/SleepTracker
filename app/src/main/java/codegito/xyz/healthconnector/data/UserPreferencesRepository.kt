@@ -66,6 +66,8 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val NUTRITION_TRACKING_ENABLED_KEY  = booleanPreferencesKey("nutrition_tracking_enabled")
     private val AMOLED_PITCH_BLACK_KEY          = booleanPreferencesKey("amoled_pitch_black")
     private val SHOW_ADVANCED_SETTINGS_KEY      = booleanPreferencesKey("show_advanced_settings")
+    private val GLOBAL_NETWORK_ENABLED_KEY      = booleanPreferencesKey("global_network_enabled")
+    private val GLOBAL_AI_ENABLED_KEY           = booleanPreferencesKey("global_ai_enabled")
     private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY  = intPreferencesKey("nutrition_past_date_range_days")
     private val NUTRITION_MEAL_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_meal_duration_minutes")
     private val NUTRITION_SNACK_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_snack_duration_minutes")
@@ -159,6 +161,17 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     val showAdvancedSettings: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[SHOW_ADVANCED_SETTINGS_KEY] ?: false }
+
+    val globalNetworkEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[GLOBAL_NETWORK_ENABLED_KEY] ?: true }
+
+    val globalAiEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[GLOBAL_AI_ENABLED_KEY] ?: true }
+
+    val effectiveGlobalAiEnabled: Flow<Boolean> = combine(
+        globalNetworkEnabled,
+        globalAiEnabled
+    ) { networkEnabled, aiEnabled -> networkEnabled && aiEnabled }
 
     // ── Tracking type flows ───────────────────────────────────────────────
 
@@ -298,6 +311,14 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setShowAdvancedSettings(show: Boolean) {
         context.dataStore.edit { prefs -> prefs[SHOW_ADVANCED_SETTINGS_KEY] = show }
+    }
+
+    suspend fun setGlobalNetworkEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[GLOBAL_NETWORK_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setGlobalAiEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[GLOBAL_AI_ENABLED_KEY] = enabled }
     }
 
     suspend fun setSleepEnabled(enabled: Boolean) {

@@ -198,6 +198,8 @@ private fun OnboardingFlow(
     // Which tracking types the user wants
     var sleepSelected by remember { mutableStateOf(true) }
     var nutritionSelected by remember { mutableStateOf(true) }
+    var globalNetworkEnabled by remember { mutableStateOf(true) }
+    var globalAiEnabled by remember { mutableStateOf(true) }
 
     var bedtimeRange by remember { mutableStateOf(TimeRange.BEDTIME) }
     var wakeupRange by remember { mutableStateOf(TimeRange.WAKEUP) }
@@ -394,6 +396,24 @@ private fun OnboardingFlow(
                                 checked = nutritionSelected,
                                 onCheckedChange = { nutritionSelected = it }
                             )
+                            HorizontalDivider()
+                            ToggleRow(
+                                label = "Enable network features",
+                                description = "Allow features that require network access across the app.",
+                                checked = globalNetworkEnabled,
+                                onCheckedChange = { enabled ->
+                                    globalNetworkEnabled = enabled
+                                    if (!enabled) globalAiEnabled = false
+                                }
+                            )
+                            HorizontalDivider()
+                            ToggleRow(
+                                label = "Enable AI features",
+                                description = "Master switch for AI-powered capabilities when they are added.",
+                                checked = globalNetworkEnabled && globalAiEnabled,
+                                enabled = globalNetworkEnabled,
+                                onCheckedChange = { globalAiEnabled = it }
+                            )
                         }
                     }
 
@@ -410,6 +430,8 @@ private fun OnboardingFlow(
                             scope.launch {
                                 userPreferencesRepository.setSleepEnabled(sleepSelected)
                                 userPreferencesRepository.setNutritionEnabled(nutritionSelected)
+                                userPreferencesRepository.setGlobalNetworkEnabled(globalNetworkEnabled)
+                                userPreferencesRepository.setGlobalAiEnabled(globalAiEnabled)
                             }
                             // Start extraction in background as soon as nutrition is selected
                             if (nutritionSelected) startExtraction()
@@ -823,6 +845,38 @@ private fun OnboardingFlow(
             HorizontalDivider()
         }
         } // end inner scrollable Column
+    }
+}
+
+@Composable
+private fun ToggleRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label,
+                fontWeight = FontWeight.SemiBold,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled
+        )
     }
 }
 

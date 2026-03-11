@@ -44,6 +44,8 @@ fun SettingsScreen(
     val showAdvancedSettings by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
+    val globalNetworkEnabled by userPreferencesRepository.globalNetworkEnabled.collectAsState(initial = true)
+    val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
     val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
 
@@ -108,6 +110,39 @@ fun SettingsScreen(
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
                 modifier = Modifier.clickable { onNutritionSettings() }
             )
+
+            HorizontalDivider()
+
+            // ── Connectivity & AI ────────────────────────────────────────
+            SectionHeader("Connectivity")
+
+            ListItem(
+                headlineContent = { Text("Enable network features") },
+                supportingContent = { Text("Globally allow app features that require network access.") },
+                trailingContent = {
+                    Switch(
+                        checked = globalNetworkEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { userPreferencesRepository.setGlobalNetworkEnabled(enabled) }
+                        }
+                    )
+                }
+            )
+
+            if (globalNetworkEnabled) {
+                ListItem(
+                    headlineContent = { Text("Enable AI features") },
+                    supportingContent = { Text("Master switch for AI-powered capabilities when they are added.") },
+                    trailingContent = {
+                        Switch(
+                            checked = effectiveGlobalAiEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch { userPreferencesRepository.setGlobalAiEnabled(enabled) }
+                            }
+                        )
+                    }
+                )
+            }
 
             HorizontalDivider()
 
