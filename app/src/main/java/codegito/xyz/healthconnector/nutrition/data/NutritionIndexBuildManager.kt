@@ -81,6 +81,7 @@ class NutritionIndexBuildManager(
         progressCallback: (Int, Int) -> Unit,
         mergeMode: Boolean
     ): BuildResult = withContext(Dispatchers.IO) {
+        // NOTE: This build step is still slow on large datasets (~300k+ rows).
         val nutritionDb = NutritionDatabase.getInstance(context)
 
         if (!mergeMode) {
@@ -187,10 +188,113 @@ class NutritionIndexBuildManager(
 
         fun col(idx: Int) = if (idx < 0 || idx > maxNeededCol) "" else colVals[idx] ?: ""
 
-        // Parse a flat JSON object {"key":val,...} into a Double map without JSONObject
-        fun parseNumericJson(json: String): HashMap<String, Double>? {
+        // Parse a flat JSON object {"key":val,...} into a DoubleArray keyed by index.
+        // Avoids HashMap allocations and repeated string hashing per lookup.
+        val N = 0
+        val PROTEIN = 1
+        val CARBS = 2
+        val FAT = 3
+        val SAT_FAT = 4
+        val POLY_FAT = 5
+        val MONO_FAT = 6
+        val TRANS_FAT = 7
+        val FIBER = 8
+        val SUGAR = 9
+        val SODIUM = 10
+        val CHOLESTEROL = 11
+        val POTASSIUM = 12
+        val CALCIUM = 13
+        val IRON = 14
+        val MAGNESIUM = 15
+        val PHOSPHORUS = 16
+        val ZINC = 17
+        val VITA = 18
+        val VITC = 19
+        val VITD = 20
+        val VITE = 21
+        val VITK = 22
+        val VITB6 = 23
+        val VITB12 = 24
+        val THIAMIN = 25
+        val RIBOFLAVIN = 26
+        val NIACIN = 27
+        val FOLATE = 28
+        val CAFFEINE = 29
+
+        fun parseDoubleFast(s: String, start: Int, end: Int): Double? {
+            if (start >= end) return null
+            var i = start
+            var neg = false
+            if (s[i] == '-') { neg = true; i++ }
+            var intPart = 0L
+            var hasInt = false
+            while (i < end) {
+                val c = s[i]
+                if (c in '0'..'9') {
+                    intPart = intPart * 10 + (c - '0')
+                    hasInt = true
+                    i++
+                } else {
+                    break
+                }
+            }
+            var frac = 0.0
+            var scale = 1.0
+            if (i < end && s[i] == '.') {
+                i++
+                while (i < end) {
+                    val c = s[i]
+                    if (c in '0'..'9') {
+                        frac = frac * 10 + (c - '0')
+                        scale *= 10
+                        i++
+                    } else {
+                        break
+                    }
+                }
+            }
+            if (!hasInt && scale == 1.0) return null
+            val v = intPart.toDouble() + (if (scale == 1.0) 0.0 else frac / scale)
+            return if (neg) -v else v
+        }
+
+        fun keyIndex(key: String): Int = when (key) {
+            "energy_kcal", "calories", "energy" -> N
+            "protein" -> PROTEIN
+            "carbohydrates", "carbs", "carbohydrate" -> CARBS
+            "fat", "total_fat" -> FAT
+            "saturated_fats", "saturated_fat", "saturated_fatty_acids", "saturates" -> SAT_FAT
+            "polyunsaturated_fats", "polyunsaturated_fat", "polyunsaturated_fatty_acids" -> POLY_FAT
+            "monounsaturated_fats", "monounsaturated_fat", "monounsaturated_fatty_acids" -> MONO_FAT
+            "trans_fats", "trans_fat", "trans_fatty_acids" -> TRANS_FAT
+            "dietary_fiber", "fiber", "fibre", "dietary_fibre" -> FIBER
+            "total_sugars", "sugars", "sugar" -> SUGAR
+            "sodium" -> SODIUM
+            "cholesterol" -> CHOLESTEROL
+            "potassium" -> POTASSIUM
+            "calcium" -> CALCIUM
+            "iron" -> IRON
+            "magnesium" -> MAGNESIUM
+            "phosphorus" -> PHOSPHORUS
+            "zinc" -> ZINC
+            "vitamin_a", "vitamina", "retinol" -> VITA
+            "vitamin_c", "vitaminc", "ascorbic_acid" -> VITC
+            "vitamin_d", "vitamind" -> VITD
+            "vitamin_e", "vitamine" -> VITE
+            "vitamin_k", "vitamink" -> VITK
+            "vitamin_b6", "vitaminb6", "pyridoxine" -> VITB6
+            "vitamin_b12", "vitaminb12", "cobalamin" -> VITB12
+            "thiamin", "thiamine", "vitamin_b1" -> THIAMIN
+            "riboflavin", "vitamin_b2" -> RIBOFLAVIN
+            "niacin", "vitamin_b3" -> NIACIN
+            "folate_dfe", "folate", "folic_acid", "vitamin_b9" -> FOLATE
+            "caffeine" -> CAFFEINE
+            else -> -1
+        }
+
+        fun parseNumericJson(json: String): DoubleArray? {
             if (json.length < 3) return null
-            val map = HashMap<String, Double>(64)
+            val arr = DoubleArray(30)
             var i = json.indexOf('"')
             while (i in 0 until json.length) {
                 val keyEnd = json.indexOf('"', i + 1)
@@ -205,36 +309,26 @@ class NutritionIndexBuildManager(
                 if (c == '-' || c in '0'..'9') {
                     var ve = vs + 1
                     while (ve < json.length && json[ve] != ',' && json[ve] != '}') ve++
-                    json.substring(vs, ve).toDoubleOrNull()?.let { map[key] = it }
+                    val idx = keyIndex(key)
+                    if (idx >= 0) {
+                        parseDoubleFast(json, vs, ve)?.let { arr[idx] = it }
+                    }
                     i = json.indexOf('"', ve)
                 } else {
                     i = json.indexOf('"', vs)
                 }
             }
-            return map.ifEmpty { null }
+            return arr
         }
 
-        // Inline nutrient lookup -- avoids vararg String[] allocation per call
-        fun HashMap<String, Double>?.n(k1: String): Double {
-            val v = this?.get(k1); return if (v != null && !v.isNaN() && v != 0.0) v else 0.0
+        fun DoubleArray?.n(idx: Int): Double {
+            val v = this?.get(idx) ?: 0.0
+            return if (!v.isNaN() && v != 0.0) v else 0.0
         }
-        fun HashMap<String, Double>?.n(k1: String, k2: String): Double {
-            var v = this?.get(k1); if (v != null && !v.isNaN() && v != 0.0) return v
-            v = this?.get(k2); return if (v != null && !v.isNaN() && v != 0.0) v else 0.0
+        fun DoubleArray?.mg(idx: Int): Double {
+            val r = n(idx)
+            return if (r > 10.0) r / 1000.0 else r
         }
-        fun HashMap<String, Double>?.n(k1: String, k2: String, k3: String): Double {
-            var v = this?.get(k1); if (v != null && !v.isNaN() && v != 0.0) return v
-            v = this?.get(k2); if (v != null && !v.isNaN() && v != 0.0) return v
-            v = this?.get(k3); return if (v != null && !v.isNaN() && v != 0.0) v else 0.0
-        }
-        fun HashMap<String, Double>?.n(k1: String, k2: String, k3: String, k4: String): Double {
-            var v = this?.get(k1); if (v != null && !v.isNaN() && v != 0.0) return v
-            v = this?.get(k2); if (v != null && !v.isNaN() && v != 0.0) return v
-            v = this?.get(k3); if (v != null && !v.isNaN() && v != 0.0) return v
-            v = this?.get(k4); return if (v != null && !v.isNaN() && v != 0.0) v else 0.0
-        }
-        fun HashMap<String, Double>?.mg1(k1: String): Double { val r = n(k1); return if (r > 10.0) r / 1000.0 else r }
-        fun HashMap<String, Double>?.mg3(k1: String, k2: String, k3: String): Double { val r = n(k1, k2, k3); return if (r > 10.0) r / 1000.0 else r }
 
         // Inline serving JSON parser -- avoids JSONObject for the serving field
         // Format: {"common":{"unit":"oz","quantity":3},"metric":{"unit":"g","quantity":85}}
@@ -284,6 +378,19 @@ class NutritionIndexBuildManager(
             }
         }
 
+        val batchSize = 500
+        val values = StringBuilder(1024 * 16)
+        var pending = 0
+        fun sqlQuote(s: String): String = "'" + s.replace("'", "''") + "'"
+        fun sqlNull(s: String?): String = if (s == null) "NULL" else sqlQuote(s)
+        fun sqlNum(d: Double?): String = if (d == null) "NULL" else d.toString()
+        fun flushBatch() {
+            if (pending == 0) return
+            nutritionDb.insertFoodsBatchRaw(inserter, values.toString())
+            values.setLength(0)
+            pending = 0
+        }
+
         var line = reader.readLine()
         while (line != null) {
             if (written >= MAX_RECORDS) break
@@ -322,48 +429,83 @@ class NutritionIndexBuildManager(
             val n = if (nutritionRaw.startsWith('{')) parseNumericJson(nutritionRaw) else null
 
             try {
-                nutritionDb.insertFood(
-                    inserter = inserter,
-                    id = id,
-                    name = name,
-                    servingCommonUnit = servingCommonUnit,
-                    servingCommonQuantity = servingCommonQty,
-                    servingMetricUnit = servingMetricUnit,
-                    servingMetricQuantity = servingMetricQty,
-                    labels = labelsJson,
-                    foodType = foodType,
-                    searchText = searchText,
-                    calories = n.n("energy_kcal", "calories", "energy"),
-                    protein = n.n("protein"),
-                    carbs = n.n("carbohydrates", "carbs", "carbohydrate"),
-                    fat = n.n("fat", "total_fat"),
-                    saturatedFat = n.n("saturated_fats", "saturated_fat", "saturated_fatty_acids", "saturates"),
-                    polyunsaturatedFat = n.n("polyunsaturated_fats", "polyunsaturated_fat", "polyunsaturated_fatty_acids"),
-                    monounsaturatedFat = n.n("monounsaturated_fats", "monounsaturated_fat", "monounsaturated_fatty_acids"),
-                    transFat = n.n("trans_fats", "trans_fat", "trans_fatty_acids"),
-                    fiber = n.n("dietary_fiber", "fiber", "fibre", "dietary_fibre"),
-                    sugar = n.n("total_sugars", "sugars", "sugar"),
-                    sodium = n.mg1("sodium"),
-                    cholesterol = n.mg1("cholesterol"),
-                    potassium = n.mg1("potassium"),
-                    calcium = n.mg1("calcium"),
-                    iron = n.mg1("iron"),
-                    magnesium = n.mg1("magnesium"),
-                    phosphorus = n.mg1("phosphorus"),
-                    zinc = n.mg1("zinc"),
-                    vitaminA = n.mg3("vitamin_a", "vitamina", "retinol"),
-                    vitaminC = n.mg3("vitamin_c", "vitaminc", "ascorbic_acid"),
-                    vitaminD = n.n("vitamin_d", "vitamind").let { if (it > 10.0) it / 1000.0 else it },
-                    vitaminE = n.n("vitamin_e", "vitamine").let { if (it > 10.0) it / 1000.0 else it },
-                    vitaminK = n.n("vitamin_k", "vitamink").let { if (it > 10.0) it / 1000.0 else it },
-                    vitaminB6 = n.mg3("vitamin_b6", "vitaminb6", "pyridoxine"),
-                    vitaminB12 = n.mg3("vitamin_b12", "vitaminb12", "cobalamin"),
-                    thiamin = n.mg3("thiamin", "thiamine", "vitamin_b1"),
-                    riboflavin = n.n("riboflavin", "vitamin_b2").let { if (it > 10.0) it / 1000.0 else it },
-                    niacin = n.n("niacin", "vitamin_b3").let { if (it > 10.0) it / 1000.0 else it },
-                    folate = n.n("folate_dfe", "folate", "folic_acid", "vitamin_b9").let { if (it > 10.0) it / 1000.0 else it },
-                    caffeine = n.mg1("caffeine"),
-                )
+                val calories = n.n(N)
+                val protein = n.n(PROTEIN)
+                val carbs = n.n(CARBS)
+                val fat = n.n(FAT)
+                val saturatedFat = n.n(SAT_FAT)
+                val polyunsaturatedFat = n.n(POLY_FAT)
+                val monounsaturatedFat = n.n(MONO_FAT)
+                val transFat = n.n(TRANS_FAT)
+                val fiber = n.n(FIBER)
+                val sugar = n.n(SUGAR)
+                val sodium = n.mg(SODIUM)
+                val cholesterol = n.mg(CHOLESTEROL)
+                val potassium = n.mg(POTASSIUM)
+                val calcium = n.mg(CALCIUM)
+                val iron = n.mg(IRON)
+                val magnesium = n.mg(MAGNESIUM)
+                val phosphorus = n.mg(PHOSPHORUS)
+                val zinc = n.mg(ZINC)
+                val vitaminA = n.mg(VITA)
+                val vitaminC = n.mg(VITC)
+                val vitaminD = n.mg(VITD)
+                val vitaminE = n.mg(VITE)
+                val vitaminK = n.mg(VITK)
+                val vitaminB6 = n.mg(VITB6)
+                val vitaminB12 = n.mg(VITB12)
+                val thiamin = n.mg(THIAMIN)
+                val riboflavin = n.mg(RIBOFLAVIN)
+                val niacin = n.mg(NIACIN)
+                val folate = n.mg(FOLATE)
+                val caffeine = n.mg(CAFFEINE)
+
+                if (pending > 0) values.append(',')
+                values.append('(')
+                values.append(sqlQuote(id)).append(',')
+                values.append(sqlQuote(name)).append(',')
+                values.append(sqlNull(servingCommonUnit)).append(',')
+                values.append(sqlNum(servingCommonQty)).append(',')
+                values.append(sqlQuote(servingMetricUnit)).append(',')
+                values.append(servingMetricQty).append(',')
+                values.append(sqlQuote(labelsJson)).append(',')
+                values.append(sqlNull(foodType)).append(',')
+                values.append(sqlQuote(searchText)).append(',')
+                values.append(calories).append(',')
+                values.append(protein).append(',')
+                values.append(carbs).append(',')
+                values.append(fat).append(',')
+                values.append(saturatedFat).append(',')
+                values.append(polyunsaturatedFat).append(',')
+                values.append(monounsaturatedFat).append(',')
+                values.append(transFat).append(',')
+                values.append(fiber).append(',')
+                values.append(sugar).append(',')
+                values.append(sodium).append(',')
+                values.append(cholesterol).append(',')
+                values.append(potassium).append(',')
+                values.append(calcium).append(',')
+                values.append(iron).append(',')
+                values.append(magnesium).append(',')
+                values.append(phosphorus).append(',')
+                values.append(zinc).append(',')
+                values.append(vitaminA).append(',')
+                values.append(vitaminC).append(',')
+                values.append(vitaminD).append(',')
+                values.append(vitaminE).append(',')
+                values.append(vitaminK).append(',')
+                values.append(vitaminB6).append(',')
+                values.append(vitaminB12).append(',')
+                values.append(thiamin).append(',')
+                values.append(riboflavin).append(',')
+                values.append(niacin).append(',')
+                values.append(folate).append(',')
+                values.append(caffeine)
+                values.append(')')
+                pending++
+                if (pending >= batchSize) {
+                    flushBatch()
+                }
                 written++
                 if (written % BATCH_SIZE == 0) {
                     nutritionDb.rotateBatch(inserter)
@@ -375,6 +517,7 @@ class NutritionIndexBuildManager(
             line = reader.readLine()
         }
 
+        flushBatch()
         onProgress(written)
         return written
     }

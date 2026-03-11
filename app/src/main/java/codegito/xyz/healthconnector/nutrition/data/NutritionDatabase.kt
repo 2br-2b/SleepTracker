@@ -104,13 +104,6 @@ class NutritionDatabase private constructor(private val context: Context) {
             )
         """.trimIndent())
 
-        database.execSQL("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts4(
-                food_id,
-                search_text
-            )
-        """.trimIndent())
-
         ensureColumn(database, "foods", "search_text", "TEXT")
     }
 
@@ -345,9 +338,28 @@ class NutritionDatabase private constructor(private val context: Context) {
     }
 
     fun rebuildFtsFromFoods(inserter: BulkInserter) {
+        createFtsTableIfNeeded(inserter.database)
         inserter.database.execSQL("DELETE FROM foods_fts")
         inserter.database.execSQL(
             "INSERT INTO foods_fts(food_id, search_text) SELECT id, search_text FROM foods"
+        )
+    }
+
+    fun insertFoodsBatchRaw(inserter: BulkInserter, valuesSql: String) {
+        if (valuesSql.isBlank()) return
+        inserter.database.execSQL(
+            "INSERT OR REPLACE INTO foods (" +
+                "id, name, " +
+                "serving_common_unit, serving_common_quantity, " +
+                "serving_metric_unit, serving_metric_quantity, " +
+                "labels, food_type, search_text, " +
+                "calories, protein, carbs, fat, " +
+                "saturated_fat, polyunsaturated_fat, monounsaturated_fat, trans_fat, " +
+                "fiber, sugar, " +
+                "sodium, cholesterol, potassium, calcium, iron, magnesium, phosphorus, zinc, " +
+                "vitamin_a, vitamin_c, vitamin_d, vitamin_e, vitamin_k, " +
+                "vitamin_b6, vitamin_b12, thiamin, riboflavin, niacin, folate, caffeine" +
+            ") VALUES $valuesSql"
         )
     }
 
@@ -532,5 +544,14 @@ class NutritionDatabase private constructor(private val context: Context) {
                 INSTANCE ?: NutritionDatabase(context.applicationContext).also { INSTANCE = it }
             }
         }
+    }
+
+    private fun createFtsTableIfNeeded(database: SQLiteDatabase) {
+        database.execSQL("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts4(
+                food_id,
+                search_text
+            )
+        """.trimIndent())
     }
 }
