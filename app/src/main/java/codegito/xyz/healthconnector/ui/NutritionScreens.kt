@@ -631,6 +631,7 @@ fun LogFoodScreen(
     var aiStatus by remember { mutableStateOf<String?>(null) }
     var followupRemaining by remember { mutableIntStateOf(1) }
     val aiMessages = remember { mutableStateListOf<AiChatMessage>() }
+    val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
     var amountText by remember { mutableStateOf(TextFieldValue("")) }
@@ -859,19 +860,21 @@ fun LogFoodScreen(
             return scored.values.sortedByDescending { it.second }.map { it.first }.take(8)
         }
 
-        suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>): ModelDecision? {
+        suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>): Result<ModelDecision> {
             val aiEnabled = userPreferencesRepository.effectiveGlobalAiEnabled.first()
-            if (!aiEnabled || candidates.isEmpty()) return null
+            if (!aiEnabled || candidates.isEmpty()) return Result.failure(IllegalStateException("AI unavailable"))
 
             val provider = userPreferencesRepository.aiProvider.first()
             if (provider == codegito.xyz.healthconnector.data.model.AiProvider.ANTHROPIC ||
                 provider == codegito.xyz.healthconnector.data.model.AiProvider.GEMINI
-            ) return null
+            ) return Result.failure(IllegalStateException("Provider not supported for structured decision flow"))
 
             val baseUrl = userPreferencesRepository.aiBaseUrl.first().trim()
             val apiKey = userPreferencesRepository.aiApiKey.first().trim()
             val model = userPreferencesRepository.aiModel.first().ifBlank { provider.defaultModel }
-            if (baseUrl.isBlank() || (provider.requiresApiKey && apiKey.isBlank())) return null
+            if (baseUrl.isBlank() || (provider.requiresApiKey && apiKey.isBlank())) {
+                return Result.failure(IllegalStateException("AI provider config incomplete"))
+            }
 
             val candidateText = candidates.mapIndexed { idx, c ->
                 val si = c.servingInfo
@@ -881,17 +884,18 @@ fun LogFoodScreen(
                 "[$idx] ${c.name}; $servingDesc; per100g: kcal=${c.nutrientsPer100g.calories}, carbs=${c.nutrientsPer100g.carbsGrams}g, protein=${c.nutrientsPer100g.proteinGrams}g, fat=${c.nutrientsPer100g.fatGrams}g"
             }.joinToString("\n")
 
-            val promptBody = """
-Choose best match for user food mention and quantity.
-Mention: "${mention.foodPhrase}", qty=${mention.quantity}, unit=${mention.unit ?: "(none)"}
-Candidates:
-$candidateText
-Return ONLY JSON: {"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
-- candidateIndex = -1 if no match
-- multiplier adjusts all nutrients globally (e.g. 1.1)
-""".trimIndent().replace("\"", "\\\"")
+            fun parseDecision(raw: String): ModelDecision? {
+                val idx = Regex("""\"candidateIndex\"\s*:\s*(-?\d+)""").find(raw)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return null
+                val qty = Regex("""\"quantity\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                val unit = Regex("""\"unit\"\s*:\s*\"(.*?)\"""").find(raw)?.groupValues?.getOrNull(1)
+                val mult = Regex("""\"multiplier\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                return ModelDecision(candidateIndex = idx, quantity = qty, unit = unit?.takeIf { it.isNotBlank() }, multiplier = mult)
+            }
 
-            return runCatching {
+            suspend fun callModel(userText: String): String? = runCatching {
+                if (developerModeEnabled) aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST] $userText")
+                val escaped = userText.replace("\\", "\\\\").replace("\"", "\\\"")
+                val payload = "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"$escaped\"}],\"temperature\":0.1}"
                 val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
@@ -901,7 +905,6 @@ Return ONLY JSON: {"candidateIndex":int,"quantity":number|null,"unit":string|nul
                     setRequestProperty("Content-Type", "application/json")
                     if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
                 }
-                val payload = "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"$promptBody\"}],\"temperature\":0.1}"
                 conn.outputStream.use { it.write(payload.toByteArray()) }
                 val code = conn.responseCode
                 val body = try {
@@ -910,15 +913,39 @@ Return ONLY JSON: {"candidateIndex":int,"quantity":number|null,"unit":string|nul
                     conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
                 }
                 if (code !in 200..299) return@runCatching null
-
-                val contentMatch = Regex("""\"content\"\s*:\s*\"(.*?)\"""").find(body)
-                val content = contentMatch?.groupValues?.getOrNull(1)?.replace("\n", " ") ?: return@runCatching null
-                val idx = Regex("""\"candidateIndex\"\s*:\s*(-?\d+)""").find(content)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
-                val qty = Regex("""\"quantity\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(content)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-                val unit = Regex("""\"unit\"\s*:\s*\"(.*?)\"""").find(content)?.groupValues?.getOrNull(1)
-                val mult = Regex("""\"multiplier\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(content)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-                ModelDecision(candidateIndex = idx, quantity = qty, unit = unit?.takeIf { it.isNotBlank() }, multiplier = mult)
+                val content = Regex("""\"content\"\s*:\s*\"(.*?)\"""").find(body)?.groupValues?.getOrNull(1)
+                    ?.replace("\n", " ")
+                if (developerModeEnabled && content != null) aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE] $content")
+                content
             }.getOrNull()
+
+            val basePrompt = """
+Choose best match for user food mention and quantity.
+Mention: "${mention.foodPhrase}", qty=${mention.quantity}, unit=${mention.unit ?: "(none)"}
+Candidates:
+$candidateText
+Return ONLY JSON: {"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
+- candidateIndex = -1 if no match
+- multiplier adjusts all nutrients globally (e.g. 1.1)
+""".trimIndent()
+
+            val first = callModel(basePrompt)
+            val firstDecision = first?.let(::parseDecision)
+            if (firstDecision != null) return Result.success(firstDecision)
+
+            val repairPrompt = """
+Your previous output was unparsable.
+Error: Could not parse strict JSON keys candidateIndex/quantity/unit/multiplier.
+Previous output: ${first ?: "(empty)"}
+Return ONLY this strict JSON object format now:
+{"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
+No markdown, no prose.
+""".trimIndent()
+            val second = callModel(repairPrompt)
+            val secondDecision = second?.let(::parseDecision)
+            if (secondDecision != null) return Result.success(secondDecision)
+
+            return Result.failure(IllegalStateException("Model returned unparsable output twice"))
         }
 
         suspend fun logFallbackEstimate(mention: ParsedMention) {
@@ -978,15 +1005,20 @@ Return ONLY JSON: {"candidateIndex":int,"quantity":number|null,"unit":string|nul
         for (mention in mentions) {
             val candidates = findCandidates(mention.foodPhrase)
             if (candidates.isNotEmpty()) {
-                val decision = askModelForDecision(mention, candidates)
-                val chosen = if (decision != null && decision.candidateIndex in candidates.indices) {
-                    candidates[decision.candidateIndex]
-                } else {
-                    candidates.first()
+                val decisionResult = askModelForDecision(mention, candidates)
+                val decision = decisionResult.getOrNull()
+                if (decision == null) {
+                    val err = "AI response could not be parsed after retry. Please try again or adjust model settings."
+                    aiStatus = err
+                    aiMessages += AiChatMessage(fromUser = false, text = err)
+                    aiBusy = false
+                    return
                 }
-                val qty = (decision?.quantity ?: mention.quantity).coerceAtLeast(0.1)
-                val unit = decision?.unit ?: mention.unit
-                val multiplier = (decision?.multiplier ?: 1.0).coerceIn(0.5, 3.0)
+
+                val chosen = if (decision.candidateIndex in candidates.indices) candidates[decision.candidateIndex] else candidates.first()
+                val qty = (decision.quantity ?: mention.quantity).coerceAtLeast(0.1)
+                val unit = decision.unit ?: mention.unit
+                val multiplier = (decision.multiplier ?: 1.0).coerceIn(0.5, 3.0)
 
                 val resolved = nutritionProvider.resolveAmount(chosen, qty, unit)
                 val grams = (resolved?.value ?: (qty * chosen.baseAmount.value)) * multiplier
@@ -1012,7 +1044,7 @@ Return ONLY JSON: {"candidateIndex":int,"quantity":number|null,"unit":string|nul
         }
 
         val finalMsg = if (loggedCount > 0) {
-            "Logged $loggedCount food item(s). I queried DB candidates per item, provided serving + grams + per100g nutrition to AI, then applied quantity math."
+            "Logged $loggedCount food item(s). I queried DB candidates per item, let AI choose from serving/grams/per100g context, and applied quantity math."
         } else {
             "No items were logged."
         }
