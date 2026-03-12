@@ -36,6 +36,10 @@ import androidx.compose.ui.unit.dp
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.AiProvider
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -275,10 +279,19 @@ fun NetworkAiSettingsScreen(
                         )
                         Button(
                             onClick = {
-                                testConsoleOutput = if (testConsoleInput.isBlank()) {
-                                    "Enter a test message first."
-                                } else {
-                                    "Config check queued. Provider=${'$'}{draftProvider.displayName}, model=${'$'}draftModel, baseUrl=${'$'}draftBaseUrl"
+                                scope.launch {
+                                    if (testConsoleInput.isBlank()) {
+                                        testConsoleOutput = "Enter a test message first."
+                                    } else {
+                                        testConsoleOutput = "Testing API connection…"
+                                        testConsoleOutput = runAiConsoleTest(
+                                            provider = draftProvider,
+                                            baseUrl = draftBaseUrl.trim(),
+                                            apiKey = draftApiKey.trim(),
+                                            model = draftModel.trim(),
+                                            message = testConsoleInput.trim()
+                                        )
+                                    }
                                 }
                             },
                             enabled = networkEnabled,
@@ -315,6 +328,50 @@ fun NetworkAiSettingsScreen(
             }
         }
     }
+}
+
+
+private suspend fun runAiConsoleTest(
+    provider: AiProvider,
+    baseUrl: String,
+    apiKey: String,
+    model: String,
+    message: String
+): String = withContext(Dispatchers.IO) {
+    if (provider == AiProvider.ANTHROPIC || provider == AiProvider.GEMINI) {
+        return@withContext "Test console currently supports OpenAI-compatible endpoints (OpenAI-compatible, Ollama, OpenRouter, Groq)."
+    }
+    if (baseUrl.isBlank()) return@withContext "Missing base URL."
+    if (provider.requiresApiKey && apiKey.isBlank()) return@withContext "Missing API key."
+    return@withContext runCatching {
+        val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15000
+            readTimeout = 30000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
+        }
+        val escaped = message.replace("\\", "\\\\").replace("\"", "\\\"")
+        val modelName = model.ifBlank { provider.defaultModel }
+        val payload = "{\"model\":\"$modelName\",\"messages\":[{\"role\":\"user\",\"content\":\"$escaped\"}],\"temperature\":0.2}"
+        conn.outputStream.use { it.write(payload.toByteArray()) }
+        val code = conn.responseCode
+        val body = try {
+            conn.inputStream.bufferedReader().use { it.readText() }
+        } catch (_: Exception) {
+            conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+        }
+        if (code !in 200..299) {
+            "Request failed ($code): ${body.take(400)}"
+        } else {
+            val msgRegex = Regex("\\\"content\\\"\\s*:\\s*\\\"(.*?)\\\"")
+            val content = msgRegex.find(body)?.groupValues?.getOrNull(1)
+            if (content.isNullOrBlank()) "Success ($code), but could not parse message: ${body.take(220)}"
+            else "Success ($code): ${content.replace("\\n", " ").take(220)}"
+        }
+    }.getOrElse { "Connection error: ${it.message}" }
 }
 
 @Composable

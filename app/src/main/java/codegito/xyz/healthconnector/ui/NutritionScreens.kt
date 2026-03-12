@@ -69,6 +69,8 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+private data class AiChatMessage(val fromUser: Boolean, val text: String)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NutritionHomeScreen – date list with daily summaries
 // ─────────────────────────────────────────────────────────────────────────────
@@ -620,12 +622,13 @@ fun LogFoodScreen(
     var showEatenTimePicker by remember { mutableStateOf(false) }
 
     var query by remember { mutableStateOf("") }
-    var showAiPromptDialog by remember { mutableStateOf(startInAiMode) }
+    var showAiChat by remember { mutableStateOf(startInAiMode) }
     var aiPrompt by remember { mutableStateOf("") }
     var askFollowupQuestions by remember { mutableStateOf(true) }
     var aiBusy by remember { mutableStateOf(false) }
     var aiStatus by remember { mutableStateOf<String?>(null) }
     var followupRemaining by remember { mutableIntStateOf(1) }
+    val aiMessages = remember { mutableStateListOf<AiChatMessage>() }
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
     var amountText by remember { mutableStateOf(TextFieldValue("")) }
@@ -771,11 +774,14 @@ fun LogFoodScreen(
 
     suspend fun handleAiFoodLogPrompt(prompt: String, allowFollowup: Boolean) {
         aiBusy = true
+        aiMessages += AiChatMessage(fromUser = true, text = prompt)
         aiStatus = "Understanding your food log…"
         val quantityRegex = Regex("(\\d+(?:\\.\\d+)?)\\s*([a-zA-Z]+)?\\s+([a-zA-Z][a-zA-Z\\s-]{1,40})")
         val matches = quantityRegex.findAll(prompt).toList()
         if (matches.isEmpty()) {
-            aiStatus = "I couldn't parse a food item. Try phrasing like '2 slices pizza at 8pm'."
+            val msg = "I couldn't parse a food item. Try phrasing like '2 slices pizza at 8pm'."
+            aiStatus = msg
+            aiMessages += AiChatMessage(fromUser = false, text = msg)
             aiBusy = false
             return
         }
@@ -791,7 +797,9 @@ fun LogFoodScreen(
                 if (allowFollowup && followupRemaining > 0) {
                     followupRemaining -= 1
                     askFollowupQuestions = false
-                    aiStatus = "I couldn't find '$foodPhrase'. Please rephrase that item and send again."
+                    val msg = "I couldn't find '$foodPhrase'. Please rephrase that item and send again."
+                    aiStatus = msg
+                    aiMessages += AiChatMessage(fromUser = false, text = msg)
                 }
                 continue
             }
@@ -802,7 +810,9 @@ fun LogFoodScreen(
             loggedCount += 1
         }
 
-        aiStatus = if (loggedCount > 0) "Logged $loggedCount food item(s)." else "No items were logged."
+        val finalMsg = if (loggedCount > 0) "Logged $loggedCount food item(s)." else "No items were logged."
+        aiStatus = finalMsg
+        aiMessages += AiChatMessage(fromUser = false, text = finalMsg)
         aiBusy = false
     }
 
@@ -821,7 +831,7 @@ fun LogFoodScreen(
                     val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
                     val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
                     if (!aiFeaturesDisabled && effectiveGlobalAiEnabled) {
-                        IconButton(onClick = { showAiPromptDialog = true }, enabled = !aiBusy) {
+                        IconButton(onClick = { showAiChat = !showAiChat }, enabled = !aiBusy) {
                             Icon(Icons.Default.AutoAwesome, contentDescription = "AI log foods")
                         }
                     }
@@ -837,6 +847,51 @@ fun LogFoodScreen(
             if (aiStatus != null) {
                 item {
                     AssistChip(onClick = {}, label = { Text(aiStatus!!) })
+                }
+            }
+
+            if (showAiChat) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("AI food chat", style = MaterialTheme.typography.titleMedium)
+                            if (aiBusy) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            if (aiMessages.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    aiMessages.takeLast(6).forEach { msg ->
+                                        Text(
+                                            text = (if (msg.fromUser) "You: " else "AI: ") + msg.text,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (msg.fromUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = aiPrompt,
+                                onValueChange = { aiPrompt = it },
+                                enabled = !aiBusy,
+                                label = { Text("What did you eat, and when?") },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 2
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = askFollowupQuestions,
+                                    onCheckedChange = { askFollowupQuestions = it },
+                                    enabled = !aiBusy
+                                )
+                                Text("Ask follow-up questions if needed (${followupRemaining} left)")
+                            }
+                            Button(
+                                onClick = { scope.launch { handleAiFoodLogPrompt(aiPrompt, askFollowupQuestions) } },
+                                enabled = !aiBusy && aiPrompt.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Send") }
+                        }
+                    }
                 }
             }
 
@@ -1112,47 +1167,6 @@ fun LogFoodScreen(
         }
     }
 
-
-    if (showAiPromptDialog) {
-        AlertDialog(
-            onDismissRequest = { if (!aiBusy) showAiPromptDialog = false },
-            title = { Text("AI food logging") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (aiBusy) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    }
-                    OutlinedTextField(
-                        value = aiPrompt,
-                        onValueChange = { aiPrompt = it },
-                        enabled = !aiBusy,
-                        label = { Text("What did you eat, and when?") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 3
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = askFollowupQuestions,
-                            onCheckedChange = { askFollowupQuestions = it },
-                            enabled = !aiBusy
-                        )
-                        Text("Ask follow-up questions if needed (${followupRemaining} left)")
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        scope.launch { handleAiFoodLogPrompt(aiPrompt, askFollowupQuestions) }
-                    },
-                    enabled = !aiBusy && aiPrompt.isNotBlank()
-                ) { Text("Send") }
-            },
-            dismissButton = {
-                TextButton(onClick = { if (!aiBusy) showAiPromptDialog = false }) { Text("Close") }
-            }
-        )
-    }
 
     // Eaten-time picker dialog
     if (showEatenTimePicker) {
