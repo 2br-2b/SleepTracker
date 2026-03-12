@@ -62,6 +62,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -774,6 +776,12 @@ fun LogFoodScreen(
 
     suspend fun handleAiFoodLogPrompt(prompt: String, allowFollowup: Boolean) {
         data class ParsedMention(val quantity: Double, val unit: String?, val foodPhrase: String)
+        data class ModelDecision(
+            val candidateIndex: Int,
+            val quantity: Double?,
+            val unit: String?,
+            val multiplier: Double?
+        )
 
         fun normalizeSegment(segment: String): String {
             return segment
@@ -829,35 +837,88 @@ fun LogFoodScreen(
             return overlap * 3 + startsWithBoost + containsBoost
         }
 
-        suspend fun findBestCandidate(foodPhrase: String): FoodCandidate? {
+        suspend fun findCandidates(foodPhrase: String): List<FoodCandidate> {
             val queryVariants = linkedSetOf<String>()
             queryVariants += foodPhrase
             if (" of " in foodPhrase.lowercase()) queryVariants += foodPhrase.substringAfterLast(" of ").trim()
             queryVariants += foodPhrase.replace(Regex("""\b(slices?|bags?|pieces?|cups?|oz|ounces?|servings?)\b""", RegexOption.IGNORE_CASE), "").trim()
             queryVariants += foodPhrase.replace(Regex("""\b(extra|large|small|big|medium|fresh|hot)\b""", RegexOption.IGNORE_CASE), "").trim()
 
-            var best: FoodCandidate? = null
-            var bestScore = Int.MIN_VALUE
-
+            val scored = mutableMapOf<String, Pair<FoodCandidate, Int>>()
             for (query in queryVariants.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }) {
                 aiStatus = "Searching nutrition DB for '$query'…"
                 val results = nutritionProvider.searchFoods(query, limit = 12)
-                if (results.isEmpty()) continue
-
-                val ranked = results
-                    .map { candidate -> candidate to similarityScore(query, candidate.name) }
-                    .sortedByDescending { (_, score) -> score }
-
-                val top = ranked.first()
-                if (top.second > bestScore) {
-                    best = top.first
-                    bestScore = top.second
+                for (candidate in results) {
+                    val score = similarityScore(query, candidate.name)
+                    val existing = scored[candidate.id]
+                    if (existing == null || score > existing.second) {
+                        scored[candidate.id] = candidate to score
+                    }
                 }
-
-                // If we already have a high-confidence result, no need for more queries.
-                if (bestScore >= 6) break
             }
-            return best
+            return scored.values.sortedByDescending { it.second }.map { it.first }.take(8)
+        }
+
+        suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>): ModelDecision? {
+            val aiEnabled = userPreferencesRepository.effectiveGlobalAiEnabled.first()
+            if (!aiEnabled || candidates.isEmpty()) return null
+
+            val provider = userPreferencesRepository.aiProvider.first()
+            if (provider == codegito.xyz.healthconnector.data.model.AiProvider.ANTHROPIC ||
+                provider == codegito.xyz.healthconnector.data.model.AiProvider.GEMINI
+            ) return null
+
+            val baseUrl = userPreferencesRepository.aiBaseUrl.first().trim()
+            val apiKey = userPreferencesRepository.aiApiKey.first().trim()
+            val model = userPreferencesRepository.aiModel.first().ifBlank { provider.defaultModel }
+            if (baseUrl.isBlank() || (provider.requiresApiKey && apiKey.isBlank())) return null
+
+            val candidateText = candidates.mapIndexed { idx, c ->
+                val si = c.servingInfo
+                val servingDesc = if (si != null) {
+                    "serving: ${si.commonQuantity ?: 1.0} ${si.commonUnit ?: "serving"} ≈ ${"%.1f".format(si.gramsPerCommonUnit)}g"
+                } else "serving: unknown"
+                "[$idx] ${c.name}; $servingDesc; per100g: kcal=${c.nutrientsPer100g.calories}, carbs=${c.nutrientsPer100g.carbsGrams}g, protein=${c.nutrientsPer100g.proteinGrams}g, fat=${c.nutrientsPer100g.fatGrams}g"
+            }.joinToString("\n")
+
+            val promptBody = """
+Choose best match for user food mention and quantity.
+Mention: "${mention.foodPhrase}", qty=${mention.quantity}, unit=${mention.unit ?: "(none)"}
+Candidates:
+$candidateText
+Return ONLY JSON: {"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
+- candidateIndex = -1 if no match
+- multiplier adjusts all nutrients globally (e.g. 1.1)
+""".trimIndent().replace("\"", "\\\"")
+
+            return runCatching {
+                val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+                val payload = "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"$promptBody\"}],\"temperature\":0.1}"
+                conn.outputStream.use { it.write(payload.toByteArray()) }
+                val code = conn.responseCode
+                val body = try {
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                } catch (_: Exception) {
+                    conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                }
+                if (code !in 200..299) return@runCatching null
+
+                val contentMatch = Regex("""\"content\"\s*:\s*\"(.*?)\"""").find(body)
+                val content = contentMatch?.groupValues?.getOrNull(1)?.replace("\n", " ") ?: return@runCatching null
+                val idx = Regex("""\"candidateIndex\"\s*:\s*(-?\d+)""").find(content)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
+                val qty = Regex("""\"quantity\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(content)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                val unit = Regex("""\"unit\"\s*:\s*\"(.*?)\"""").find(content)?.groupValues?.getOrNull(1)
+                val mult = Regex("""\"multiplier\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(content)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                ModelDecision(candidateIndex = idx, quantity = qty, unit = unit?.takeIf { it.isNotBlank() }, multiplier = mult)
+            }.getOrNull()
         }
 
         suspend fun logFallbackEstimate(mention: ParsedMention) {
@@ -915,12 +976,22 @@ fun LogFoodScreen(
 
         var loggedCount = 0
         for (mention in mentions) {
-            val candidate = findBestCandidate(mention.foodPhrase)
-            if (candidate != null) {
-                val resolved = nutritionProvider.resolveAmount(candidate, mention.quantity, mention.unit)
-                val grams = resolved?.value ?: (mention.quantity * candidate.baseAmount.value)
-                aiStatus = "Logging ${candidate.name}…"
-                logFood(candidate, grams, navigateBack = false)
+            val candidates = findCandidates(mention.foodPhrase)
+            if (candidates.isNotEmpty()) {
+                val decision = askModelForDecision(mention, candidates)
+                val chosen = if (decision != null && decision.candidateIndex in candidates.indices) {
+                    candidates[decision.candidateIndex]
+                } else {
+                    candidates.first()
+                }
+                val qty = (decision?.quantity ?: mention.quantity).coerceAtLeast(0.1)
+                val unit = decision?.unit ?: mention.unit
+                val multiplier = (decision?.multiplier ?: 1.0).coerceIn(0.5, 3.0)
+
+                val resolved = nutritionProvider.resolveAmount(chosen, qty, unit)
+                val grams = (resolved?.value ?: (qty * chosen.baseAmount.value)) * multiplier
+                aiStatus = "Logging ${chosen.name}…"
+                logFood(chosen, grams, navigateBack = false)
                 loggedCount += 1
                 continue
             }
@@ -941,7 +1012,7 @@ fun LogFoodScreen(
         }
 
         val finalMsg = if (loggedCount > 0) {
-            "Logged $loggedCount food item(s). I queried the database per item, used serving math, and estimated when no close match existed."
+            "Logged $loggedCount food item(s). I queried DB candidates per item, provided serving + grams + per100g nutrition to AI, then applied quantity math."
         } else {
             "No items were logged."
         }
