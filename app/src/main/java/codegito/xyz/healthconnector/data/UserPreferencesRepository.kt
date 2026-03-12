@@ -10,6 +10,7 @@ import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.model.TrackingType
+import codegito.xyz.healthconnector.data.model.AiProvider
 import codegito.xyz.healthconnector.data.SleepStageConfig
 import codegito.xyz.healthconnector.nutrition.domain.NutrientConfig
 import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
@@ -68,6 +69,13 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val SHOW_ADVANCED_SETTINGS_KEY      = booleanPreferencesKey("show_advanced_settings")
     private val GLOBAL_NETWORK_ENABLED_KEY      = booleanPreferencesKey("global_network_enabled")
     private val GLOBAL_AI_ENABLED_KEY           = booleanPreferencesKey("global_ai_enabled")
+    private val AI_PROVIDER_KEY                 = stringPreferencesKey("ai_provider")
+    private val AI_MODEL_KEY                    = stringPreferencesKey("ai_model")
+    private val AI_API_KEY_KEY                  = stringPreferencesKey("ai_api_key")
+    private val AI_BASE_URL_KEY                 = stringPreferencesKey("ai_base_url")
+    private val AI_TEMPERATURE_KEY              = floatPreferencesKey("ai_temperature")
+    private val AI_MAX_TOKENS_KEY               = intPreferencesKey("ai_max_tokens")
+    private val AI_SYSTEM_PROMPT_KEY            = stringPreferencesKey("ai_system_prompt")
     private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY  = intPreferencesKey("nutrition_past_date_range_days")
     private val NUTRITION_MEAL_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_meal_duration_minutes")
     private val NUTRITION_SNACK_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_snack_duration_minutes")
@@ -172,6 +180,27 @@ class UserPreferencesRepository private constructor(private val context: Context
         globalNetworkEnabled,
         globalAiEnabled
     ) { networkEnabled, aiEnabled -> networkEnabled && aiEnabled }
+
+    val aiProvider: Flow<AiProvider> = context.dataStore.data
+        .map { prefs -> AiProvider.fromStored(prefs[AI_PROVIDER_KEY]) }
+
+    val aiModel: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_MODEL_KEY] ?: "gpt-4o-mini" }
+
+    val aiApiKey: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_API_KEY_KEY] ?: "" }
+
+    val aiBaseUrl: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_BASE_URL_KEY] ?: "https://api.openai.com/v1" }
+
+    val aiTemperature: Flow<Float> = context.dataStore.data
+        .map { prefs -> prefs[AI_TEMPERATURE_KEY] ?: 0.2f }
+
+    val aiMaxTokens: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[AI_MAX_TOKENS_KEY] ?: 1024 }
+
+    val aiSystemPrompt: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_SYSTEM_PROMPT_KEY] ?: "" }
 
     // ── Tracking type flows ───────────────────────────────────────────────
 
@@ -319,6 +348,34 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setGlobalAiEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[GLOBAL_AI_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setAiProvider(provider: AiProvider) {
+        context.dataStore.edit { prefs -> prefs[AI_PROVIDER_KEY] = provider.name }
+    }
+
+    suspend fun setAiModel(model: String) {
+        context.dataStore.edit { prefs -> prefs[AI_MODEL_KEY] = model }
+    }
+
+    suspend fun setAiApiKey(apiKey: String) {
+        context.dataStore.edit { prefs -> prefs[AI_API_KEY_KEY] = apiKey }
+    }
+
+    suspend fun setAiBaseUrl(url: String) {
+        context.dataStore.edit { prefs -> prefs[AI_BASE_URL_KEY] = url }
+    }
+
+    suspend fun setAiTemperature(temperature: Float) {
+        context.dataStore.edit { prefs -> prefs[AI_TEMPERATURE_KEY] = temperature.coerceIn(0f, 2f) }
+    }
+
+    suspend fun setAiMaxTokens(maxTokens: Int) {
+        context.dataStore.edit { prefs -> prefs[AI_MAX_TOKENS_KEY] = maxTokens.coerceIn(1, 32768) }
+    }
+
+    suspend fun setAiSystemPrompt(prompt: String) {
+        context.dataStore.edit { prefs -> prefs[AI_SYSTEM_PROMPT_KEY] = prompt }
     }
 
     suspend fun setSleepEnabled(enabled: Boolean) {

@@ -52,6 +52,7 @@ import codegito.xyz.healthconnector.ui.ManualFoodEntryScreen
 import codegito.xyz.healthconnector.ui.NutritionDayDetailScreen
 import codegito.xyz.healthconnector.ui.NutritionHomeScreen
 import codegito.xyz.healthconnector.ui.NutritionSettingsScreen
+import codegito.xyz.healthconnector.ui.NetworkAiSettingsScreen
 import codegito.xyz.healthconnector.ui.PermissionsScreen
 import codegito.xyz.healthconnector.ui.SettingsScreen
 import codegito.xyz.healthconnector.ui.SleepSettingsScreen
@@ -354,7 +355,8 @@ fun MainApp(
                     userPreferencesRepository = userPreferencesRepository,
                     onPermissions = { navController.navigate(Screen.Permissions.route) },
                     onSleepSettings = { navController.navigate(Screen.SleepSettings.route) },
-                    onNutritionSettings = { navController.navigate(Screen.NutritionSettings.route) }
+                    onNutritionSettings = { navController.navigate(Screen.NutritionSettings.route) },
+                    onNetworkAiSettings = { navController.navigate(Screen.NetworkAiSettings.route) }
                 )
             }
             composable(Screen.Permissions.route) {
@@ -389,6 +391,12 @@ fun MainApp(
                     onBack = { navController.popBackStack() },
                     onEditNutrients = { navController.navigate(Screen.EditNutrients.route) },
                     scrollToDataset = highlight == "dataset"
+                )
+            }
+            composable(Screen.NetworkAiSettings.route) {
+                NetworkAiSettingsScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable(Screen.EditNutrients.route) {
@@ -823,6 +831,7 @@ sealed class Screen(val route: String) {
     object Permissions : Screen("permissions")
     object SleepSettings : Screen("sleep_settings")
     object NutritionSettings : Screen("nutrition_settings")
+    object NetworkAiSettings : Screen("network_ai_settings")
     object EditSleepStages : Screen("edit_sleep_stages")
     object EditNutrients : Screen("edit_nutrients")
     object NutritionDay : Screen("nutrition/day/{date}") {
