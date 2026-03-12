@@ -773,13 +773,62 @@ fun LogFoodScreen(
 
 
     suspend fun handleAiFoodLogPrompt(prompt: String, allowFollowup: Boolean) {
+        fun normalizeSegment(segment: String): String {
+            return segment
+                .trim()
+                .replace(Regex("""^(?:i\s+)?(?:ate|had|drank|consumed)\s+""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+        }
+
+        fun parseMentions(input: String): List<Triple<Double, String?, String>> {
+            val parts = input
+                .replace(" & ", " and ")
+                .split(Regex("""\s*(?:,| and )\s*""", RegexOption.IGNORE_CASE))
+                .map(::normalizeSegment)
+                .filter { it.isNotBlank() }
+
+            val parsed = mutableListOf<Triple<Double, String?, String>>()
+            val pattern = Regex(
+                """^(?:(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?)?\s*(?:of\s+)?(.+?)(?:\s+at\s+.+)?$""",
+                RegexOption.IGNORE_CASE
+            )
+            for (raw in parts) {
+                val value = raw
+                    .replace(Regex("""^(a|an)\s+""", RegexOption.IGNORE_CASE), "1 ")
+                    .trim()
+                val m = pattern.find(value) ?: continue
+                val qty = m.groupValues[1].toDoubleOrNull() ?: 1.0
+                val unit = m.groupValues[2].ifBlank { null }
+                val food = m.groupValues[3]
+                    .replace(Regex("""^(the)\s+""", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("""\s+"""), " ")
+                    .trim()
+                if (food.isNotBlank()) parsed += Triple(qty, unit, food)
+            }
+            return parsed
+        }
+
+        suspend fun findBestCandidate(foodPhrase: String): FoodCandidate? {
+            val queries = linkedSetOf<String>()
+            queries += foodPhrase
+            if (" of " in foodPhrase.lowercase()) queries += foodPhrase.substringAfterLast(" of ").trim()
+            queries += foodPhrase.replace(Regex("""\b(slices?|bags?|pieces?|cups?|oz|ounces?)\b""", RegexOption.IGNORE_CASE), "").trim()
+            queries += foodPhrase.replace(Regex("""\b(extra|large|small|big|medium)\b""", RegexOption.IGNORE_CASE), "").trim()
+            for (query in queries.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }) {
+                val results = nutritionProvider.searchFoods(query, limit = 5)
+                if (results.isNotEmpty()) return results.first()
+            }
+            return null
+        }
+
         aiBusy = true
         aiMessages += AiChatMessage(fromUser = true, text = prompt)
         aiStatus = "Understanding your food log…"
-        val quantityRegex = Regex("(\\d+(?:\\.\\d+)?)\\s*([a-zA-Z]+)?\\s+([a-zA-Z][a-zA-Z\\s-]{1,40})")
-        val matches = quantityRegex.findAll(prompt).toList()
-        if (matches.isEmpty()) {
-            val msg = "I couldn't parse a food item. Try phrasing like '2 slices pizza at 8pm'."
+
+        val mentions = parseMentions(prompt)
+        if (mentions.isEmpty()) {
+            val msg = "I couldn't parse a food item. Try phrasing like '2 slices pizza and 1 bag potato chips'."
             aiStatus = msg
             aiMessages += AiChatMessage(fromUser = false, text = msg)
             aiBusy = false
@@ -787,22 +836,20 @@ fun LogFoodScreen(
         }
 
         var loggedCount = 0
-        for (match in matches) {
-            val qty = match.groupValues[1].toDoubleOrNull() ?: continue
-            val unitRaw = match.groupValues[2].ifBlank { null }
-            val foodPhrase = match.groupValues[3].trim()
+        for ((qty, unitRaw, foodPhrase) in mentions) {
             aiStatus = "Searching for '$foodPhrase'…"
-            val candidate = nutritionProvider.searchFoods(foodPhrase, limit = 1).firstOrNull()
+            val candidate = findBestCandidate(foodPhrase)
             if (candidate == null) {
                 if (allowFollowup && followupRemaining > 0) {
                     followupRemaining -= 1
                     askFollowupQuestions = false
-                    val msg = "I couldn't find '$foodPhrase'. Please rephrase that item and send again."
+                    val msg = "I couldn't match '$foodPhrase'. Please clarify that item (duplicates exist in the database)."
                     aiStatus = msg
                     aiMessages += AiChatMessage(fromUser = false, text = msg)
                 }
                 continue
             }
+
             val resolved = nutritionProvider.resolveAmount(candidate, qty, unitRaw)
             val grams = resolved?.value ?: (qty * candidate.baseAmount.value)
             aiStatus = "Logging ${candidate.name}…"
@@ -810,7 +857,11 @@ fun LogFoodScreen(
             loggedCount += 1
         }
 
-        val finalMsg = if (loggedCount > 0) "Logged $loggedCount food item(s)." else "No items were logged."
+        val finalMsg = if (loggedCount > 0) {
+            "Logged $loggedCount food item(s). I used best guesses where serving sizes differed from database entries."
+        } else {
+            "No items were logged."
+        }
         aiStatus = finalMsg
         aiMessages += AiChatMessage(fromUser = false, text = finalMsg)
         aiBusy = false
