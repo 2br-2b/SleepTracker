@@ -773,22 +773,25 @@ fun LogFoodScreen(
 
 
     suspend fun handleAiFoodLogPrompt(prompt: String, allowFollowup: Boolean) {
+        data class ParsedMention(val quantity: Double, val unit: String?, val foodPhrase: String)
+
         fun normalizeSegment(segment: String): String {
             return segment
                 .trim()
-                .replace(Regex("""^(?:i\s+)?(?:ate|had|drank|consumed)\s+""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""^(?:i\s+)?(?:ate|had|drank|consumed|logged)\s+""", RegexOption.IGNORE_CASE), "")
                 .replace(Regex("""\s+"""), " ")
                 .trim()
         }
 
-        fun parseMentions(input: String): List<Triple<Double, String?, String>> {
+        fun parseMentions(input: String): List<ParsedMention> {
             val parts = input
                 .replace(" & ", " and ")
+                .replace(";", ",")
                 .split(Regex("""\s*(?:,| and )\s*""", RegexOption.IGNORE_CASE))
                 .map(::normalizeSegment)
                 .filter { it.isNotBlank() }
 
-            val parsed = mutableListOf<Triple<Double, String?, String>>()
+            val parsed = mutableListOf<ParsedMention>()
             val pattern = Regex(
                 """^(?:(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?)?\s*(?:of\s+)?(.+?)(?:\s+at\s+.+)?$""",
                 RegexOption.IGNORE_CASE
@@ -804,22 +807,97 @@ fun LogFoodScreen(
                     .replace(Regex("""^(the)\s+""", RegexOption.IGNORE_CASE), "")
                     .replace(Regex("""\s+"""), " ")
                     .trim()
-                if (food.isNotBlank()) parsed += Triple(qty, unit, food)
+                if (food.isNotBlank()) parsed += ParsedMention(quantity = qty, unit = unit, foodPhrase = food)
             }
             return parsed
         }
 
+        fun tokenize(text: String): Set<String> = text
+            .lowercase()
+            .replace(Regex("""[^a-z0-9 ]"""), " ")
+            .split(Regex("""\s+"""))
+            .filter { it.length >= 2 }
+            .toSet()
+
+        fun similarityScore(query: String, candidateName: String): Int {
+            val qTokens = tokenize(query)
+            val cTokens = tokenize(candidateName)
+            if (qTokens.isEmpty() || cTokens.isEmpty()) return 0
+            val overlap = qTokens.intersect(cTokens).size
+            val startsWithBoost = if (candidateName.lowercase().startsWith(query.lowercase())) 2 else 0
+            val containsBoost = if (candidateName.lowercase().contains(query.lowercase())) 1 else 0
+            return overlap * 3 + startsWithBoost + containsBoost
+        }
+
         suspend fun findBestCandidate(foodPhrase: String): FoodCandidate? {
-            val queries = linkedSetOf<String>()
-            queries += foodPhrase
-            if (" of " in foodPhrase.lowercase()) queries += foodPhrase.substringAfterLast(" of ").trim()
-            queries += foodPhrase.replace(Regex("""\b(slices?|bags?|pieces?|cups?|oz|ounces?)\b""", RegexOption.IGNORE_CASE), "").trim()
-            queries += foodPhrase.replace(Regex("""\b(extra|large|small|big|medium)\b""", RegexOption.IGNORE_CASE), "").trim()
-            for (query in queries.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }) {
-                val results = nutritionProvider.searchFoods(query, limit = 5)
-                if (results.isNotEmpty()) return results.first()
+            val queryVariants = linkedSetOf<String>()
+            queryVariants += foodPhrase
+            if (" of " in foodPhrase.lowercase()) queryVariants += foodPhrase.substringAfterLast(" of ").trim()
+            queryVariants += foodPhrase.replace(Regex("""\b(slices?|bags?|pieces?|cups?|oz|ounces?|servings?)\b""", RegexOption.IGNORE_CASE), "").trim()
+            queryVariants += foodPhrase.replace(Regex("""\b(extra|large|small|big|medium|fresh|hot)\b""", RegexOption.IGNORE_CASE), "").trim()
+
+            var best: FoodCandidate? = null
+            var bestScore = Int.MIN_VALUE
+
+            for (query in queryVariants.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }) {
+                aiStatus = "Searching nutrition DB for '$query'…"
+                val results = nutritionProvider.searchFoods(query, limit = 12)
+                if (results.isEmpty()) continue
+
+                val ranked = results
+                    .map { candidate -> candidate to similarityScore(query, candidate.name) }
+                    .sortedByDescending { (_, score) -> score }
+
+                val top = ranked.first()
+                if (top.second > bestScore) {
+                    best = top.first
+                    bestScore = top.second
+                }
+
+                // If we already have a high-confidence result, no need for more queries.
+                if (bestScore >= 6) break
             }
-            return null
+            return best
+        }
+
+        suspend fun logFallbackEstimate(mention: ParsedMention) {
+            val zone = ZoneId.systemDefault()
+            val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
+            val snackDurationMinutes = userPreferencesRepository.nutritionSnackDurationMinutes.first().coerceAtLeast(1)
+
+            val endTime = if (askEatenTime) {
+                date.atTime(eatenTime).atZone(zone).toInstant()
+            } else if (date == LocalDate.now()) {
+                Instant.now()
+            } else {
+                date.atTime(12, 0).atZone(zone).toInstant()
+            }
+            val effectiveTime = if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
+            val mealType = mealTypeInt(effectiveTime.hour * 60 + effectiveTime.minute)
+            val durationMinutes = if (mealType == MealType.MEAL_TYPE_SNACK) snackDurationMinutes else mealDurationMinutes
+            val startTime = endTime.minusSeconds(durationMinutes * 60L)
+            val zoneOffset = zone.rules.getOffset(endTime)
+
+            val estimatedCalories = (150.0 * mention.quantity).coerceAtLeast(50.0)
+            val estimatedCarbsG = (18.0 * mention.quantity).coerceAtLeast(1.0)
+            val estimatedFatG = (7.0 * mention.quantity).coerceAtLeast(0.5)
+            val estimatedProteinG = (4.0 * mention.quantity).coerceAtLeast(0.5)
+            val estimatedSodiumG = (0.35 * mention.quantity).coerceAtLeast(0.05)
+
+            val record = NutritionRecord(
+                name = "${mention.foodPhrase} (estimated)",
+                startTime = startTime,
+                startZoneOffset = zoneOffset,
+                endTime = endTime,
+                endZoneOffset = zoneOffset,
+                mealType = mealType,
+                energy = Energy.calories(estimatedCalories),
+                totalCarbohydrate = Mass.grams(estimatedCarbsG),
+                totalFat = Mass.grams(estimatedFatG),
+                protein = Mass.grams(estimatedProteinG),
+                sodium = Mass.grams(estimatedSodiumG)
+            )
+            healthConnectManager.healthConnectClient.insertRecords(listOf(record))
         }
 
         aiBusy = true
@@ -836,29 +914,34 @@ fun LogFoodScreen(
         }
 
         var loggedCount = 0
-        for ((qty, unitRaw, foodPhrase) in mentions) {
-            aiStatus = "Searching for '$foodPhrase'…"
-            val candidate = findBestCandidate(foodPhrase)
-            if (candidate == null) {
-                if (allowFollowup && followupRemaining > 0) {
-                    followupRemaining -= 1
-                    askFollowupQuestions = false
-                    val msg = "I couldn't match '$foodPhrase'. Please clarify that item (duplicates exist in the database)."
-                    aiStatus = msg
-                    aiMessages += AiChatMessage(fromUser = false, text = msg)
-                }
+        for (mention in mentions) {
+            val candidate = findBestCandidate(mention.foodPhrase)
+            if (candidate != null) {
+                val resolved = nutritionProvider.resolveAmount(candidate, mention.quantity, mention.unit)
+                val grams = resolved?.value ?: (mention.quantity * candidate.baseAmount.value)
+                aiStatus = "Logging ${candidate.name}…"
+                logFood(candidate, grams, navigateBack = false)
+                loggedCount += 1
                 continue
             }
 
-            val resolved = nutritionProvider.resolveAmount(candidate, qty, unitRaw)
-            val grams = resolved?.value ?: (qty * candidate.baseAmount.value)
-            aiStatus = "Logging ${candidate.name}…"
-            logFood(candidate, grams, navigateBack = false)
-            loggedCount += 1
+            runCatching {
+                aiStatus = "No strong match for '${mention.foodPhrase}'. Logging estimate…"
+                logFallbackEstimate(mention)
+                loggedCount += 1
+            }.onFailure {
+                if (allowFollowup && followupRemaining > 0) {
+                    followupRemaining -= 1
+                    askFollowupQuestions = false
+                    val msg = "I couldn't match '${mention.foodPhrase}'. Please clarify that item (the DB has duplicates and odd serving names)."
+                    aiStatus = msg
+                    aiMessages += AiChatMessage(fromUser = false, text = msg)
+                }
+            }
         }
 
         val finalMsg = if (loggedCount > 0) {
-            "Logged $loggedCount food item(s). I used best guesses where serving sizes differed from database entries."
+            "Logged $loggedCount food item(s). I queried the database per item, used serving math, and estimated when no close match existed."
         } else {
             "No items were logged."
         }
