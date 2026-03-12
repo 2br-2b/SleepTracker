@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -21,9 +22,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -594,6 +597,7 @@ fun LogFoodScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
+    val clipboardManager = LocalClipboardManager.current
 
     val recentsRepo = remember(context) {
         NutritionRecentsRepository(AppDatabase.getDatabase(context).recentFoodDao())
@@ -677,7 +681,18 @@ fun LogFoodScreen(
         else -> MealType.MEAL_TYPE_SNACK
     }
 
-    
+    fun appendAiTrace(section: String, body: String) {
+        if (!developerModeEnabled) return
+        aiMessages += AiChatMessage(
+            fromUser = false,
+            text = "[$section]\n${body.trim()}\n- - -"
+        )
+    }
+
+    fun aiTranscriptText(): String = aiMessages.joinToString("\n- - -\n") { msg ->
+        (if (msg.fromUser) "You" else "AI") + ": " + msg.text
+    }
+
     LaunchedEffect(Unit) {
         followupRemaining = userPreferencesRepository.aiFollowupDefaultCount.first().coerceIn(0, 5)
         askFollowupQuestions = followupRemaining > 0
@@ -846,9 +861,12 @@ fun LogFoodScreen(
             queryVariants += foodPhrase.replace(Regex("""\b(extra|large|small|big|medium|fresh|hot)\b""", RegexOption.IGNORE_CASE), "").trim()
 
             val scored = mutableMapOf<String, Pair<FoodCandidate, Int>>()
-            for (query in queryVariants.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }) {
+            val normalizedQueries = queryVariants.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }
+            appendAiTrace("TOOL QUERY PLAN", "Food phrase '$foodPhrase' -> queries: ${normalizedQueries.joinToString()} ")
+            for (query in normalizedQueries) {
                 aiStatus = "Searching nutrition DB for '$query'…"
                 val results = nutritionProvider.searchFoods(query, limit = 12)
+                appendAiTrace("TOOL QUERY", "query='$query' returned ${results.size} rows")
                 for (candidate in results) {
                     val score = similarityScore(query, candidate.name)
                     val existing = scored[candidate.id]
@@ -857,7 +875,12 @@ fun LogFoodScreen(
                     }
                 }
             }
-            return scored.values.sortedByDescending { it.second }.map { it.first }.take(8)
+            val ranked = scored.values.sortedByDescending { it.second }.map { it.first }.take(8)
+            appendAiTrace(
+                "TOOL QUERY RESULT",
+                ranked.mapIndexed { idx, c -> "$idx) ${c.name}" }.joinToString("\n").ifBlank { "No candidates" }
+            )
+            return ranked
         }
 
         suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>): Result<ModelDecision> {
@@ -913,9 +936,9 @@ fun LogFoodScreen(
             suspend fun callModel(userText: String): String? = runCatching {
                 if (developerModeEnabled) {
                     if (combinedSystemPrompt.isNotBlank()) {
-                        aiMessages += AiChatMessage(fromUser = false, text = "[MODEL SYSTEM] $combinedSystemPrompt")
+                        aiMessages += AiChatMessage(fromUser = false, text = "[MODEL SYSTEM]\n$combinedSystemPrompt\n- - -")
                     }
-                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST] $userText")
+                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST]\n$userText\n- - -")
                 }
                 val escapedSystem = combinedSystemPrompt.replace("\\", "\\\\").replace("\"", "\\\"")
                 val escapedUser = userText.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -941,10 +964,15 @@ fun LogFoodScreen(
                 } catch (_: Exception) {
                     conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
                 }
+                if (developerModeEnabled) {
+                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL HTTP]\nstatus=$code\nbody=$body\n- - -")
+                }
                 if (code !in 200..299) return@runCatching null
                 val content = Regex("""\"content\"\s*:\s*\"(.*?)\"""").find(body)?.groupValues?.getOrNull(1)
                     ?.replace("\n", " ")
-                if (developerModeEnabled && content != null) aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE] $content")
+                if (developerModeEnabled) {
+                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE]\n${content ?: "(empty)"}\n- - -")
+                }
                 content
             }.getOrNull()
 
@@ -1021,6 +1049,14 @@ fun LogFoodScreen(
         aiStatus = "Understanding your food log…"
 
         val mentions = parseMentions(prompt)
+        appendAiTrace(
+            section = "PARSE",
+            body = buildString {
+                appendLine("Input: $prompt")
+                appendLine("Detected mentions (${mentions.size}):")
+                mentions.forEachIndexed { idx, m -> appendLine("$idx) qty=${m.quantity}, unit=${m.unit ?: "(none)"}, food='${m.foodPhrase}'") }
+            }
+        )
         if (mentions.isEmpty()) {
             val msg = "I couldn't parse a food item. Try phrasing like '2 slices pizza and 1 bag potato chips'."
             aiStatus = msg
@@ -1031,6 +1067,7 @@ fun LogFoodScreen(
 
         var loggedCount = 0
         for (mention in mentions) {
+            appendAiTrace("ITEM START", "mention='${mention.foodPhrase}', qty=${mention.quantity}, unit=${mention.unit ?: "(none)"}")
             val candidates = findCandidates(mention.foodPhrase)
             if (candidates.isNotEmpty()) {
                 val decisionResult = askModelForDecision(mention, candidates)
@@ -1048,16 +1085,26 @@ fun LogFoodScreen(
                 val unit = decision.unit ?: mention.unit
                 val multiplier = (decision.multiplier ?: 1.0).coerceIn(0.5, 3.0)
 
+                appendAiTrace(
+                    "MODEL DECISION",
+                    "candidateIndex=${decision.candidateIndex}, qty=${decision.quantity}, unit=${decision.unit}, multiplier=${decision.multiplier}"
+                )
                 val resolved = nutritionProvider.resolveAmount(chosen, qty, unit)
                 val grams = (resolved?.value ?: (qty * chosen.baseAmount.value)) * multiplier
+                appendAiTrace(
+                    "TOOL RESOLVE_AMOUNT",
+                    "chosen='${chosen.name}', requestedQty=$qty, requestedUnit=${unit ?: "(none)"}, resolvedGrams=${resolved?.value}, finalGrams=$grams"
+                )
                 aiStatus = "Logging ${chosen.name}…"
                 logFood(chosen, grams, navigateBack = false)
+                appendAiTrace("TOOL LOG_RECORD", "Logged '${chosen.name}' at $grams g")
                 loggedCount += 1
                 continue
             }
 
             runCatching {
                 aiStatus = "No strong match for '${mention.foodPhrase}'. Logging estimate…"
+                appendAiTrace("TOOL ESTIMATE", "No DB match for '${mention.foodPhrase}', writing estimated nutrition record")
                 logFallbackEstimate(mention)
                 loggedCount += 1
             }.onFailure {
@@ -1077,6 +1124,7 @@ fun LogFoodScreen(
             "No items were logged."
         }
         aiStatus = finalMsg
+        appendAiTrace("RUN SUMMARY", "loggedCount=$loggedCount, followupRemaining=$followupRemaining")
         aiMessages += AiChatMessage(fromUser = false, text = finalMsg)
         aiBusy = false
     }
@@ -1123,14 +1171,26 @@ fun LogFoodScreen(
                             if (aiBusy) {
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
+                            if (developerModeEnabled && aiMessages.isNotEmpty()) {
+                                OutlinedButton(
+                                    onClick = {
+                                        clipboardManager.setText(AnnotatedString(aiTranscriptText()))
+                                        Toast.makeText(context, "Copied AI transcript", Toast.LENGTH_SHORT).show()
+                                    },
+                                    enabled = !aiBusy,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("Copy all") }
+                            }
                             if (aiMessages.isNotEmpty()) {
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    aiMessages.takeLast(6).forEach { msg ->
-                                        Text(
-                                            text = (if (msg.fromUser) "You: " else "AI: ") + msg.text,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (msg.fromUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                        )
+                                SelectionContainer {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        aiMessages.forEach { msg ->
+                                            Text(
+                                                text = (if (msg.fromUser) "You: " else "AI: ") + msg.text,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = if (msg.fromUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
                                     }
                                 }
                             }
