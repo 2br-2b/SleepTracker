@@ -29,6 +29,8 @@ class UserPreferencesRepository private constructor(private val context: Context
     companion object {
         @Volatile
         private var INSTANCE: UserPreferencesRepository? = null
+        private const val DEFAULT_AI_BASE_SYSTEM_PROMPT =
+            "You are SleepTracker's food logging assistant. Use nutrition database tools, handle duplicates by choosing best match, scale nutrition using math for serving differences, and ask concise follow-up questions only when necessary."
 
         fun getInstance(context: Context): UserPreferencesRepository {
             return INSTANCE ?: synchronized(this) {
@@ -76,6 +78,10 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val AI_TEMPERATURE_KEY              = floatPreferencesKey("ai_temperature")
     private val AI_MAX_TOKENS_KEY               = intPreferencesKey("ai_max_tokens")
     private val AI_SYSTEM_PROMPT_KEY            = stringPreferencesKey("ai_system_prompt")
+    private val AI_BASE_SYSTEM_PROMPT_KEY       = stringPreferencesKey("ai_base_system_prompt")
+    private val AI_MEMORY_NOTES_KEY             = stringPreferencesKey("ai_memory_notes")
+    private val AI_FOLLOWUP_DEFAULT_COUNT_KEY   = intPreferencesKey("ai_followup_default_count")
+    private val AI_FEATURES_DISABLED_KEY        = booleanPreferencesKey("ai_features_disabled")
     private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY  = intPreferencesKey("nutrition_past_date_range_days")
     private val NUTRITION_MEAL_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_meal_duration_minutes")
     private val NUTRITION_SNACK_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_snack_duration_minutes")
@@ -209,6 +215,18 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     val aiSystemPrompt: Flow<String> = context.dataStore.data
         .map { prefs -> prefs[AI_SYSTEM_PROMPT_KEY] ?: "" }
+
+    val aiBaseSystemPrompt: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_BASE_SYSTEM_PROMPT_KEY] ?: DEFAULT_AI_BASE_SYSTEM_PROMPT }
+
+    val aiMemoryNotes: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_MEMORY_NOTES_KEY] ?: "" }
+
+    val aiFollowupDefaultCount: Flow<Int> = context.dataStore.data
+        .map { prefs -> (prefs[AI_FOLLOWUP_DEFAULT_COUNT_KEY] ?: 1).coerceIn(0, 5) }
+
+    val aiFeaturesDisabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[AI_FEATURES_DISABLED_KEY] ?: false }
 
     // ── Tracking type flows ───────────────────────────────────────────────
 
@@ -384,6 +402,22 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setAiSystemPrompt(prompt: String) {
         context.dataStore.edit { prefs -> prefs[AI_SYSTEM_PROMPT_KEY] = prompt }
+    }
+
+    suspend fun setAiBaseSystemPrompt(prompt: String) {
+        context.dataStore.edit { prefs -> prefs[AI_BASE_SYSTEM_PROMPT_KEY] = prompt }
+    }
+
+    suspend fun setAiMemoryNotes(notes: String) {
+        context.dataStore.edit { prefs -> prefs[AI_MEMORY_NOTES_KEY] = notes }
+    }
+
+    suspend fun setAiFollowupDefaultCount(count: Int) {
+        context.dataStore.edit { prefs -> prefs[AI_FOLLOWUP_DEFAULT_COUNT_KEY] = count.coerceIn(0, 5) }
+    }
+
+    suspend fun setAiFeaturesDisabled(disabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[AI_FEATURES_DISABLED_KEY] = disabled }
     }
 
     suspend fun setSleepEnabled(enabled: Boolean) {

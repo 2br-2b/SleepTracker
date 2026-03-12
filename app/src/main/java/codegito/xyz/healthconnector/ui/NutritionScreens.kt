@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -86,6 +87,8 @@ fun NutritionHomeScreen(
 
     val rangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
+    val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
+    val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
 
     var nutritionByDay by remember { mutableStateOf<Map<LocalDate, List<NutritionRecord>>>(emptyMap()) }
     var indexRecordCount by remember { mutableIntStateOf(-1) }
@@ -152,10 +155,19 @@ fun NutritionHomeScreen(
     Scaffold(
         topBar = { TopAppBar(title = { Text("Food") }) },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                navController.navigate(Screen.LogFood.route(LocalDate.now()))
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Log food")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!aiFeaturesDisabled && effectiveGlobalAiEnabled) {
+                    FloatingActionButton(onClick = {
+                        navController.navigate(Screen.LogFood.route(LocalDate.now(), ai = true))
+                    }) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = "AI log food")
+                    }
+                }
+                FloatingActionButton(onClick = {
+                    navController.navigate(Screen.LogFood.route(LocalDate.now()))
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = "Log food")
+                }
             }
         }
     ) { padding ->
@@ -355,6 +367,9 @@ fun NutritionDayDetailScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val zone = ZoneId.systemDefault()
+    val userPreferencesRepository = UserPreferencesRepository.getInstance(context)
+    val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
+    val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
 
     var entries by remember { mutableStateOf<List<NutritionRecord>>(emptyList()) }
     var entryToDelete by remember { mutableStateOf<NutritionRecord?>(null) }
@@ -362,6 +377,7 @@ fun NutritionDayDetailScreen(
     var isRefreshing by remember { mutableStateOf(false) }
 
     val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
+
     val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
 
     fun loadEntries() {
@@ -405,10 +421,19 @@ fun NutritionDayDetailScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                navController.navigate(Screen.LogFood.route(date))
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Add food")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!aiFeaturesDisabled && effectiveGlobalAiEnabled) {
+                    FloatingActionButton(onClick = {
+                        navController.navigate(Screen.LogFood.route(date, ai = true))
+                    }) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = "AI add food")
+                    }
+                }
+                FloatingActionButton(onClick = {
+                    navController.navigate(Screen.LogFood.route(date))
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add food")
+                }
             }
         }
     ) { padding ->
@@ -559,7 +584,8 @@ fun LogFoodScreen(
     healthConnectManager: HealthConnectManager,
     userPreferencesRepository: UserPreferencesRepository,
     nutritionProvider: NutritionProvider,
-    navController: NavController
+    navController: NavController,
+    startInAiMode: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -594,6 +620,12 @@ fun LogFoodScreen(
     var showEatenTimePicker by remember { mutableStateOf(false) }
 
     var query by remember { mutableStateOf("") }
+    var showAiPromptDialog by remember { mutableStateOf(startInAiMode) }
+    var aiPrompt by remember { mutableStateOf("") }
+    var askFollowupQuestions by remember { mutableStateOf(true) }
+    var aiBusy by remember { mutableStateOf(false) }
+    var aiStatus by remember { mutableStateOf<String?>(null) }
+    var followupRemaining by remember { mutableIntStateOf(1) }
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
     var amountText by remember { mutableStateOf(TextFieldValue("")) }
@@ -639,7 +671,12 @@ fun LogFoodScreen(
         else -> MealType.MEAL_TYPE_SNACK
     }
 
-    // Live search with debounce
+    
+    LaunchedEffect(Unit) {
+        followupRemaining = userPreferencesRepository.aiFollowupDefaultCount.first().coerceIn(0, 5)
+        askFollowupQuestions = followupRemaining > 0
+    }
+// Live search with debounce
     LaunchedEffect(query) {
         if (query.isBlank()) {
             searchResults = emptyList()
@@ -651,7 +688,7 @@ fun LogFoodScreen(
         }
     }
 
-    suspend fun logFood(candidate: FoodCandidate, grams: Double) {
+    suspend fun logFood(candidate: FoodCandidate, grams: Double, navigateBack: Boolean = true) {
         isLogging = true
         val zone = ZoneId.systemDefault()
         val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
@@ -724,11 +761,49 @@ fun LogFoodScreen(
             healthConnectManager.healthConnectClient.insertRecords(listOf(record))
         }.onSuccess {
             recentsRepo.saveRecent(candidate, NutritionAmount(grams, QuantityUnit.GRAM), "search")
-            navController.popBackStack()
+            if (navigateBack) navController.popBackStack()
         }.onFailure {
             Toast.makeText(context, "Could not log food: ${it.message}", Toast.LENGTH_SHORT).show()
         }
         isLogging = false
+    }
+
+
+    suspend fun handleAiFoodLogPrompt(prompt: String, allowFollowup: Boolean) {
+        aiBusy = true
+        aiStatus = "Understanding your food log…"
+        val quantityRegex = Regex("(\\d+(?:\\.\\d+)?)\\s*([a-zA-Z]+)?\\s+([a-zA-Z][a-zA-Z\\s-]{1,40})")
+        val matches = quantityRegex.findAll(prompt).toList()
+        if (matches.isEmpty()) {
+            aiStatus = "I couldn't parse a food item. Try phrasing like '2 slices pizza at 8pm'."
+            aiBusy = false
+            return
+        }
+
+        var loggedCount = 0
+        for (match in matches) {
+            val qty = match.groupValues[1].toDoubleOrNull() ?: continue
+            val unitRaw = match.groupValues[2].ifBlank { null }
+            val foodPhrase = match.groupValues[3].trim()
+            aiStatus = "Searching for '$foodPhrase'…"
+            val candidate = nutritionProvider.searchFoods(foodPhrase, limit = 1).firstOrNull()
+            if (candidate == null) {
+                if (allowFollowup && followupRemaining > 0) {
+                    followupRemaining -= 1
+                    askFollowupQuestions = false
+                    aiStatus = "I couldn't find '$foodPhrase'. Please rephrase that item and send again."
+                }
+                continue
+            }
+            val resolved = nutritionProvider.resolveAmount(candidate, qty, unitRaw)
+            val grams = resolved?.value ?: (qty * candidate.baseAmount.value)
+            aiStatus = "Logging ${candidate.name}…"
+            logFood(candidate, grams, navigateBack = false)
+            loggedCount += 1
+        }
+
+        aiStatus = if (loggedCount > 0) "Logged $loggedCount food item(s)." else "No items were logged."
+        aiBusy = false
     }
 
     val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
@@ -741,6 +816,15 @@ fun LogFoodScreen(
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
+                },
+                actions = {
+                    val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
+                    val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
+                    if (!aiFeaturesDisabled && effectiveGlobalAiEnabled) {
+                        IconButton(onClick = { showAiPromptDialog = true }, enabled = !aiBusy) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = "AI log foods")
+                        }
+                    }
                 }
             )
         }
@@ -750,6 +834,12 @@ fun LogFoodScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (aiStatus != null) {
+                item {
+                    AssistChip(onClick = {}, label = { Text(aiStatus!!) })
+                }
+            }
+
             // Search bar
             item {
                 OutlinedTextField(
@@ -1020,6 +1110,48 @@ fun LogFoodScreen(
                 focusRequester.requestFocus()
             }
         }
+    }
+
+
+    if (showAiPromptDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!aiBusy) showAiPromptDialog = false },
+            title = { Text("AI food logging") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (aiBusy) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    OutlinedTextField(
+                        value = aiPrompt,
+                        onValueChange = { aiPrompt = it },
+                        enabled = !aiBusy,
+                        label = { Text("What did you eat, and when?") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = askFollowupQuestions,
+                            onCheckedChange = { askFollowupQuestions = it },
+                            enabled = !aiBusy
+                        )
+                        Text("Ask follow-up questions if needed (${followupRemaining} left)")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch { handleAiFoodLogPrompt(aiPrompt, askFollowupQuestions) }
+                    },
+                    enabled = !aiBusy && aiPrompt.isNotBlank()
+                ) { Text("Send") }
+            },
+            dismissButton = {
+                TextButton(onClick = { if (!aiBusy) showAiPromptDialog = false }) { Text("Close") }
+            }
+        )
     }
 
     // Eaten-time picker dialog

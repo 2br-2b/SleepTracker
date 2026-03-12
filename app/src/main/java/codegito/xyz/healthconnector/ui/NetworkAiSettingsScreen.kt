@@ -55,6 +55,11 @@ fun NetworkAiSettingsScreen(
     val aiTemperature by userPreferencesRepository.aiTemperature.collectAsState(0.2f)
     val aiMaxTokens by userPreferencesRepository.aiMaxTokens.collectAsState(1024)
     val aiSystemPrompt by userPreferencesRepository.aiSystemPrompt.collectAsState("")
+    val aiBaseSystemPrompt by userPreferencesRepository.aiBaseSystemPrompt.collectAsState("")
+    val aiMemoryNotes by userPreferencesRepository.aiMemoryNotes.collectAsState("")
+    val aiFollowupDefaultCount by userPreferencesRepository.aiFollowupDefaultCount.collectAsState(1)
+    val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(false)
+    val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(false)
 
     var draftProvider by remember { mutableStateOf(AiProvider.OPENAI_COMPAT) }
     var draftModel by remember { mutableStateOf(AiProvider.OPENAI_COMPAT.defaultModel) }
@@ -63,8 +68,13 @@ fun NetworkAiSettingsScreen(
     var draftTemperature by remember { mutableStateOf(0.2f) }
     var draftMaxTokensText by remember { mutableStateOf("1024") }
     var draftSystemPrompt by remember { mutableStateOf("") }
+    var draftBaseSystemPrompt by remember { mutableStateOf("") }
+    var draftMemoryNotes by remember { mutableStateOf("") }
+    var draftFollowupCountText by remember { mutableStateOf("1") }
+    var testConsoleInput by remember { mutableStateOf("") }
+    var testConsoleOutput by remember { mutableStateOf("Not tested yet") }
 
-    LaunchedEffect(aiProvider, aiModel, aiApiKey, aiBaseUrl, aiTemperature, aiMaxTokens, aiSystemPrompt) {
+    LaunchedEffect(aiProvider, aiModel, aiApiKey, aiBaseUrl, aiTemperature, aiMaxTokens, aiSystemPrompt, aiBaseSystemPrompt, aiMemoryNotes, aiFollowupDefaultCount) {
         draftProvider = aiProvider
         draftModel = aiModel
         draftApiKey = aiApiKey
@@ -72,6 +82,9 @@ fun NetworkAiSettingsScreen(
         draftTemperature = aiTemperature
         draftMaxTokensText = aiMaxTokens.toString()
         draftSystemPrompt = aiSystemPrompt
+        draftBaseSystemPrompt = aiBaseSystemPrompt
+        draftMemoryNotes = aiMemoryNotes
+        draftFollowupCountText = aiFollowupDefaultCount.toString()
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Network & AI Settings") }) }) { innerPadding ->
@@ -83,6 +96,15 @@ fun NetworkAiSettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (aiFeaturesDisabled) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("AI features are currently disabled", style = MaterialTheme.typography.titleMedium)
+                        Text("Re-enable AI from Settings → General → Disable all AI features.")
+                    }
+                }
+            }
+
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SettingToggleRow(
@@ -210,13 +232,60 @@ fun NetworkAiSettingsScreen(
                     )
 
                     OutlinedTextField(
-                        value = draftSystemPrompt,
-                        onValueChange = { draftSystemPrompt = it },
+                        value = draftFollowupCountText,
+                        onValueChange = { input -> draftFollowupCountText = input.filter { it.isDigit() } },
                         enabled = networkEnabled,
-                        label = { Text("System prompt (optional)") },
+                        label = { Text("Default follow-up prompts") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = draftMemoryNotes,
+                        onValueChange = { draftMemoryNotes = it },
+                        enabled = networkEnabled,
+                        label = { Text("Persistent memory notes") },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 3
                     )
+
+                    OutlinedTextField(
+                        value = draftSystemPrompt,
+                        onValueChange = { draftSystemPrompt = it },
+                        enabled = networkEnabled,
+                        label = { Text("User system prompt add-on") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3
+                    )
+
+                    if (developerModeEnabled) {
+                        OutlinedTextField(
+                            value = draftBaseSystemPrompt,
+                            onValueChange = { draftBaseSystemPrompt = it },
+                            enabled = networkEnabled,
+                            label = { Text("Base system prompt (developer mode)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 4
+                        )
+                        OutlinedTextField(
+                            value = testConsoleInput,
+                            onValueChange = { testConsoleInput = it },
+                            enabled = networkEnabled,
+                            label = { Text("API test console input") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(
+                            onClick = {
+                                testConsoleOutput = if (testConsoleInput.isBlank()) {
+                                    "Enter a test message first."
+                                } else {
+                                    "Config check queued. Provider=${'$'}{draftProvider.displayName}, model=${'$'}draftModel, baseUrl=${'$'}draftBaseUrl"
+                                }
+                            },
+                            enabled = networkEnabled,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Run config test") }
+                        Text(testConsoleOutput, style = MaterialTheme.typography.bodySmall)
+                    }
 
                     Button(
                         onClick = {
@@ -228,6 +297,9 @@ fun NetworkAiSettingsScreen(
                                 userPreferencesRepository.setAiTemperature((draftTemperature * 100).roundToInt() / 100f)
                                 userPreferencesRepository.setAiMaxTokens(draftMaxTokensText.toIntOrNull() ?: 1024)
                                 userPreferencesRepository.setAiSystemPrompt(draftSystemPrompt)
+                                userPreferencesRepository.setAiBaseSystemPrompt(draftBaseSystemPrompt)
+                                userPreferencesRepository.setAiMemoryNotes(draftMemoryNotes)
+                                userPreferencesRepository.setAiFollowupDefaultCount(draftFollowupCountText.toIntOrNull() ?: 1)
                             }
                         },
                         enabled = networkEnabled,
