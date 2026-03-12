@@ -184,14 +184,22 @@ class UserPreferencesRepository private constructor(private val context: Context
     val aiProvider: Flow<AiProvider> = context.dataStore.data
         .map { prefs -> AiProvider.fromStored(prefs[AI_PROVIDER_KEY]) }
 
-    val aiModel: Flow<String> = context.dataStore.data
-        .map { prefs -> prefs[AI_MODEL_KEY] ?: "gpt-4o-mini" }
+    val aiModel: Flow<String> = combine(
+        context.dataStore.data.map { prefs -> prefs[AI_MODEL_KEY] },
+        aiProvider
+    ) { storedModel, provider ->
+        storedModel?.takeIf { it.isNotBlank() } ?: provider.defaultModel
+    }
 
     val aiApiKey: Flow<String> = context.dataStore.data
         .map { prefs -> prefs[AI_API_KEY_KEY] ?: "" }
 
-    val aiBaseUrl: Flow<String> = context.dataStore.data
-        .map { prefs -> prefs[AI_BASE_URL_KEY] ?: "https://api.openai.com/v1" }
+    val aiBaseUrl: Flow<String> = combine(
+        context.dataStore.data.map { prefs -> prefs[AI_BASE_URL_KEY] },
+        aiProvider
+    ) { storedUrl, provider ->
+        storedUrl?.takeIf { it.isNotBlank() } ?: provider.defaultBaseUrl.orEmpty()
+    }
 
     val aiTemperature: Flow<Float> = context.dataStore.data
         .map { prefs -> prefs[AI_TEMPERATURE_KEY] ?: 0.2f }
