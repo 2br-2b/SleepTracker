@@ -30,23 +30,68 @@ class UserPreferencesRepository private constructor(private val context: Context
         @Volatile
         private var INSTANCE: UserPreferencesRepository? = null
         const val DEFAULT_AI_BASE_SYSTEM_PROMPT =
-            "You are SleepTracker's food logging assistant. Use nutrition database tools, handle duplicates by choosing best match, scale nutrition using math for serving differences, and ask concise follow-up questions only when necessary."
+            """You are SleepTracker's nutrition logging copilot. Your job is to transform natural-language food descriptions into high-quality logging decisions using candidate rows from the local nutrition database.
+
+Behavior requirements:
+1) Never treat meal labels or time phrases as foods (examples: breakfast, lunch, dinner, at 9, an hour ago, today).
+2) Prioritize semantic food matching over token overlap.
+3) If there is no strong direct match, decompose the mention into realistic edible sub-items (example: 'ham hot honey egg and cheese sandwich on a bagel' -> ham, egg, cheese, honey, bagel, sandwich) and resolve those.
+4) Use serving-size math carefully. Prefer provided serving units/grams; if uncertain, make a conservative best estimate.
+5) Do not hallucinate impossible foods from non-food context words.
+6) Keep all timestamps in the past.
+7) When follow-up questions are allowed, ask concise clarifying questions only when ambiguity materially changes nutrition. Otherwise proceed with best effort.
+8) Be robust to duplicate/near-duplicate products in the DB and pick the most plausible candidate by food identity and serving context.
+
+Structured output discipline:
+- Always return strict JSON only when asked for structured output.
+- No markdown, no prose outside required JSON."""
         const val DEFAULT_AI_SYSTEM_PROMPT = ""
-        const val DEFAULT_AI_DECISION_PROMPT_TEMPLATE = """Choose best match for user food mention and quantity.
-Mention: "{{mention}}", qty={{quantity}}, unit={{unit}}
-Candidates:
+        const val DEFAULT_AI_DECISION_PROMPT_TEMPLATE = """Task: choose the best nutrition candidate for a single food mention and provide normalization math.
+
+Food mention details:
+- mention text: "{{mention}}"
+- user quantity: {{quantity}}
+- user unit: {{unit}}
+
+Candidate rows (indexed):
 {{candidates}}
-Return ONLY JSON: {\"candidateIndex\":int,\"quantity\":number|null,\"unit\":string|null,\"multiplier\":number|null}
-- candidateIndex = -1 if no match
-- multiplier adjusts all nutrients globally (e.g. 1.1)
-"""
-        const val DEFAULT_AI_REPAIR_PROMPT_TEMPLATE = """Your previous output was unparsable.
-Error: {{error}}
-Previous output: {{previous_output}}
-Return ONLY this strict JSON object format now:
-{\"candidateIndex\":int,\"quantity\":number|null,\"unit\":string|null,\"multiplier\":number|null}
-No markdown, no prose.
-"""
+
+Decision procedure (follow in order):
+1) Identify whether the mention is an actual food item, not a meal label/time phrase.
+2) Compare identity fit (food type, preparation, ingredients, brand clues), then serving plausibility.
+3) Prefer candidate rows whose serving/unit context is compatible with the mention.
+4) If nothing is a real match, return candidateIndex=-1.
+5) If a candidate matches, choose quantity/unit/multiplier so nutrition best reflects the user statement.
+
+Return EXACTLY one JSON object with these keys only:
+{"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
+
+Key semantics:
+- candidateIndex: index of chosen candidate, or -1 if no valid match
+- quantity: normalized quantity to use (null = keep caller quantity)
+- unit: normalized unit string to use (null = keep caller unit)
+- multiplier: global nutrient multiplier (null = 1.0)
+
+Hard constraints:
+- Output must be valid JSON object (no trailing text).
+- Never output markdown/code fences."""
+        const val DEFAULT_AI_REPAIR_PROMPT_TEMPLATE = """Your previous output could not be parsed by the app.
+
+Error detail:
+{{error}}
+
+Previous output:
+{{previous_output}}
+
+You must now return EXACTLY one valid JSON object with this exact schema and key names:
+{"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
+
+Rules:
+- No markdown
+- No commentary
+- No extra keys
+- No code fences
+- JSON only"""
 
         fun getInstance(context: Context): UserPreferencesRepository {
             return INSTANCE ?: synchronized(this) {

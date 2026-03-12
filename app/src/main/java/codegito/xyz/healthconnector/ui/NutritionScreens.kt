@@ -802,16 +802,41 @@ fun LogFoodScreen(
         fun normalizeSegment(segment: String): String {
             return segment
                 .trim()
-                .replace(Regex("""^(?:i\s+)?(?:ate|had|drank|consumed|logged)\s+""", RegexOption.IGNORE_CASE), "")
+                .replace(
+                    Regex(
+                        """^(?:for\s+(?:breakfast|lunch|dinner|snack)(?:\s+at\s+\d{1,2}(?::\d{2})?)?\s*)?(?:i\s+)?(?:ate|had|drank|consumed|logged)\s+""",
+                        RegexOption.IGNORE_CASE
+                    ),
+                    ""
+                )
+                .replace(Regex("""^for\s+(?:breakfast|lunch|dinner|snack)\b""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s+about\s+\d+\s*(?:minutes?|hours?)\s+ago$""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s+ago$""", RegexOption.IGNORE_CASE), "")
                 .replace(Regex("""\s+"""), " ")
                 .trim()
         }
 
         fun parseMentions(input: String): List<ParsedMention> {
-            val parts = input
+            val cleanedInput = input
+                .replace(Regex("""\bfor\s+(?:breakfast|lunch|dinner|snack)(?:\s+at\s+\d{1,2}(?::\d{2})?)?\b""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\b(?:today|tonight|this\s+morning|this\s+afternoon|this\s+evening)\b""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+
+            val splitRegex = if (
+                cleanedInput.contains("sandwich", ignoreCase = true) ||
+                cleanedInput.contains("bagel", ignoreCase = true) ||
+                cleanedInput.contains("burger", ignoreCase = true)
+            ) {
+                Regex("""\s*,\s*""")
+            } else {
+                Regex("""\s*(?:,| and )\s*""", RegexOption.IGNORE_CASE)
+            }
+
+            val parts = cleanedInput
                 .replace(" & ", " and ")
                 .replace(";", ",")
-                .split(Regex("""\s*(?:,| and )\s*""", RegexOption.IGNORE_CASE))
+                .split(splitRegex)
                 .map(::normalizeSegment)
                 .filter { it.isNotBlank() }
 
@@ -820,6 +845,7 @@ fun LogFoodScreen(
                 """^(?:(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?)?\s*(?:of\s+)?(.+?)(?:\s+at\s+.+)?$""",
                 RegexOption.IGNORE_CASE
             )
+            val stopFoods = setOf("for breakfast", "for lunch", "for dinner", "for snack", "breakfast", "lunch", "dinner", "snack")
             for (raw in parts) {
                 val value = raw
                     .replace(Regex("""^(a|an)\s+""", RegexOption.IGNORE_CASE), "1 ")
@@ -831,9 +857,35 @@ fun LogFoodScreen(
                     .replace(Regex("""^(the)\s+""", RegexOption.IGNORE_CASE), "")
                     .replace(Regex("""\s+"""), " ")
                     .trim()
-                if (food.isNotBlank()) parsed += ParsedMention(quantity = qty, unit = unit, foodPhrase = food)
+                if (food.isNotBlank() && food.lowercase() !in stopFoods) {
+                    parsed += ParsedMention(quantity = qty, unit = unit, foodPhrase = food)
+                }
             }
             return parsed
+        }
+
+        fun decomposeMention(mention: ParsedMention): List<ParsedMention> {
+            val food = mention.foodPhrase.lowercase()
+            val decomposition = mutableListOf<ParsedMention>()
+
+            if (food.contains("sandwich") || food.contains("bagel") || food.contains("burger") || food.contains("taco")) {
+                if (food.contains("ham")) decomposition += ParsedMention(1.0, null, "ham")
+                if (food.contains("egg")) decomposition += ParsedMention(1.0, null, "egg")
+                if (food.contains("cheese")) decomposition += ParsedMention(1.0, null, "cheese")
+                if (food.contains("honey")) decomposition += ParsedMention(1.0, null, "honey")
+                if (food.contains("bagel")) decomposition += ParsedMention(1.0, null, "bagel")
+                if (food.contains("sandwich")) decomposition += ParsedMention(1.0, null, "sandwich")
+            }
+
+            if (decomposition.isEmpty()) {
+                val parts = mention.foodPhrase
+                    .split(Regex("""\s+and\s+|\s+with\s+|\s+on\s+""", RegexOption.IGNORE_CASE))
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() && it.length > 2 }
+                parts.forEach { decomposition += ParsedMention(1.0, null, it) }
+            }
+
+            return decomposition.distinctBy { it.foodPhrase.lowercase() }.take(6)
         }
 
         fun tokenize(text: String): Set<String> = text
@@ -968,8 +1020,15 @@ fun LogFoodScreen(
                     aiMessages += AiChatMessage(fromUser = false, text = "[MODEL HTTP]\nstatus=$code\nbody=$body\n- - -")
                 }
                 if (code !in 200..299) return@runCatching null
-                val content = Regex("""\"content\"\s*:\s*\"(.*?)\"""").find(body)?.groupValues?.getOrNull(1)
+                val content = runCatching {
+                    val root = org.json.JSONObject(body)
+                    root.getJSONArray("choices")
+                        .getJSONObject(0)
+                        .getJSONObject("message")
+                        .getString("content")
+                }.getOrNull()
                     ?.replace("\n", " ")
+                    ?.trim()
                 if (developerModeEnabled) {
                     aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE]\n${content ?: "(empty)"}\n- - -")
                 }
@@ -1102,9 +1161,41 @@ fun LogFoodScreen(
                 continue
             }
 
+            val decomposed = decomposeMention(mention)
+            appendAiTrace(
+                "TOOL DECOMPOSE",
+                if (decomposed.isEmpty()) {
+                    "No decomposition produced for '${mention.foodPhrase}'"
+                } else {
+                    "No direct DB match for '${mention.foodPhrase}'. Decomposed into: " +
+                        decomposed.joinToString { "'${it.foodPhrase}'" }
+                }
+            )
+
+            var subLogged = 0
+            for (sub in decomposed) {
+                val subCandidates = findCandidates(sub.foodPhrase)
+                if (subCandidates.isEmpty()) continue
+                val subDecision = askModelForDecision(sub, subCandidates).getOrNull() ?: continue
+                val subChosen = if (subDecision.candidateIndex in subCandidates.indices) subCandidates[subDecision.candidateIndex] else subCandidates.first()
+                val subQty = (subDecision.quantity ?: sub.quantity).coerceAtLeast(0.1)
+                val subUnit = subDecision.unit ?: sub.unit
+                val subMultiplier = (subDecision.multiplier ?: 1.0).coerceIn(0.5, 3.0)
+                val subResolved = nutritionProvider.resolveAmount(subChosen, subQty, subUnit)
+                val subGrams = (subResolved?.value ?: (subQty * subChosen.baseAmount.value)) * subMultiplier
+                appendAiTrace("TOOL RESOLVE_AMOUNT", "decomposed='${sub.foodPhrase}' -> '${subChosen.name}', grams=$subGrams")
+                logFood(subChosen, subGrams, navigateBack = false)
+                appendAiTrace("TOOL LOG_RECORD", "Logged decomposed '${subChosen.name}' at $subGrams g")
+                subLogged += 1
+            }
+            if (subLogged > 0) {
+                loggedCount += subLogged
+                continue
+            }
+
             runCatching {
                 aiStatus = "No strong match for '${mention.foodPhrase}'. Logging estimate…"
-                appendAiTrace("TOOL ESTIMATE", "No DB match for '${mention.foodPhrase}', writing estimated nutrition record")
+                appendAiTrace("TOOL ESTIMATE", "No DB/decomposed match for '${mention.foodPhrase}', writing estimated nutrition record")
                 logFallbackEstimate(mention)
                 loggedCount += 1
             }.onFailure {
