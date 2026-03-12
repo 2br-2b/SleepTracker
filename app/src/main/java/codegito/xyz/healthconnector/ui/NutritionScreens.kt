@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -61,12 +62,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+
+private data class AiChatMessage(val fromUser: Boolean, val text: String)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NutritionHomeScreen – date list with daily summaries
@@ -86,6 +91,8 @@ fun NutritionHomeScreen(
 
     val rangeDays by userPreferencesRepository.nutritionPastDateRangeDays.collectAsState(initial = 7)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
+    val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
+    val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
 
     var nutritionByDay by remember { mutableStateOf<Map<LocalDate, List<NutritionRecord>>>(emptyMap()) }
     var indexRecordCount by remember { mutableIntStateOf(-1) }
@@ -152,10 +159,19 @@ fun NutritionHomeScreen(
     Scaffold(
         topBar = { TopAppBar(title = { Text("Food") }) },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                navController.navigate(Screen.LogFood.route(LocalDate.now()))
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Log food")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!aiFeaturesDisabled && effectiveGlobalAiEnabled) {
+                    FloatingActionButton(onClick = {
+                        navController.navigate(Screen.LogFood.route(LocalDate.now(), ai = true))
+                    }) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = "AI log food")
+                    }
+                }
+                FloatingActionButton(onClick = {
+                    navController.navigate(Screen.LogFood.route(LocalDate.now()))
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = "Log food")
+                }
             }
         }
     ) { padding ->
@@ -355,6 +371,9 @@ fun NutritionDayDetailScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val zone = ZoneId.systemDefault()
+    val userPreferencesRepository = UserPreferencesRepository.getInstance(context)
+    val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
+    val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
 
     var entries by remember { mutableStateOf<List<NutritionRecord>>(emptyList()) }
     var entryToDelete by remember { mutableStateOf<NutritionRecord?>(null) }
@@ -362,6 +381,7 @@ fun NutritionDayDetailScreen(
     var isRefreshing by remember { mutableStateOf(false) }
 
     val formatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
+
     val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
 
     fun loadEntries() {
@@ -405,10 +425,19 @@ fun NutritionDayDetailScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                navController.navigate(Screen.LogFood.route(date))
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Add food")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!aiFeaturesDisabled && effectiveGlobalAiEnabled) {
+                    FloatingActionButton(onClick = {
+                        navController.navigate(Screen.LogFood.route(date, ai = true))
+                    }) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = "AI add food")
+                    }
+                }
+                FloatingActionButton(onClick = {
+                    navController.navigate(Screen.LogFood.route(date))
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add food")
+                }
             }
         }
     ) { padding ->
@@ -559,7 +588,8 @@ fun LogFoodScreen(
     healthConnectManager: HealthConnectManager,
     userPreferencesRepository: UserPreferencesRepository,
     nutritionProvider: NutritionProvider,
-    navController: NavController
+    navController: NavController,
+    startInAiMode: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -594,6 +624,14 @@ fun LogFoodScreen(
     var showEatenTimePicker by remember { mutableStateOf(false) }
 
     var query by remember { mutableStateOf("") }
+    var showAiChat by remember { mutableStateOf(startInAiMode) }
+    var aiPrompt by remember { mutableStateOf("") }
+    var askFollowupQuestions by remember { mutableStateOf(true) }
+    var aiBusy by remember { mutableStateOf(false) }
+    var aiStatus by remember { mutableStateOf<String?>(null) }
+    var followupRemaining by remember { mutableIntStateOf(1) }
+    val aiMessages = remember { mutableStateListOf<AiChatMessage>() }
+    val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
     var amountText by remember { mutableStateOf(TextFieldValue("")) }
@@ -639,7 +677,12 @@ fun LogFoodScreen(
         else -> MealType.MEAL_TYPE_SNACK
     }
 
-    // Live search with debounce
+    
+    LaunchedEffect(Unit) {
+        followupRemaining = userPreferencesRepository.aiFollowupDefaultCount.first().coerceIn(0, 5)
+        askFollowupQuestions = followupRemaining > 0
+    }
+// Live search with debounce
     LaunchedEffect(query) {
         if (query.isBlank()) {
             searchResults = emptyList()
@@ -651,7 +694,7 @@ fun LogFoodScreen(
         }
     }
 
-    suspend fun logFood(candidate: FoodCandidate, grams: Double) {
+    suspend fun logFood(candidate: FoodCandidate, grams: Double, navigateBack: Boolean = true) {
         isLogging = true
         val zone = ZoneId.systemDefault()
         val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
@@ -724,11 +767,318 @@ fun LogFoodScreen(
             healthConnectManager.healthConnectClient.insertRecords(listOf(record))
         }.onSuccess {
             recentsRepo.saveRecent(candidate, NutritionAmount(grams, QuantityUnit.GRAM), "search")
-            navController.popBackStack()
+            if (navigateBack) navController.popBackStack()
         }.onFailure {
             Toast.makeText(context, "Could not log food: ${it.message}", Toast.LENGTH_SHORT).show()
         }
         isLogging = false
+    }
+
+
+    suspend fun handleAiFoodLogPrompt(prompt: String, allowFollowup: Boolean) {
+        data class ParsedMention(val quantity: Double, val unit: String?, val foodPhrase: String)
+        data class ModelDecision(
+            val candidateIndex: Int,
+            val quantity: Double?,
+            val unit: String?,
+            val multiplier: Double?
+        )
+
+        fun normalizeSegment(segment: String): String {
+            return segment
+                .trim()
+                .replace(Regex("""^(?:i\s+)?(?:ate|had|drank|consumed|logged)\s+""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+        }
+
+        fun parseMentions(input: String): List<ParsedMention> {
+            val parts = input
+                .replace(" & ", " and ")
+                .replace(";", ",")
+                .split(Regex("""\s*(?:,| and )\s*""", RegexOption.IGNORE_CASE))
+                .map(::normalizeSegment)
+                .filter { it.isNotBlank() }
+
+            val parsed = mutableListOf<ParsedMention>()
+            val pattern = Regex(
+                """^(?:(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?)?\s*(?:of\s+)?(.+?)(?:\s+at\s+.+)?$""",
+                RegexOption.IGNORE_CASE
+            )
+            for (raw in parts) {
+                val value = raw
+                    .replace(Regex("""^(a|an)\s+""", RegexOption.IGNORE_CASE), "1 ")
+                    .trim()
+                val m = pattern.find(value) ?: continue
+                val qty = m.groupValues[1].toDoubleOrNull() ?: 1.0
+                val unit = m.groupValues[2].ifBlank { null }
+                val food = m.groupValues[3]
+                    .replace(Regex("""^(the)\s+""", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("""\s+"""), " ")
+                    .trim()
+                if (food.isNotBlank()) parsed += ParsedMention(quantity = qty, unit = unit, foodPhrase = food)
+            }
+            return parsed
+        }
+
+        fun tokenize(text: String): Set<String> = text
+            .lowercase()
+            .replace(Regex("""[^a-z0-9 ]"""), " ")
+            .split(Regex("""\s+"""))
+            .filter { it.length >= 2 }
+            .toSet()
+
+        fun similarityScore(query: String, candidateName: String): Int {
+            val qTokens = tokenize(query)
+            val cTokens = tokenize(candidateName)
+            if (qTokens.isEmpty() || cTokens.isEmpty()) return 0
+            val overlap = qTokens.intersect(cTokens).size
+            val startsWithBoost = if (candidateName.lowercase().startsWith(query.lowercase())) 2 else 0
+            val containsBoost = if (candidateName.lowercase().contains(query.lowercase())) 1 else 0
+            return overlap * 3 + startsWithBoost + containsBoost
+        }
+
+        suspend fun findCandidates(foodPhrase: String): List<FoodCandidate> {
+            val queryVariants = linkedSetOf<String>()
+            queryVariants += foodPhrase
+            if (" of " in foodPhrase.lowercase()) queryVariants += foodPhrase.substringAfterLast(" of ").trim()
+            queryVariants += foodPhrase.replace(Regex("""\b(slices?|bags?|pieces?|cups?|oz|ounces?|servings?)\b""", RegexOption.IGNORE_CASE), "").trim()
+            queryVariants += foodPhrase.replace(Regex("""\b(extra|large|small|big|medium|fresh|hot)\b""", RegexOption.IGNORE_CASE), "").trim()
+
+            val scored = mutableMapOf<String, Pair<FoodCandidate, Int>>()
+            for (query in queryVariants.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }) {
+                aiStatus = "Searching nutrition DB for '$query'…"
+                val results = nutritionProvider.searchFoods(query, limit = 12)
+                for (candidate in results) {
+                    val score = similarityScore(query, candidate.name)
+                    val existing = scored[candidate.id]
+                    if (existing == null || score > existing.second) {
+                        scored[candidate.id] = candidate to score
+                    }
+                }
+            }
+            return scored.values.sortedByDescending { it.second }.map { it.first }.take(8)
+        }
+
+        suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>): Result<ModelDecision> {
+            val aiEnabled = userPreferencesRepository.effectiveGlobalAiEnabled.first()
+            if (!aiEnabled || candidates.isEmpty()) return Result.failure(IllegalStateException("AI unavailable"))
+
+            val provider = userPreferencesRepository.aiProvider.first()
+            if (provider == codegito.xyz.healthconnector.data.model.AiProvider.ANTHROPIC ||
+                provider == codegito.xyz.healthconnector.data.model.AiProvider.GEMINI
+            ) return Result.failure(IllegalStateException("Provider not supported for structured decision flow"))
+
+            val baseUrl = userPreferencesRepository.aiBaseUrl.first().trim()
+            val apiKey = userPreferencesRepository.aiApiKey.first().trim()
+            val model = userPreferencesRepository.aiModel.first().ifBlank { provider.defaultModel }
+            val baseSystemPrompt = userPreferencesRepository.aiBaseSystemPrompt.first().trim()
+            val userSystemPrompt = userPreferencesRepository.aiSystemPrompt.first().trim()
+            val decisionTemplate = userPreferencesRepository.aiDecisionPromptTemplate.first().ifBlank {
+                UserPreferencesRepository.DEFAULT_AI_DECISION_PROMPT_TEMPLATE
+            }
+            val repairTemplate = userPreferencesRepository.aiRepairPromptTemplate.first().ifBlank {
+                UserPreferencesRepository.DEFAULT_AI_REPAIR_PROMPT_TEMPLATE
+            }
+            if (baseUrl.isBlank() || (provider.requiresApiKey && apiKey.isBlank())) {
+                return Result.failure(IllegalStateException("AI provider config incomplete"))
+            }
+
+            val candidateText = candidates.mapIndexed { idx, c ->
+                val si = c.servingInfo
+                val servingDesc = if (si != null) {
+                    "serving: ${si.commonQuantity ?: 1.0} ${si.commonUnit ?: "serving"} ≈ ${"%.1f".format(si.gramsPerCommonUnit)}g"
+                } else "serving: unknown"
+                "[$idx] ${c.name}; $servingDesc; per100g: kcal=${c.nutrientsPer100g.calories}, carbs=${c.nutrientsPer100g.carbsGrams}g, protein=${c.nutrientsPer100g.proteinGrams}g, fat=${c.nutrientsPer100g.fatGrams}g"
+            }.joinToString("\n")
+
+            fun parseDecision(raw: String): ModelDecision? {
+                val idx = Regex("""\"candidateIndex\"\s*:\s*(-?\d+)""").find(raw)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return null
+                val qty = Regex("""\"quantity\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                val unit = Regex("""\"unit\"\s*:\s*\"(.*?)\"""").find(raw)?.groupValues?.getOrNull(1)
+                val mult = Regex("""\"multiplier\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                return ModelDecision(candidateIndex = idx, quantity = qty, unit = unit?.takeIf { it.isNotBlank() }, multiplier = mult)
+            }
+
+            fun renderTemplate(template: String, values: Map<String, String>): String {
+                var output = template
+                values.forEach { (key, value) -> output = output.replace("{{$key}}", value) }
+                return output
+            }
+
+            val combinedSystemPrompt = listOf(baseSystemPrompt, userSystemPrompt)
+                .filter { it.isNotBlank() }
+                .joinToString("\n\n")
+
+            suspend fun callModel(userText: String): String? = runCatching {
+                if (developerModeEnabled) {
+                    if (combinedSystemPrompt.isNotBlank()) {
+                        aiMessages += AiChatMessage(fromUser = false, text = "[MODEL SYSTEM] $combinedSystemPrompt")
+                    }
+                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST] $userText")
+                }
+                val escapedSystem = combinedSystemPrompt.replace("\\", "\\\\").replace("\"", "\\\"")
+                val escapedUser = userText.replace("\\", "\\\\").replace("\"", "\\\"")
+                val messagesJson = if (combinedSystemPrompt.isNotBlank()) {
+                    "[{\"role\":\"system\",\"content\":\"$escapedSystem\"},{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
+                } else {
+                    "[{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
+                }
+                val payload = "{\"model\":\"$model\",\"messages\":$messagesJson,\"temperature\":0.1}"
+                val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+                conn.outputStream.use { it.write(payload.toByteArray()) }
+                val code = conn.responseCode
+                val body = try {
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                } catch (_: Exception) {
+                    conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                }
+                if (code !in 200..299) return@runCatching null
+                val content = Regex("""\"content\"\s*:\s*\"(.*?)\"""").find(body)?.groupValues?.getOrNull(1)
+                    ?.replace("\n", " ")
+                if (developerModeEnabled && content != null) aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE] $content")
+                content
+            }.getOrNull()
+
+            val basePrompt = renderTemplate(
+                template = decisionTemplate,
+                values = mapOf(
+                    "mention" to mention.foodPhrase,
+                    "quantity" to mention.quantity.toString(),
+                    "unit" to (mention.unit ?: "(none)"),
+                    "candidates" to candidateText
+                )
+            )
+
+            val first = callModel(basePrompt)
+            val firstDecision = first?.let(::parseDecision)
+            if (firstDecision != null) return Result.success(firstDecision)
+
+            val repairPrompt = renderTemplate(
+                template = repairTemplate,
+                values = mapOf(
+                    "error" to "Could not parse strict JSON keys candidateIndex/quantity/unit/multiplier.",
+                    "previous_output" to (first ?: "(empty)")
+                )
+            )
+            val second = callModel(repairPrompt)
+            val secondDecision = second?.let(::parseDecision)
+            if (secondDecision != null) return Result.success(secondDecision)
+
+            return Result.failure(IllegalStateException("Model returned unparsable output twice"))
+        }
+
+        suspend fun logFallbackEstimate(mention: ParsedMention) {
+            val zone = ZoneId.systemDefault()
+            val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
+            val snackDurationMinutes = userPreferencesRepository.nutritionSnackDurationMinutes.first().coerceAtLeast(1)
+
+            val endTime = if (askEatenTime) {
+                date.atTime(eatenTime).atZone(zone).toInstant()
+            } else if (date == LocalDate.now()) {
+                Instant.now()
+            } else {
+                date.atTime(12, 0).atZone(zone).toInstant()
+            }
+            val effectiveTime = if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
+            val mealType = mealTypeInt(effectiveTime.hour * 60 + effectiveTime.minute)
+            val durationMinutes = if (mealType == MealType.MEAL_TYPE_SNACK) snackDurationMinutes else mealDurationMinutes
+            val startTime = endTime.minusSeconds(durationMinutes * 60L)
+            val zoneOffset = zone.rules.getOffset(endTime)
+
+            val estimatedCalories = (150.0 * mention.quantity).coerceAtLeast(50.0)
+            val estimatedCarbsG = (18.0 * mention.quantity).coerceAtLeast(1.0)
+            val estimatedFatG = (7.0 * mention.quantity).coerceAtLeast(0.5)
+            val estimatedProteinG = (4.0 * mention.quantity).coerceAtLeast(0.5)
+            val estimatedSodiumG = (0.35 * mention.quantity).coerceAtLeast(0.05)
+
+            val record = NutritionRecord(
+                name = "${mention.foodPhrase} (estimated)",
+                startTime = startTime,
+                startZoneOffset = zoneOffset,
+                endTime = endTime,
+                endZoneOffset = zoneOffset,
+                mealType = mealType,
+                energy = Energy.calories(estimatedCalories),
+                totalCarbohydrate = Mass.grams(estimatedCarbsG),
+                totalFat = Mass.grams(estimatedFatG),
+                protein = Mass.grams(estimatedProteinG),
+                sodium = Mass.grams(estimatedSodiumG)
+            )
+            healthConnectManager.healthConnectClient.insertRecords(listOf(record))
+        }
+
+        aiBusy = true
+        aiMessages += AiChatMessage(fromUser = true, text = prompt)
+        aiStatus = "Understanding your food log…"
+
+        val mentions = parseMentions(prompt)
+        if (mentions.isEmpty()) {
+            val msg = "I couldn't parse a food item. Try phrasing like '2 slices pizza and 1 bag potato chips'."
+            aiStatus = msg
+            aiMessages += AiChatMessage(fromUser = false, text = msg)
+            aiBusy = false
+            return
+        }
+
+        var loggedCount = 0
+        for (mention in mentions) {
+            val candidates = findCandidates(mention.foodPhrase)
+            if (candidates.isNotEmpty()) {
+                val decisionResult = askModelForDecision(mention, candidates)
+                val decision = decisionResult.getOrNull()
+                if (decision == null) {
+                    val err = "AI response could not be parsed after retry. Please try again or adjust model settings."
+                    aiStatus = err
+                    aiMessages += AiChatMessage(fromUser = false, text = err)
+                    aiBusy = false
+                    return
+                }
+
+                val chosen = if (decision.candidateIndex in candidates.indices) candidates[decision.candidateIndex] else candidates.first()
+                val qty = (decision.quantity ?: mention.quantity).coerceAtLeast(0.1)
+                val unit = decision.unit ?: mention.unit
+                val multiplier = (decision.multiplier ?: 1.0).coerceIn(0.5, 3.0)
+
+                val resolved = nutritionProvider.resolveAmount(chosen, qty, unit)
+                val grams = (resolved?.value ?: (qty * chosen.baseAmount.value)) * multiplier
+                aiStatus = "Logging ${chosen.name}…"
+                logFood(chosen, grams, navigateBack = false)
+                loggedCount += 1
+                continue
+            }
+
+            runCatching {
+                aiStatus = "No strong match for '${mention.foodPhrase}'. Logging estimate…"
+                logFallbackEstimate(mention)
+                loggedCount += 1
+            }.onFailure {
+                if (allowFollowup && followupRemaining > 0) {
+                    followupRemaining -= 1
+                    askFollowupQuestions = false
+                    val msg = "I couldn't match '${mention.foodPhrase}'. Please clarify that item (the DB has duplicates and odd serving names)."
+                    aiStatus = msg
+                    aiMessages += AiChatMessage(fromUser = false, text = msg)
+                }
+            }
+        }
+
+        val finalMsg = if (loggedCount > 0) {
+            "Logged $loggedCount food item(s). I queried DB candidates per item, let AI choose from serving/grams/per100g context, and applied quantity math."
+        } else {
+            "No items were logged."
+        }
+        aiStatus = finalMsg
+        aiMessages += AiChatMessage(fromUser = false, text = finalMsg)
+        aiBusy = false
     }
 
     val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
@@ -741,6 +1091,15 @@ fun LogFoodScreen(
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
+                },
+                actions = {
+                    val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
+                    val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
+                    if (!aiFeaturesDisabled && effectiveGlobalAiEnabled) {
+                        IconButton(onClick = { showAiChat = !showAiChat }, enabled = !aiBusy) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = "AI log foods")
+                        }
+                    }
                 }
             )
         }
@@ -750,6 +1109,57 @@ fun LogFoodScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (aiStatus != null) {
+                item {
+                    AssistChip(onClick = {}, label = { Text(aiStatus!!) })
+                }
+            }
+
+            if (showAiChat) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("AI food chat", style = MaterialTheme.typography.titleMedium)
+                            if (aiBusy) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            if (aiMessages.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    aiMessages.takeLast(6).forEach { msg ->
+                                        Text(
+                                            text = (if (msg.fromUser) "You: " else "AI: ") + msg.text,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (msg.fromUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = aiPrompt,
+                                onValueChange = { aiPrompt = it },
+                                enabled = !aiBusy,
+                                label = { Text("What did you eat, and when?") },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 2
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = askFollowupQuestions,
+                                    onCheckedChange = { askFollowupQuestions = it },
+                                    enabled = !aiBusy
+                                )
+                                Text("Ask follow-up questions if needed (${followupRemaining} left)")
+                            }
+                            Button(
+                                onClick = { scope.launch { handleAiFoodLogPrompt(aiPrompt, askFollowupQuestions) } },
+                                enabled = !aiBusy && aiPrompt.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Send") }
+                        }
+                    }
+                }
+            }
+
             // Search bar
             item {
                 OutlinedTextField(
@@ -1021,6 +1431,7 @@ fun LogFoodScreen(
             }
         }
     }
+
 
     // Eaten-time picker dialog
     if (showEatenTimePicker) {
