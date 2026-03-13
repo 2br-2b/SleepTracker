@@ -10,6 +10,7 @@ import codegito.xyz.healthconnector.data.model.SleepLogTemplate
 import codegito.xyz.healthconnector.data.model.TemplateSegment
 import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.model.TrackingType
+import codegito.xyz.healthconnector.data.model.AiProvider
 import codegito.xyz.healthconnector.data.SleepStageConfig
 import codegito.xyz.healthconnector.nutrition.domain.NutrientConfig
 import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
@@ -28,6 +29,69 @@ class UserPreferencesRepository private constructor(private val context: Context
     companion object {
         @Volatile
         private var INSTANCE: UserPreferencesRepository? = null
+        const val DEFAULT_AI_BASE_SYSTEM_PROMPT =
+            """You are SleepTracker's nutrition logging copilot. Your job is to transform natural-language food descriptions into high-quality logging decisions using candidate rows from the local nutrition database.
+
+Behavior requirements:
+1) Never treat meal labels or time phrases as foods (examples: breakfast, lunch, dinner, at 9, an hour ago, today).
+2) Prioritize semantic food matching over token overlap.
+3) If there is no strong direct match, decompose the mention into realistic edible sub-items (example: 'ham hot honey egg and cheese sandwich on a bagel' -> ham, egg, cheese, honey, bagel, sandwich) and resolve those.
+4) Use serving-size math carefully. Prefer provided serving units/grams; if uncertain, make a conservative best estimate.
+5) Do not hallucinate impossible foods from non-food context words.
+6) Keep all timestamps in the past.
+7) When follow-up questions are allowed, ask concise clarifying questions only when ambiguity materially changes nutrition. Otherwise proceed with best effort.
+8) Be robust to duplicate/near-duplicate products in the DB and pick the most plausible candidate by food identity and serving context.
+
+Structured output discipline:
+- Always return strict JSON only when asked for structured output.
+- No markdown, no prose outside required JSON."""
+        const val DEFAULT_AI_SYSTEM_PROMPT = ""
+        const val DEFAULT_AI_DECISION_PROMPT_TEMPLATE = """Task: choose the best nutrition candidate for a single food mention and provide normalization math.
+
+Food mention details:
+- mention text: "{{mention}}"
+- user quantity: {{quantity}}
+- user unit: {{unit}}
+
+Candidate rows (indexed):
+{{candidates}}
+
+Decision procedure (follow in order):
+1) Identify whether the mention is an actual food item, not a meal label/time phrase.
+2) Compare identity fit (food type, preparation, ingredients, brand clues), then serving plausibility.
+3) Prefer candidate rows whose serving/unit context is compatible with the mention.
+4) If nothing is a real match, return candidateIndex=-1.
+5) If a candidate matches, choose quantity/unit/multiplier so nutrition best reflects the user statement.
+
+Return EXACTLY one JSON object with these keys only:
+{"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
+
+Key semantics:
+- candidateIndex: index of chosen candidate, or -1 if no valid match
+- quantity: normalized quantity to use (null = keep caller quantity)
+- unit: normalized unit string to use (null = keep caller unit)
+- multiplier: global nutrient multiplier (null = 1.0)
+
+Hard constraints:
+- Output must be valid JSON object (no trailing text).
+- Never output markdown/code fences."""
+        const val DEFAULT_AI_REPAIR_PROMPT_TEMPLATE = """Your previous output could not be parsed by the app.
+
+Error detail:
+{{error}}
+
+Previous output:
+{{previous_output}}
+
+You must now return EXACTLY one valid JSON object with this exact schema and key names:
+{"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
+
+Rules:
+- No markdown
+- No commentary
+- No extra keys
+- No code fences
+- JSON only"""
 
         fun getInstance(context: Context): UserPreferencesRepository {
             return INSTANCE ?: synchronized(this) {
@@ -66,6 +130,21 @@ class UserPreferencesRepository private constructor(private val context: Context
     private val NUTRITION_TRACKING_ENABLED_KEY  = booleanPreferencesKey("nutrition_tracking_enabled")
     private val AMOLED_PITCH_BLACK_KEY          = booleanPreferencesKey("amoled_pitch_black")
     private val SHOW_ADVANCED_SETTINGS_KEY      = booleanPreferencesKey("show_advanced_settings")
+    private val GLOBAL_NETWORK_ENABLED_KEY      = booleanPreferencesKey("global_network_enabled")
+    private val GLOBAL_AI_ENABLED_KEY           = booleanPreferencesKey("global_ai_enabled")
+    private val AI_PROVIDER_KEY                 = stringPreferencesKey("ai_provider")
+    private val AI_MODEL_KEY                    = stringPreferencesKey("ai_model")
+    private val AI_API_KEY_KEY                  = stringPreferencesKey("ai_api_key")
+    private val AI_BASE_URL_KEY                 = stringPreferencesKey("ai_base_url")
+    private val AI_TEMPERATURE_KEY              = floatPreferencesKey("ai_temperature")
+    private val AI_MAX_TOKENS_KEY               = intPreferencesKey("ai_max_tokens")
+    private val AI_SYSTEM_PROMPT_KEY            = stringPreferencesKey("ai_system_prompt")
+    private val AI_BASE_SYSTEM_PROMPT_KEY       = stringPreferencesKey("ai_base_system_prompt")
+    private val AI_MEMORY_NOTES_KEY             = stringPreferencesKey("ai_memory_notes")
+    private val AI_DECISION_PROMPT_TEMPLATE_KEY = stringPreferencesKey("ai_decision_prompt_template")
+    private val AI_REPAIR_PROMPT_TEMPLATE_KEY   = stringPreferencesKey("ai_repair_prompt_template")
+    private val AI_FOLLOWUP_DEFAULT_COUNT_KEY   = intPreferencesKey("ai_followup_default_count")
+    private val AI_FEATURES_DISABLED_KEY        = booleanPreferencesKey("ai_features_disabled")
     private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY  = intPreferencesKey("nutrition_past_date_range_days")
     private val NUTRITION_MEAL_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_meal_duration_minutes")
     private val NUTRITION_SNACK_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_snack_duration_minutes")
@@ -159,6 +238,64 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     val showAdvancedSettings: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[SHOW_ADVANCED_SETTINGS_KEY] ?: false }
+
+    val globalNetworkEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[GLOBAL_NETWORK_ENABLED_KEY] ?: true }
+
+    val globalAiEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[GLOBAL_AI_ENABLED_KEY] ?: true }
+
+    val effectiveGlobalAiEnabled: Flow<Boolean> = combine(
+        globalNetworkEnabled,
+        globalAiEnabled
+    ) { networkEnabled, aiEnabled -> networkEnabled && aiEnabled }
+
+    val aiProvider: Flow<AiProvider> = context.dataStore.data
+        .map { prefs -> AiProvider.fromStored(prefs[AI_PROVIDER_KEY]) }
+
+    val aiModel: Flow<String> = combine(
+        context.dataStore.data.map { prefs -> prefs[AI_MODEL_KEY] },
+        aiProvider
+    ) { storedModel, provider ->
+        storedModel?.takeIf { it.isNotBlank() } ?: provider.defaultModel
+    }
+
+    val aiApiKey: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_API_KEY_KEY] ?: "" }
+
+    val aiBaseUrl: Flow<String> = combine(
+        context.dataStore.data.map { prefs -> prefs[AI_BASE_URL_KEY] },
+        aiProvider
+    ) { storedUrl, provider ->
+        storedUrl?.takeIf { it.isNotBlank() } ?: provider.defaultBaseUrl.orEmpty()
+    }
+
+    val aiTemperature: Flow<Float> = context.dataStore.data
+        .map { prefs -> prefs[AI_TEMPERATURE_KEY] ?: 0.2f }
+
+    val aiMaxTokens: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[AI_MAX_TOKENS_KEY] ?: 1024 }
+
+    val aiSystemPrompt: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_SYSTEM_PROMPT_KEY] ?: "" }
+
+    val aiBaseSystemPrompt: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_BASE_SYSTEM_PROMPT_KEY] ?: DEFAULT_AI_BASE_SYSTEM_PROMPT }
+
+    val aiMemoryNotes: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_MEMORY_NOTES_KEY] ?: "" }
+
+    val aiDecisionPromptTemplate: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_DECISION_PROMPT_TEMPLATE_KEY] ?: DEFAULT_AI_DECISION_PROMPT_TEMPLATE }
+
+    val aiRepairPromptTemplate: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_REPAIR_PROMPT_TEMPLATE_KEY] ?: DEFAULT_AI_REPAIR_PROMPT_TEMPLATE }
+
+    val aiFollowupDefaultCount: Flow<Int> = context.dataStore.data
+        .map { prefs -> (prefs[AI_FOLLOWUP_DEFAULT_COUNT_KEY] ?: 1).coerceIn(0, 5) }
+
+    val aiFeaturesDisabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[AI_FEATURES_DISABLED_KEY] ?: false }
 
     // ── Tracking type flows ───────────────────────────────────────────────
 
@@ -298,6 +435,75 @@ class UserPreferencesRepository private constructor(private val context: Context
 
     suspend fun setShowAdvancedSettings(show: Boolean) {
         context.dataStore.edit { prefs -> prefs[SHOW_ADVANCED_SETTINGS_KEY] = show }
+    }
+
+    suspend fun setGlobalNetworkEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[GLOBAL_NETWORK_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setGlobalAiEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[GLOBAL_AI_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setAiProvider(provider: AiProvider) {
+        context.dataStore.edit { prefs -> prefs[AI_PROVIDER_KEY] = provider.name }
+    }
+
+    suspend fun setAiModel(model: String) {
+        context.dataStore.edit { prefs -> prefs[AI_MODEL_KEY] = model }
+    }
+
+    suspend fun setAiApiKey(apiKey: String) {
+        context.dataStore.edit { prefs -> prefs[AI_API_KEY_KEY] = apiKey }
+    }
+
+    suspend fun setAiBaseUrl(url: String) {
+        context.dataStore.edit { prefs -> prefs[AI_BASE_URL_KEY] = url }
+    }
+
+    suspend fun setAiTemperature(temperature: Float) {
+        context.dataStore.edit { prefs -> prefs[AI_TEMPERATURE_KEY] = temperature.coerceIn(0f, 2f) }
+    }
+
+    suspend fun setAiMaxTokens(maxTokens: Int) {
+        context.dataStore.edit { prefs -> prefs[AI_MAX_TOKENS_KEY] = maxTokens.coerceIn(1, 32768) }
+    }
+
+    suspend fun setAiSystemPrompt(prompt: String) {
+        context.dataStore.edit { prefs -> prefs[AI_SYSTEM_PROMPT_KEY] = prompt }
+    }
+
+    suspend fun setAiBaseSystemPrompt(prompt: String) {
+        context.dataStore.edit { prefs -> prefs[AI_BASE_SYSTEM_PROMPT_KEY] = prompt }
+    }
+
+    suspend fun setAiMemoryNotes(notes: String) {
+        context.dataStore.edit { prefs -> prefs[AI_MEMORY_NOTES_KEY] = notes }
+    }
+
+    suspend fun setAiDecisionPromptTemplate(template: String) {
+        context.dataStore.edit { prefs -> prefs[AI_DECISION_PROMPT_TEMPLATE_KEY] = template }
+    }
+
+    suspend fun setAiRepairPromptTemplate(template: String) {
+        context.dataStore.edit { prefs -> prefs[AI_REPAIR_PROMPT_TEMPLATE_KEY] = template }
+    }
+
+    suspend fun setAiFollowupDefaultCount(count: Int) {
+        context.dataStore.edit { prefs -> prefs[AI_FOLLOWUP_DEFAULT_COUNT_KEY] = count.coerceIn(0, 5) }
+    }
+
+    suspend fun setAiFeaturesDisabled(disabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[AI_FEATURES_DISABLED_KEY] = disabled }
+    }
+
+    suspend fun resetAiPromptsToDefault() {
+        context.dataStore.edit { prefs ->
+            prefs[AI_BASE_SYSTEM_PROMPT_KEY] = DEFAULT_AI_BASE_SYSTEM_PROMPT
+            prefs[AI_SYSTEM_PROMPT_KEY] = DEFAULT_AI_SYSTEM_PROMPT
+            prefs[AI_DECISION_PROMPT_TEMPLATE_KEY] = DEFAULT_AI_DECISION_PROMPT_TEMPLATE
+            prefs[AI_REPAIR_PROMPT_TEMPLATE_KEY] = DEFAULT_AI_REPAIR_PROMPT_TEMPLATE
+        }
     }
 
     suspend fun setSleepEnabled(enabled: Boolean) {

@@ -30,6 +30,8 @@ fun SettingsScreen(
     onPermissions: () -> Unit,
     onSleepSettings: () -> Unit,
     onNutritionSettings: () -> Unit,
+    onNetworkAiSettings: () -> Unit,
+    onDeveloperPromptsSettings: () -> Unit,
     // Kept for binary compat — not used in new flow
     healthConnectManager: codegito.xyz.healthconnector.HealthConnectManager? = null,
     onManagePermissions: () -> Unit = onPermissions,
@@ -46,6 +48,7 @@ fun SettingsScreen(
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
     val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
+    val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
 
     var versionTapCount by remember { mutableIntStateOf(0) }
     var isServiceActive by remember { mutableStateOf(false) }
@@ -111,6 +114,20 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
+            if (!aiFeaturesDisabled) {
+                // ── Connectivity & AI ────────────────────────────────────────
+                SectionHeader("Connectivity & AI")
+
+                ListItem(
+                    headlineContent = { Text("Network & AI") },
+                    supportingContent = { Text("Global network toggle, AI toggle, and Koog model configuration") },
+                    trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                    modifier = Modifier.clickable { onNetworkAiSettings() }
+                )
+
+                HorizontalDivider()
+            }
+
             // ── Appearance ────────────────────────────────────────────────
             SectionHeader("Appearance")
 
@@ -149,6 +166,30 @@ fun SettingsScreen(
                     )
                 },
                 modifier = Modifier.clickable { showRolloverPicker = true }
+            )
+
+
+            ListItem(
+                headlineContent = { Text("Disable all AI features") },
+                supportingContent = { Text("Hides AI controls across the app, including AI logging and AI settings entry points.") },
+                trailingContent = {
+                    Checkbox(
+                        checked = aiFeaturesDisabled,
+                        onCheckedChange = { disabled ->
+                            scope.launch {
+                                userPreferencesRepository.setAiFeaturesDisabled(disabled)
+                                if (disabled) userPreferencesRepository.setGlobalAiEnabled(false)
+                            }
+                        }
+                    )
+                },
+                modifier = Modifier.clickable {
+                    scope.launch {
+                        val next = !aiFeaturesDisabled
+                        userPreferencesRepository.setAiFeaturesDisabled(next)
+                        if (next) userPreferencesRepository.setGlobalAiEnabled(false)
+                    }
+                }
             )
 
             ListItem(
@@ -217,6 +258,14 @@ fun SettingsScreen(
                 ) {
                     Text("Trigger Test Notification")
                 }
+
+
+                ListItem(
+                    headlineContent = { Text("AI Prompts") },
+                    supportingContent = { Text("Developer-only system prompt templates and reset controls") },
+                    trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                    modifier = Modifier.clickable { onDeveloperPromptsSettings() }
+                )
 
                 OutlinedButton(
                     onClick = {
