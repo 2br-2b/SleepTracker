@@ -799,93 +799,133 @@ fun LogFoodScreen(
             val multiplier: Double?
         )
 
-        fun normalizeSegment(segment: String): String {
-            return segment
-                .trim()
-                .replace(
-                    Regex(
-                        """^(?:for\s+(?:breakfast|lunch|dinner|snack)(?:\s+at\s+\d{1,2}(?::\d{2})?)?\s*)?(?:i\s+)?(?:ate|had|drank|consumed|logged)\s+""",
-                        RegexOption.IGNORE_CASE
-                    ),
-                    ""
-                )
-                .replace(Regex("""^for\s+(?:breakfast|lunch|dinner|snack)\b""", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("""\s+about\s+\d+\s*(?:minutes?|hours?)\s+ago$""", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("""\s+ago$""", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("""\s+"""), " ")
-                .trim()
+        // ── Read AI config upfront ─────────────────────────────────────────────
+        val aiEnabled = userPreferencesRepository.effectiveGlobalAiEnabled.first()
+        val provider = userPreferencesRepository.aiProvider.first()
+        val baseUrl = userPreferencesRepository.aiBaseUrl.first().trim()
+        val apiKey = userPreferencesRepository.aiApiKey.first().trim()
+        val model = userPreferencesRepository.aiModel.first().ifBlank { provider.defaultModel }
+        val baseSystemPrompt = userPreferencesRepository.aiBaseSystemPrompt.first().trim()
+        val userSystemPrompt = userPreferencesRepository.aiSystemPrompt.first().trim()
+        val decisionTemplate = userPreferencesRepository.aiDecisionPromptTemplate.first().ifBlank {
+            UserPreferencesRepository.DEFAULT_AI_DECISION_PROMPT_TEMPLATE
         }
+        val repairTemplate = userPreferencesRepository.aiRepairPromptTemplate.first().ifBlank {
+            UserPreferencesRepository.DEFAULT_AI_REPAIR_PROMPT_TEMPLATE
+        }
+        val reasoningEffort = userPreferencesRepository.aiReasoningEffort.first()
+        val combinedSystemPrompt = listOf(baseSystemPrompt, userSystemPrompt)
+            .filter { it.isNotBlank() }
+            .joinToString("\n\n")
 
-        fun parseMentions(input: String): List<ParsedMention> {
-            val cleanedInput = input
-                .replace(Regex("""\bfor\s+(?:breakfast|lunch|dinner|snack)(?:\s+at\s+\d{1,2}(?::\d{2})?)?\b""", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("""\b(?:today|tonight|this\s+morning|this\s+afternoon|this\s+evening)\b""", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("""\s+"""), " ")
-                .trim()
-
-            val splitRegex = if (
-                cleanedInput.contains("sandwich", ignoreCase = true) ||
-                cleanedInput.contains("bagel", ignoreCase = true) ||
-                cleanedInput.contains("burger", ignoreCase = true)
-            ) {
-                Regex("""\s*,\s*""")
-            } else {
-                Regex("""\s*(?:,| and )\s*""", RegexOption.IGNORE_CASE)
-            }
-
-            val parts = cleanedInput
-                .replace(" & ", " and ")
-                .replace(";", ",")
-                .split(splitRegex)
-                .map(::normalizeSegment)
-                .filter { it.isNotBlank() }
-
-            val parsed = mutableListOf<ParsedMention>()
-            val pattern = Regex(
-                """^(?:(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?)?\s*(?:of\s+)?(.+?)(?:\s+at\s+.+)?$""",
-                RegexOption.IGNORE_CASE
-            )
-            val stopFoods = setOf("for breakfast", "for lunch", "for dinner", "for snack", "breakfast", "lunch", "dinner", "snack")
-            for (raw in parts) {
-                val value = raw
-                    .replace(Regex("""^(a|an)\s+""", RegexOption.IGNORE_CASE), "1 ")
-                    .trim()
-                val m = pattern.find(value) ?: continue
-                val qty = m.groupValues[1].toDoubleOrNull() ?: 1.0
-                val unit = m.groupValues[2].ifBlank { null }
-                val food = m.groupValues[3]
-                    .replace(Regex("""^(the)\s+""", RegexOption.IGNORE_CASE), "")
-                    .replace(Regex("""\s+"""), " ")
-                    .trim()
-                if (food.isNotBlank() && food.lowercase() !in stopFoods) {
-                    parsed += ParsedMention(quantity = qty, unit = unit, foodPhrase = food)
+        // ── Shared HTTP helper ──────────────────────────────────────────────────
+        suspend fun callModel(userText: String, systemPrompt: String = combinedSystemPrompt): String? = runCatching {
+            if (developerModeEnabled) {
+                if (systemPrompt.isNotBlank()) {
+                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL SYSTEM]\n$systemPrompt\n- - -")
                 }
+                aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST]\n$userText\n- - -")
             }
-            return parsed
+            val escapedSystem = systemPrompt.replace("\\", "\\\\").replace("\"", "\\\"")
+            val escapedUser = userText.replace("\\", "\\\\").replace("\"", "\\\"")
+            val messagesJson = if (systemPrompt.isNotBlank()) {
+                "[{\"role\":\"system\",\"content\":\"$escapedSystem\"},{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
+            } else {
+                "[{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
+            }
+            val reasoningField = if (reasoningEffort != "none") ",\"reasoning_effort\":\"$reasoningEffort\"" else ""
+            val payload = "{\"model\":\"$model\",\"messages\":$messagesJson,\"temperature\":0.1$reasoningField}"
+            val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 15000
+                readTimeout = 30000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
+            }
+            conn.outputStream.use { it.write(payload.toByteArray()) }
+            val code = conn.responseCode
+            val body = try {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } catch (_: Exception) {
+                conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+            }
+            if (developerModeEnabled) {
+                aiMessages += AiChatMessage(fromUser = false, text = "[MODEL HTTP]\nstatus=$code\nbody=$body\n- - -")
+            }
+            if (code !in 200..299) return@runCatching null
+            val content = runCatching {
+                val root = org.json.JSONObject(body)
+                root.getJSONArray("choices")
+                    .getJSONObject(0)
+                    .getJSONObject("message")
+                    .getString("content")
+            }.getOrNull()
+                ?.replace("\n", " ")
+                ?.trim()
+            if (developerModeEnabled) {
+                aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE]\n${content ?: "(empty)"}\n- - -")
+            }
+            content
+        }.getOrNull()
+
+        fun parseMentionsFromJson(raw: String): List<ParsedMention> = runCatching {
+            val s = raw.indexOf('[')
+            val e = raw.lastIndexOf(']')
+            if (s == -1 || e == -1 || e <= s) return@runCatching emptyList()
+            val arr = org.json.JSONArray(raw.substring(s, e + 1))
+            (0 until arr.length()).mapNotNull { i ->
+                val obj = arr.getJSONObject(i)
+                val food = obj.optString("foodPhrase").trim()
+                if (food.isBlank()) null
+                else ParsedMention(
+                    quantity = obj.optDouble("quantity", 1.0).takeIf { !it.isNaN() } ?: 1.0,
+                    unit = obj.optString("unit", "").takeIf { it.isNotBlank() },
+                    foodPhrase = food
+                )
+            }
+        }.getOrElse { emptyList() }
+
+        // ── AI-powered mention parsing ──────────────────────────────────────────
+        suspend fun aiParseMentions(input: String): List<ParsedMention> {
+            val parsePrompt = """Parse the following food log entry into a JSON array of food items.
+
+Input: "$input"
+
+Return ONLY a JSON array. Each element must have exactly these keys:
+- "foodPhrase": string — the food item as described, preserving all descriptors, preparation style, and brand names. Do NOT split compound dishes (e.g. "ham hot honey egg and cheese sandwich on a bagel" is ONE item).
+- "quantity": number — the numeric amount (1.0 if not specified; treat "a"/"an" as 1.0)
+- "unit": string or null — explicit unit of measure such as "cup", "oz", "slice" (null if count-based or unspecified)
+
+Rules:
+- "a"/"an" = quantity 1.0, never a unit or part of the food name
+- Strip only conversational filler: "I had", "I ate", "I drank", "for breakfast/lunch/dinner/snack", restaurant attribution ("from X"), time references
+- Preserve all food descriptors: "hot honey", "a la mode", "extra crispy", "spicy", etc.
+- If multiple distinct foods are mentioned, emit one object per food
+- JSON array only — no markdown, no prose"""
+            val raw = callModel(parsePrompt, systemPrompt = "") ?: return emptyList()
+            appendAiTrace("AI PARSE RAW", raw)
+            return parseMentionsFromJson(raw)
         }
 
-        fun decomposeMention(mention: ParsedMention): List<ParsedMention> {
-            val food = mention.foodPhrase.lowercase()
-            val decomposition = mutableListOf<ParsedMention>()
+        // ── AI-powered decomposition ────────────────────────────────────────────
+        suspend fun aiDecomposeMention(foodPhrase: String): List<ParsedMention> {
+            val decomposePrompt = """The food item "$foodPhrase" was not found in the nutrition database.
+Break it down into individual ingredients that would appear in a standard nutrition database.
 
-            if (food.contains("sandwich") || food.contains("bagel") || food.contains("burger") || food.contains("taco")) {
-                if (food.contains("ham")) decomposition += ParsedMention(1.0, null, "ham")
-                if (food.contains("egg")) decomposition += ParsedMention(1.0, null, "egg")
-                if (food.contains("cheese")) decomposition += ParsedMention(1.0, null, "cheese")
-                if (food.contains("honey")) decomposition += ParsedMention(1.0, null, "honey")
-                if (food.contains("bagel")) decomposition += ParsedMention(1.0, null, "bagel")
-                if (food.contains("sandwich")) decomposition += ParsedMention(1.0, null, "sandwich")
-            }
+Return ONLY a JSON array (max 6 items). Each element must have:
+- "foodPhrase": string — simple, generic ingredient name (e.g. "egg", "ham", "bagel", "american cheese")
+- "quantity": number — realistic amount of this ingredient (1.0 if uncertain)
+- "unit": string or null — unit if applicable (e.g. "slice"), otherwise null
 
-            if (decomposition.isEmpty()) {
-                val parts = mention.foodPhrase
-                    .split(Regex("""\s+and\s+|\s+with\s+|\s+on\s+""", RegexOption.IGNORE_CASE))
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() && it.length > 2 }
-                parts.forEach { decomposition += ParsedMention(1.0, null, it) }
-            }
-
-            return decomposition.distinctBy { it.foodPhrase.lowercase() }.take(6)
+Rules:
+- Use generic ingredient names, not brand names or full dish names
+- Only include trackable food ingredients
+- JSON array only — no markdown, no prose"""
+            val raw = callModel(decomposePrompt, systemPrompt = "") ?: return emptyList()
+            appendAiTrace("AI DECOMPOSE RAW", raw)
+            return parseMentionsFromJson(raw)
         }
 
         fun tokenize(text: String): Set<String> = text
@@ -936,29 +976,7 @@ fun LogFoodScreen(
         }
 
         suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>): Result<ModelDecision> {
-            val aiEnabled = userPreferencesRepository.effectiveGlobalAiEnabled.first()
-            if (!aiEnabled || candidates.isEmpty()) return Result.failure(IllegalStateException("AI unavailable"))
-
-            val provider = userPreferencesRepository.aiProvider.first()
-            if (provider == codegito.xyz.healthconnector.data.model.AiProvider.ANTHROPIC ||
-                provider == codegito.xyz.healthconnector.data.model.AiProvider.GEMINI
-            ) return Result.failure(IllegalStateException("Provider not supported for structured decision flow"))
-
-            val baseUrl = userPreferencesRepository.aiBaseUrl.first().trim()
-            val apiKey = userPreferencesRepository.aiApiKey.first().trim()
-            val model = userPreferencesRepository.aiModel.first().ifBlank { provider.defaultModel }
-            val baseSystemPrompt = userPreferencesRepository.aiBaseSystemPrompt.first().trim()
-            val userSystemPrompt = userPreferencesRepository.aiSystemPrompt.first().trim()
-            val decisionTemplate = userPreferencesRepository.aiDecisionPromptTemplate.first().ifBlank {
-                UserPreferencesRepository.DEFAULT_AI_DECISION_PROMPT_TEMPLATE
-            }
-            val repairTemplate = userPreferencesRepository.aiRepairPromptTemplate.first().ifBlank {
-                UserPreferencesRepository.DEFAULT_AI_REPAIR_PROMPT_TEMPLATE
-            }
-            if (baseUrl.isBlank() || (provider.requiresApiKey && apiKey.isBlank())) {
-                return Result.failure(IllegalStateException("AI provider config incomplete"))
-            }
-            val reasoningEffort = userPreferencesRepository.aiReasoningEffort.first()
+            if (candidates.isEmpty()) return Result.failure(IllegalStateException("No candidates"))
 
             val candidateText = candidates.mapIndexed { idx, c ->
                 val si = c.servingInfo
@@ -981,61 +999,6 @@ fun LogFoodScreen(
                 values.forEach { (key, value) -> output = output.replace("{{$key}}", value) }
                 return output
             }
-
-            val combinedSystemPrompt = listOf(baseSystemPrompt, userSystemPrompt)
-                .filter { it.isNotBlank() }
-                .joinToString("\n\n")
-
-            suspend fun callModel(userText: String): String? = runCatching {
-                if (developerModeEnabled) {
-                    if (combinedSystemPrompt.isNotBlank()) {
-                        aiMessages += AiChatMessage(fromUser = false, text = "[MODEL SYSTEM]\n$combinedSystemPrompt\n- - -")
-                    }
-                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST]\n$userText\n- - -")
-                }
-                val escapedSystem = combinedSystemPrompt.replace("\\", "\\\\").replace("\"", "\\\"")
-                val escapedUser = userText.replace("\\", "\\\\").replace("\"", "\\\"")
-                val messagesJson = if (combinedSystemPrompt.isNotBlank()) {
-                    "[{\"role\":\"system\",\"content\":\"$escapedSystem\"},{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
-                } else {
-                    "[{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
-                }
-                val reasoningField = if (reasoningEffort != "none") ",\"reasoning_effort\":\"$reasoningEffort\"" else ""
-                val payload = "{\"model\":\"$model\",\"messages\":$messagesJson,\"temperature\":0.1$reasoningField}"
-                val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
-                val conn = (url.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 15000
-                    readTimeout = 30000
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                    if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
-                }
-                conn.outputStream.use { it.write(payload.toByteArray()) }
-                val code = conn.responseCode
-                val body = try {
-                    conn.inputStream.bufferedReader().use { it.readText() }
-                } catch (_: Exception) {
-                    conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                }
-                if (developerModeEnabled) {
-                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL HTTP]\nstatus=$code\nbody=$body\n- - -")
-                }
-                if (code !in 200..299) return@runCatching null
-                val content = runCatching {
-                    val root = org.json.JSONObject(body)
-                    root.getJSONArray("choices")
-                        .getJSONObject(0)
-                        .getJSONObject("message")
-                        .getString("content")
-                }.getOrNull()
-                    ?.replace("\n", " ")
-                    ?.trim()
-                if (developerModeEnabled) {
-                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE]\n${content ?: "(empty)"}\n- - -")
-                }
-                content
-            }.getOrNull()
 
             val basePrompt = renderTemplate(
                 template = decisionTemplate,
@@ -1109,7 +1072,25 @@ fun LogFoodScreen(
         aiMessages += AiChatMessage(fromUser = true, text = prompt)
         aiStatus = "Understanding your food log…"
 
-        val mentions = parseMentions(prompt)
+        if (!aiEnabled || provider == codegito.xyz.healthconnector.data.model.AiProvider.ANTHROPIC ||
+            provider == codegito.xyz.healthconnector.data.model.AiProvider.GEMINI ||
+            baseUrl.isBlank() || (provider.requiresApiKey && apiKey.isBlank())
+        ) {
+            val err = when {
+                !aiEnabled -> "AI is not enabled. Enable it in Network & AI Settings."
+                provider == codegito.xyz.healthconnector.data.model.AiProvider.ANTHROPIC ||
+                    provider == codegito.xyz.healthconnector.data.model.AiProvider.GEMINI ->
+                    "Selected AI provider is not supported for this feature. Use an OpenAI-compatible provider."
+                else -> "AI configuration is incomplete. Check Network & AI Settings."
+            }
+            aiStatus = err
+            aiMessages += AiChatMessage(fromUser = false, text = err)
+            aiBusy = false
+            return
+        }
+
+        aiStatus = "Parsing your food log…"
+        val mentions = aiParseMentions(prompt)
         appendAiTrace(
             section = "PARSE",
             body = buildString {
@@ -1119,7 +1100,7 @@ fun LogFoodScreen(
             }
         )
         if (mentions.isEmpty()) {
-            val msg = "I couldn't parse a food item. Try phrasing like '2 slices pizza and 1 bag potato chips'."
+            val msg = "Could not identify any food items in your message. Please try again."
             aiStatus = msg
             aiMessages += AiChatMessage(fromUser = false, text = msg)
             aiBusy = false
@@ -1163,7 +1144,8 @@ fun LogFoodScreen(
                 continue
             }
 
-            val decomposed = decomposeMention(mention)
+            aiStatus = "No direct match for '${mention.foodPhrase}', decomposing…"
+            val decomposed = aiDecomposeMention(mention.foodPhrase)
             appendAiTrace(
                 "TOOL DECOMPOSE",
                 if (decomposed.isEmpty()) {
