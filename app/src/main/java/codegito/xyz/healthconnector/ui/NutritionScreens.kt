@@ -856,27 +856,39 @@ fun LogFoodScreen(
                         conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
                     }
                     Pair(code, body)
-                }.getOrNull()
-            } ?: return null
+                }
+            }
 
-            val (code, body) = httpResult
+            if (httpResult.isFailure) {
+                val err = httpResult.exceptionOrNull()
+                appendAiTrace("MODEL ERROR", "Network error: ${err?.javaClass?.simpleName}: ${err?.message}")
+                return null
+            }
+
+            val (code, body) = httpResult.getOrThrow()
             if (developerModeEnabled) {
                 aiMessages += AiChatMessage(fromUser = false, text = "[MODEL HTTP]\nstatus=$code\nbody=$body\n- - -")
             }
-            if (code !in 200..299) return null
+            if (code !in 200..299) {
+                appendAiTrace("MODEL ERROR", "HTTP $code: ${body.take(300)}")
+                return null
+            }
             val content = runCatching {
                 val root = org.json.JSONObject(body)
                 root.getJSONArray("choices")
                     .getJSONObject(0)
                     .getJSONObject("message")
                     .getString("content")
-            }.getOrNull()
-                ?.replace("\n", " ")
-                ?.trim()
-            if (developerModeEnabled) {
-                aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE]\n${content ?: "(empty)"}\n- - -")
             }
-            return content
+            if (content.isFailure) {
+                appendAiTrace("MODEL ERROR", "Failed to parse response JSON: ${content.exceptionOrNull()?.message}\nbody=${body.take(300)}")
+                return null
+            }
+            val text = content.getOrThrow().replace("\n", " ").trim()
+            if (developerModeEnabled) {
+                aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE]\n${text.ifBlank { "(empty)" }}\n- - -")
+            }
+            return text.ifBlank { null }
         }
 
         fun parseMentionsFromJson(raw: String): List<ParsedMention> = runCatching {
