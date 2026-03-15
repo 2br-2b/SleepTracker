@@ -969,17 +969,28 @@ Rules:
 
         suspend fun findCandidates(foodPhrase: String): List<FoodCandidate> {
             val queryVariants = linkedSetOf<String>()
+            // Full phrase — covers branded product searches
             queryVariants += foodPhrase
+            // After "of" (e.g. "cup of milk" → "milk")
             if (" of " in foodPhrase.lowercase()) queryVariants += foodPhrase.substringAfterLast(" of ").trim()
+            // Strip measurement/serving words (keeps brand + food name)
             queryVariants += foodPhrase.replace(Regex("""\b(slices?|bags?|pieces?|cups?|oz|ounces?|servings?)\b""", RegexOption.IGNORE_CASE), "").trim()
+            // Strip size/descriptor words
             queryVariants += foodPhrase.replace(Regex("""\b(extra|large|small|big|medium|fresh|hot)\b""", RegexOption.IGNORE_CASE), "").trim()
+            // Without first word — brand names often lead, so this finds the generic food name
+            val words = foodPhrase.trim().split(Regex("""\s+"""))
+            if (words.size > 1) queryVariants += words.drop(1).joinToString(" ")
+            // Last two words — often the core food noun (e.g. "Greek yogurt")
+            if (words.size > 2) queryVariants += words.takeLast(2).joinToString(" ")
+            // Each significant individual word — catches brand-only or descriptor-only matches
+            words.filter { it.length >= 3 }.forEach { queryVariants += it }
 
             val scored = mutableMapOf<String, Pair<FoodCandidate, Int>>()
             val normalizedQueries = queryVariants.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }
             appendAiTrace("TOOL QUERY PLAN", "Food phrase '$foodPhrase' -> queries: ${normalizedQueries.joinToString()} ")
             for (query in normalizedQueries) {
                 aiStatus = "Searching nutrition DB for '$query'…"
-                val results = nutritionProvider.searchFoods(query, limit = 12)
+                val results = nutritionProvider.searchFoods(query, limit = 20)
                 appendAiTrace("TOOL QUERY", "query='$query' returned ${results.size} rows")
                 for (candidate in results) {
                     val score = similarityScore(query, candidate.name)
@@ -989,7 +1000,7 @@ Rules:
                     }
                 }
             }
-            val ranked = scored.values.sortedByDescending { it.second }.map { it.first }.take(8)
+            val ranked = scored.values.sortedByDescending { it.second }.map { it.first }.take(100)
             appendAiTrace(
                 "TOOL QUERY RESULT",
                 ranked.mapIndexed { idx, c -> "$idx) ${c.name}" }.joinToString("\n").ifBlank { "No candidates" }
@@ -997,7 +1008,7 @@ Rules:
             return ranked
         }
 
-        suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>): Result<ModelDecision> {
+        suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>, originalPrompt: String): Result<ModelDecision> {
             if (candidates.isEmpty()) return Result.failure(IllegalStateException("No candidates"))
 
             val candidateText = candidates.mapIndexed { idx, c ->
@@ -1025,6 +1036,7 @@ Rules:
             val basePrompt = renderTemplate(
                 template = decisionTemplate,
                 values = mapOf(
+                    "originalInput" to originalPrompt,
                     "mention" to mention.foodPhrase,
                     "quantity" to mention.quantity.toString(),
                     "unit" to (mention.unit ?: "(none)"),
@@ -1134,7 +1146,7 @@ Rules:
             appendAiTrace("ITEM START", "mention='${mention.foodPhrase}', qty=${mention.quantity}, unit=${mention.unit ?: "(none)"}")
             val candidates = findCandidates(mention.foodPhrase)
             if (candidates.isNotEmpty()) {
-                val decisionResult = askModelForDecision(mention, candidates)
+                val decisionResult = askModelForDecision(mention, candidates, prompt)
                 val decision = decisionResult.getOrNull()
                 if (decision == null) {
                     val err = "AI response could not be parsed after retry. Please try again or adjust model settings."
@@ -1182,7 +1194,7 @@ Rules:
             for (sub in decomposed) {
                 val subCandidates = findCandidates(sub.foodPhrase)
                 if (subCandidates.isEmpty()) continue
-                val subDecision = askModelForDecision(sub, subCandidates).getOrNull() ?: continue
+                val subDecision = askModelForDecision(sub, subCandidates, prompt).getOrNull() ?: continue
                 val subChosen = if (subDecision.candidateIndex in subCandidates.indices) subCandidates[subDecision.candidateIndex] else subCandidates.first()
                 val subQty = (subDecision.quantity ?: sub.quantity).coerceAtLeast(0.1)
                 val subUnit = subDecision.unit ?: sub.unit

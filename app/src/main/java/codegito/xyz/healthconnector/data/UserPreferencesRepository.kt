@@ -49,6 +49,7 @@ Structured output discipline:
         const val DEFAULT_AI_DECISION_PROMPT_TEMPLATE = """Task: choose the best nutrition candidate for a single food mention and provide normalization math.
 
 Food mention details:
+- original user input: "{{originalInput}}"
 - mention text: "{{mention}}"
 - user quantity: {{quantity}}
 - user unit: {{unit}}
