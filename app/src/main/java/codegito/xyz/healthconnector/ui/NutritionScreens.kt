@@ -826,21 +826,16 @@ fun LogFoodScreen(
                 }
                 aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST]\n$userText\n- - -")
             }
-            fun escapeJson(s: String) = s
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t")
-            val escapedSystem = escapeJson(systemPrompt)
-            val escapedUser = escapeJson(userText)
-            val messagesJson = if (systemPrompt.isNotBlank()) {
-                "[{\"role\":\"system\",\"content\":\"$escapedSystem\"},{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
-            } else {
-                "[{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
+            val messages = org.json.JSONArray().apply {
+                if (systemPrompt.isNotBlank()) put(org.json.JSONObject().put("role", "system").put("content", systemPrompt))
+                put(org.json.JSONObject().put("role", "user").put("content", userText))
             }
-            val reasoningField = if (reasoningEffort != "none") ",\"reasoning_effort\":\"$reasoningEffort\"" else ""
-            val payload = "{\"model\":\"$model\",\"messages\":$messagesJson,\"temperature\":0.1$reasoningField}"
+            val payload = org.json.JSONObject().apply {
+                put("model", model)
+                put("messages", messages)
+                put("temperature", 0.1)
+                if (reasoningEffort != "none") put("reasoning_effort", reasoningEffort)
+            }.toString()
 
             // Blocking IO must run off the main thread
             val httpResult = withContext(Dispatchers.IO) {

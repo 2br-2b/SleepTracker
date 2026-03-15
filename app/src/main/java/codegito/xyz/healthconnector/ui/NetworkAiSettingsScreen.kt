@@ -358,9 +358,12 @@ private suspend fun runAiConsoleTest(
             setRequestProperty("Content-Type", "application/json")
             if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
         }
-        val escaped = message.replace("\\", "\\\\").replace("\"", "\\\"")
         val modelName = model.ifBlank { provider.defaultModel }
-        val payload = "{\"model\":\"$modelName\",\"messages\":[{\"role\":\"user\",\"content\":\"$escaped\"}],\"temperature\":0.2}"
+        val payload = org.json.JSONObject()
+            .put("model", modelName)
+            .put("messages", org.json.JSONArray().put(org.json.JSONObject().put("role", "user").put("content", message)))
+            .put("temperature", 0.2)
+            .toString()
         conn.outputStream.use { it.write(payload.toByteArray()) }
         val code = conn.responseCode
         val body = try {
