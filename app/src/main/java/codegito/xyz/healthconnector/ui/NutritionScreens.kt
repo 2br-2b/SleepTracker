@@ -826,8 +826,14 @@ fun LogFoodScreen(
                 }
                 aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST]\n$userText\n- - -")
             }
-            val escapedSystem = systemPrompt.replace("\\", "\\\\").replace("\"", "\\\"")
-            val escapedUser = userText.replace("\\", "\\\\").replace("\"", "\\\"")
+            fun escapeJson(s: String) = s
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t")
+            val escapedSystem = escapeJson(systemPrompt)
+            val escapedUser = escapeJson(userText)
             val messagesJson = if (systemPrompt.isNotBlank()) {
                 "[{\"role\":\"system\",\"content\":\"$escapedSystem\"},{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
             } else {
