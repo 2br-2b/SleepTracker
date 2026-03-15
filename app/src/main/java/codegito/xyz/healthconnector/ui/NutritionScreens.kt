@@ -819,7 +819,7 @@ fun LogFoodScreen(
             .joinToString("\n\n")
 
         // ── Shared HTTP helper ──────────────────────────────────────────────────
-        suspend fun callModel(userText: String, systemPrompt: String = combinedSystemPrompt): String? = runCatching {
+        suspend fun callModel(userText: String, systemPrompt: String = combinedSystemPrompt): String? {
             if (developerModeEnabled) {
                 if (systemPrompt.isNotBlank()) {
                     aiMessages += AiChatMessage(fromUser = false, text = "[MODEL SYSTEM]\n$systemPrompt\n- - -")
@@ -835,26 +835,35 @@ fun LogFoodScreen(
             }
             val reasoningField = if (reasoningEffort != "none") ",\"reasoning_effort\":\"$reasoningEffort\"" else ""
             val payload = "{\"model\":\"$model\",\"messages\":$messagesJson,\"temperature\":0.1$reasoningField}"
-            val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 15000
-                readTimeout = 30000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
-            }
-            conn.outputStream.use { it.write(payload.toByteArray()) }
-            val code = conn.responseCode
-            val body = try {
-                conn.inputStream.bufferedReader().use { it.readText() }
-            } catch (_: Exception) {
-                conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-            }
+
+            // Blocking IO must run off the main thread
+            val httpResult = withContext(Dispatchers.IO) {
+                runCatching {
+                    val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
+                    val conn = (url.openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        connectTimeout = 15000
+                        readTimeout = 30000
+                        doOutput = true
+                        setRequestProperty("Content-Type", "application/json")
+                        if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
+                    }
+                    conn.outputStream.use { it.write(payload.toByteArray()) }
+                    val code = conn.responseCode
+                    val body = try {
+                        conn.inputStream.bufferedReader().use { it.readText() }
+                    } catch (_: Exception) {
+                        conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                    }
+                    Pair(code, body)
+                }.getOrNull()
+            } ?: return null
+
+            val (code, body) = httpResult
             if (developerModeEnabled) {
                 aiMessages += AiChatMessage(fromUser = false, text = "[MODEL HTTP]\nstatus=$code\nbody=$body\n- - -")
             }
-            if (code !in 200..299) return@runCatching null
+            if (code !in 200..299) return null
             val content = runCatching {
                 val root = org.json.JSONObject(body)
                 root.getJSONArray("choices")
@@ -867,8 +876,8 @@ fun LogFoodScreen(
             if (developerModeEnabled) {
                 aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE]\n${content ?: "(empty)"}\n- - -")
             }
-            content
-        }.getOrNull()
+            return content
+        }
 
         fun parseMentionsFromJson(raw: String): List<ParsedMention> = runCatching {
             val s = raw.indexOf('[')
