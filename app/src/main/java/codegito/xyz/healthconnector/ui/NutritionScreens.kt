@@ -958,6 +958,7 @@ fun LogFoodScreen(
             if (baseUrl.isBlank() || (provider.requiresApiKey && apiKey.isBlank())) {
                 return Result.failure(IllegalStateException("AI provider config incomplete"))
             }
+            val reasoningEffort = userPreferencesRepository.aiReasoningEffort.first()
 
             val candidateText = candidates.mapIndexed { idx, c ->
                 val si = c.servingInfo
@@ -999,7 +1000,8 @@ fun LogFoodScreen(
                 } else {
                     "[{\"role\":\"user\",\"content\":\"$escapedUser\"}]"
                 }
-                val payload = "{\"model\":\"$model\",\"messages\":$messagesJson,\"temperature\":0.1}"
+                val reasoningField = if (reasoningEffort != "none") ",\"reasoning_effort\":\"$reasoningEffort\"" else ""
+                val payload = "{\"model\":\"$model\",\"messages\":$messagesJson,\"temperature\":0.1$reasoningField}"
                 val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"

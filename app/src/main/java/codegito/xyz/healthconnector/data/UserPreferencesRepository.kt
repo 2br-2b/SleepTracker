@@ -145,6 +145,7 @@ Rules:
     private val AI_REPAIR_PROMPT_TEMPLATE_KEY   = stringPreferencesKey("ai_repair_prompt_template")
     private val AI_FOLLOWUP_DEFAULT_COUNT_KEY   = intPreferencesKey("ai_followup_default_count")
     private val AI_FEATURES_DISABLED_KEY        = booleanPreferencesKey("ai_features_disabled")
+    private val AI_REASONING_EFFORT_KEY         = stringPreferencesKey("ai_reasoning_effort")
     private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY  = intPreferencesKey("nutrition_past_date_range_days")
     private val NUTRITION_MEAL_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_meal_duration_minutes")
     private val NUTRITION_SNACK_DURATION_MINUTES_KEY = intPreferencesKey("nutrition_snack_duration_minutes")
@@ -296,6 +297,10 @@ Rules:
 
     val aiFeaturesDisabled: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[AI_FEATURES_DISABLED_KEY] ?: false }
+
+    /** Reasoning effort level sent to the model. One of: "none", "low", "medium", "high". */
+    val aiReasoningEffort: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[AI_REASONING_EFFORT_KEY] ?: "none" }
 
     // ── Tracking type flows ───────────────────────────────────────────────
 
@@ -495,6 +500,10 @@ Rules:
 
     suspend fun setAiFeaturesDisabled(disabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[AI_FEATURES_DISABLED_KEY] = disabled }
+    }
+
+    suspend fun setAiReasoningEffort(effort: String) {
+        context.dataStore.edit { prefs -> prefs[AI_REASONING_EFFORT_KEY] = effort }
     }
 
     suspend fun resetAiPromptsToDefault() {

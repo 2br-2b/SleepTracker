@@ -61,6 +61,7 @@ fun NetworkAiSettingsScreen(
     val aiMemoryNotes by userPreferencesRepository.aiMemoryNotes.collectAsState("")
     val aiFollowupDefaultCount by userPreferencesRepository.aiFollowupDefaultCount.collectAsState(1)
     val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(false)
+    val aiReasoningEffort by userPreferencesRepository.aiReasoningEffort.collectAsState("none")
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(false)
 
     var draftProvider by remember { mutableStateOf(AiProvider.OPENAI_COMPAT) }
@@ -71,10 +72,11 @@ fun NetworkAiSettingsScreen(
     var draftMaxTokensText by remember { mutableStateOf("1024") }
     var draftMemoryNotes by remember { mutableStateOf("") }
     var draftFollowupCountText by remember { mutableStateOf("1") }
+    var draftReasoningEffort by remember { mutableStateOf("none") }
     var testConsoleInput by remember { mutableStateOf("") }
     var testConsoleOutput by remember { mutableStateOf("Not tested yet") }
 
-    LaunchedEffect(aiProvider, aiModel, aiApiKey, aiBaseUrl, aiTemperature, aiMaxTokens, aiMemoryNotes, aiFollowupDefaultCount) {
+    LaunchedEffect(aiProvider, aiModel, aiApiKey, aiBaseUrl, aiTemperature, aiMaxTokens, aiMemoryNotes, aiFollowupDefaultCount, aiReasoningEffort) {
         draftProvider = aiProvider
         draftModel = aiModel
         draftApiKey = aiApiKey
@@ -83,6 +85,7 @@ fun NetworkAiSettingsScreen(
         draftMaxTokensText = aiMaxTokens.toString()
         draftMemoryNotes = aiMemoryNotes
         draftFollowupCountText = aiFollowupDefaultCount.toString()
+        draftReasoningEffort = aiReasoningEffort
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Network & AI Settings") }) }) { innerPadding ->
@@ -221,6 +224,32 @@ fun NetworkAiSettingsScreen(
                         enabled = networkEnabled
                     )
 
+                    Text("Thinking / reasoning effort", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "Instructs the model to think before responding. Useful for reasoning models (e.g. o3, o4-mini, DeepSeek-R1). Has no effect on models that don't support it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    listOf("none", "low", "medium", "high").forEach { level ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = draftReasoningEffort == level,
+                                    enabled = networkEnabled,
+                                    onClick = { draftReasoningEffort = level }
+                                ),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = draftReasoningEffort == level,
+                                onClick = { draftReasoningEffort = level },
+                                enabled = networkEnabled
+                            )
+                            Text(level.replaceFirstChar { it.uppercase() })
+                        }
+                    }
+
                     OutlinedTextField(
                         value = draftMaxTokensText,
                         onValueChange = { input -> draftMaxTokensText = input.filter { it.isDigit() } },
@@ -288,6 +317,7 @@ fun NetworkAiSettingsScreen(
                                 userPreferencesRepository.setAiMaxTokens(draftMaxTokensText.toIntOrNull() ?: 1024)
                                 userPreferencesRepository.setAiMemoryNotes(draftMemoryNotes)
                                 userPreferencesRepository.setAiFollowupDefaultCount(draftFollowupCountText.toIntOrNull() ?: 1)
+                                userPreferencesRepository.setAiReasoningEffort(draftReasoningEffort)
                             }
                         },
                         enabled = networkEnabled,
