@@ -89,7 +89,8 @@ class NutritionDatabase private constructor(private val context: Context) {
                 riboflavin REAL DEFAULT 0,
                 niacin REAL DEFAULT 0,
                 folate REAL DEFAULT 0,
-                caffeine REAL DEFAULT 0
+                caffeine REAL DEFAULT 0,
+                barcode TEXT
                 -- Future fields (uncomment + re-index to enable):
                 -- water REAL DEFAULT 0,
                 -- alcohol REAL DEFAULT 0,
@@ -105,6 +106,10 @@ class NutritionDatabase private constructor(private val context: Context) {
         """.trimIndent())
 
         ensureColumn(database, "foods", "search_text", "TEXT")
+        ensureColumn(database, "foods", "barcode", "TEXT")
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_foods_barcode ON foods(barcode)"
+        )
     }
 
     private fun ensureColumn(
@@ -180,8 +185,9 @@ class NutritionDatabase private constructor(private val context: Context) {
                 fiber, sugar,
                 sodium, cholesterol, potassium, calcium, iron, magnesium, phosphorus, zinc,
                 vitamin_a, vitamin_c, vitamin_d, vitamin_e, vitamin_k,
-                vitamin_b6, vitamin_b12, thiamin, riboflavin, niacin, folate, caffeine
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                vitamin_b6, vitamin_b12, thiamin, riboflavin, niacin, folate, caffeine,
+                barcode
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """.trimIndent()
 
         private val insertFoodOrIgnoreSql = insertFoodSql.replace(
@@ -285,6 +291,7 @@ class NutritionDatabase private constructor(private val context: Context) {
         niacin: Double,
         folate: Double,
         caffeine: Double,
+        barcode: String? = null,
     ) {
         inserter.foodStmt.run {
             bindString(1, id)
@@ -326,6 +333,7 @@ class NutritionDatabase private constructor(private val context: Context) {
             bindDouble(37, niacin)
             bindDouble(38, folate)
             bindDouble(39, caffeine)
+            if (barcode != null) bindString(40, barcode) else bindNull(40)
             executeInsert()
         }
     }
@@ -359,7 +367,8 @@ class NutritionDatabase private constructor(private val context: Context) {
                 "fiber, sugar, " +
                 "sodium, cholesterol, potassium, calcium, iron, magnesium, phosphorus, zinc, " +
                 "vitamin_a, vitamin_c, vitamin_d, vitamin_e, vitamin_k, " +
-                "vitamin_b6, vitamin_b12, thiamin, riboflavin, niacin, folate, caffeine" +
+                "vitamin_b6, vitamin_b12, thiamin, riboflavin, niacin, folate, caffeine, " +
+                "barcode" +
             ") VALUES $valuesSql"
         )
     }
@@ -428,6 +437,16 @@ class NutritionDatabase private constructor(private val context: Context) {
             val cursor = openDb().rawQuery(
                 "SELECT * FROM foods WHERE id = ? LIMIT 1",
                 arrayOf(id)
+            )
+            cursor.use { if (it.moveToFirst()) cursorToFoodCandidate(it) else null }
+        }.getOrNull()
+    }
+
+    suspend fun getFoodByBarcode(barcode: String): FoodCandidate? = withContext(Dispatchers.IO) {
+        runCatching {
+            val cursor = openDb().rawQuery(
+                "SELECT * FROM foods WHERE barcode = ? LIMIT 1",
+                arrayOf(barcode)
             )
             cursor.use { if (it.moveToFirst()) cursorToFoodCandidate(it) else null }
         }.getOrNull()

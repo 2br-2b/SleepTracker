@@ -21,6 +21,12 @@ interface NutritionProvider {
     suspend fun getFoodById(id: String): FoodCandidate?
 
     /**
+     * Look up a food by its EAN-13 / UPC barcode string.
+     * Returns null if not found or if the provider does not support barcode lookup.
+     */
+    suspend fun getFoodByBarcode(barcode: String): FoodCandidate? = null
+
+    /**
      * Resolve a human-specified quantity to a [NutritionAmount] in grams.
      * Uses [FoodCandidate.servingInfo] to convert from natural units.
      *

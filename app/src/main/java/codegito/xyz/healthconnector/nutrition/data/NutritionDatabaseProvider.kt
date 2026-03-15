@@ -25,6 +25,9 @@ class NutritionDatabaseProvider(
     override suspend fun getFoodById(id: String): FoodCandidate? =
         db.getFoodById(id)
 
+    override suspend fun getFoodByBarcode(barcode: String): FoodCandidate? =
+        db.getFoodByBarcode(barcode)
+
     override suspend fun resolveAmount(
         food: FoodCandidate,
         humanQuantity: Double,

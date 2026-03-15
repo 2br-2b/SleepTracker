@@ -160,6 +160,7 @@ class NutritionIndexBuildManager(
         val servingIdx = col("serving")
         val nutritionIdx = col("nutrition_100g")
         val labelsIdx = col("labels")
+        val ean13Idx = col("ean_13")
 
         if (nameIdx < 0) return 0
 
@@ -167,7 +168,7 @@ class NutritionIndexBuildManager(
         var written = 0
 
         // Sorted list of all column indices we need, used for single-pass splitting
-        val neededCols = intArrayOf(idIdx, nameIdx, altNamesIdx, typeIdx, servingIdx, nutritionIdx, labelsIdx)
+        val neededCols = intArrayOf(idIdx, nameIdx, altNamesIdx, typeIdx, servingIdx, nutritionIdx, labelsIdx, ean13Idx)
         val maxNeededCol = neededCols.maxOrNull() ?: 0
 
         // Reusable array: colVals[i] holds the value for column i (up to maxNeededCol)
@@ -432,6 +433,7 @@ class NutritionIndexBuildManager(
             val searchText = lineBuffer.toString()
 
             val foodType = col(typeIdx).trim().takeIf { it.isNotEmpty() }
+            val barcode = col(ean13Idx).trim().takeIf { it.isNotBlank() }
 
             val nutritionRaw = col(nutritionIdx).trim()
             val n = if (nutritionRaw.startsWith('{')) parseNumericJson(nutritionRaw) else null
@@ -508,7 +510,8 @@ class NutritionIndexBuildManager(
                 values.append(riboflavin).append(',')
                 values.append(niacin).append(',')
                 values.append(folate).append(',')
-                values.append(caffeine)
+                values.append(caffeine).append(',')
+                values.append(sqlNull(barcode))
                 values.append(')')
                 pending++
                 if (pending >= batchSize || values.length >= maxSqlChars) {

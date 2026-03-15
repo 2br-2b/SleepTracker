@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -638,6 +639,9 @@ fun LogFoodScreen(
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     var searchResults by remember { mutableStateOf<List<FoodCandidate>>(emptyList()) }
     var selectedFood by remember { mutableStateOf<FoodCandidate?>(null) }
+    var showBarcodeScanner by remember { mutableStateOf(false) }
+    var barcodeScannerFrozen by remember { mutableStateOf(false) }
+    var barcodeNotFound by remember { mutableStateOf(false) }
     var amountText by remember { mutableStateOf(TextFieldValue("")) }
     // Serving mode: true = show "How many [commonUnit]?" input; false = raw gram/oz input
     var servingInputMode by remember { mutableStateOf(false) }
@@ -1239,6 +1243,12 @@ fun LogFoodScreen(
                             Icon(Icons.Default.AutoAwesome, contentDescription = "AI log foods")
                         }
                     }
+                    IconButton(onClick = {
+                        barcodeScannerFrozen = false
+                        showBarcodeScanner = true
+                    }) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan barcode")
+                    }
                 }
             )
         }
@@ -1433,7 +1443,11 @@ fun LogFoodScreen(
         }
 
         ModalBottomSheet(
-            onDismissRequest = { selectedFood = null; amountText = TextFieldValue("") },
+            onDismissRequest = {
+                selectedFood = null
+                amountText = TextFieldValue("")
+                barcodeScannerFrozen = false
+            },
             sheetState = sheetState
         ) {
             Column(
@@ -1562,13 +1576,26 @@ fun LogFoodScreen(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { selectedFood = null; amountText = TextFieldValue("") },
+                        onClick = {
+                            selectedFood = null
+                            amountText = TextFieldValue("")
+                            barcodeScannerFrozen = false
+                        },
                         modifier = Modifier.weight(1f)
                     ) { Text("Cancel") }
                     Button(
                         onClick = {
                             val g = gramsFromInput ?: return@Button
-                            scope.launch { logFood(candidate, g) }
+                            if (showBarcodeScanner) {
+                                scope.launch {
+                                    logFood(candidate, g, navigateBack = false)
+                                    selectedFood = null
+                                    amountText = TextFieldValue("")
+                                    barcodeScannerFrozen = false
+                                }
+                            } else {
+                                scope.launch { logFood(candidate, g) }
+                            }
                         },
                         enabled = !isLogging && gramsFromInput != null,
                         modifier = Modifier.weight(1f)
@@ -1603,6 +1630,50 @@ fun LogFoodScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showEatenTimePicker = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Fullscreen barcode scanner overlay
+    if (showBarcodeScanner) {
+        BarcodeScannerOverlay(
+            frozen = barcodeScannerFrozen,
+            onBarcodeDetected = { barcode ->
+                barcodeScannerFrozen = true
+                scope.launch {
+                    val food = withContext(Dispatchers.IO) {
+                        nutritionProvider.getFoodByBarcode(barcode)
+                    }
+                    if (food != null) {
+                        selectedFood = food
+                        setDefaultAmount(food)
+                        eatenTime = defaultEatenTime
+                    } else {
+                        barcodeNotFound = true
+                    }
+                }
+            },
+            onClose = {
+                showBarcodeScanner = false
+                barcodeScannerFrozen = false
+            }
+        )
+    }
+
+    // "Barcode not found" dialog — shown over the frozen camera frame
+    if (barcodeNotFound) {
+        AlertDialog(
+            onDismissRequest = {
+                barcodeNotFound = false
+                barcodeScannerFrozen = false
+            },
+            title = { Text("Food not recognized") },
+            text = { Text("No food was found for this barcode.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    barcodeNotFound = false
+                    barcodeScannerFrozen = false
+                }) { Text("OK") }
             }
         )
     }
