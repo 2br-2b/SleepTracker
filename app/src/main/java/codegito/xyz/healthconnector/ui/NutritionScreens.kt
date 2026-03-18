@@ -834,7 +834,9 @@ fun LogFoodScreen(
                 put("model", model)
                 put("messages", messages)
                 put("temperature", 0.1)
-                if (provider.supportsReasoningEffort && reasoningEffort != "none") put("reasoning_effort", reasoningEffort)
+                // reasoning_effort is only supported by OpenAI o-series models (o1, o3, o4-mini, etc.)
+                val isReasoningModel = provider.supportsReasoningEffort && model.matches(Regex("o\\d.*", RegexOption.IGNORE_CASE))
+                if (isReasoningModel && reasoningEffort != "none") put("reasoning_effort", reasoningEffort)
             }.toString()
 
             // Blocking IO must run off the main thread
