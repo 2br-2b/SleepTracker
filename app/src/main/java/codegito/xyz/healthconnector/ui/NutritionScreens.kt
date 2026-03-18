@@ -834,7 +834,7 @@ fun LogFoodScreen(
                 put("model", model)
                 put("messages", messages)
                 put("temperature", 0.1)
-                if (reasoningEffort != "none") put("reasoning_effort", reasoningEffort)
+                if (provider.supportsReasoningEffort && reasoningEffort != "none") put("reasoning_effort", reasoningEffort)
             }.toString()
 
             // Blocking IO must run off the main thread
