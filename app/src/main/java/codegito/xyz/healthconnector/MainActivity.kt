@@ -18,7 +18,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -48,6 +50,8 @@ import codegito.xyz.healthconnector.nutrition.data.NutritionDatabaseProvider
 import codegito.xyz.healthconnector.ui.EditNutrientsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.DeveloperPromptsSettingsScreen
+import codegito.xyz.healthconnector.ui.ExerciseHomeScreen
+import codegito.xyz.healthconnector.ui.ExerciseSettingsScreen
 import codegito.xyz.healthconnector.ui.LogFoodScreen
 import codegito.xyz.healthconnector.ui.ManualFoodEntryScreen
 import codegito.xyz.healthconnector.ui.NutritionDayDetailScreen
@@ -57,6 +61,7 @@ import codegito.xyz.healthconnector.ui.NetworkAiSettingsScreen
 import codegito.xyz.healthconnector.ui.PermissionsScreen
 import codegito.xyz.healthconnector.ui.SettingsScreen
 import codegito.xyz.healthconnector.ui.SleepSettingsScreen
+import codegito.xyz.healthconnector.ui.WeightHomeScreen
 import codegito.xyz.healthconnector.ui.theme.SleepTrackerTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -166,6 +171,8 @@ fun MainApp(
 
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
+    val weightEnabled by userPreferencesRepository.weightEnabled.collectAsState(initial = false)
+    val exerciseEnabled by userPreferencesRepository.exerciseEnabled.collectAsState(initial = false)
 
     val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
     val nutritionProvider = remember(context) { NutritionDatabaseProvider(context) }
@@ -204,13 +211,33 @@ fun MainApp(
         }
     }
 
+    LaunchedEffect(weightEnabled) {
+        if (!weightEnabled && navController.currentDestination?.route == Screen.Weight.route) {
+            navController.navigate(Screen.Settings.route) {
+                popUpTo(Screen.Home.route) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    LaunchedEffect(exerciseEnabled) {
+        if (!exerciseEnabled && navController.currentDestination?.route == Screen.Exercise.route) {
+            navController.navigate(Screen.Settings.route) {
+                popUpTo(Screen.Home.route) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
+
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val topLevelRoutes = remember(sleepEnabled, nutritionEnabled) {
+    val topLevelRoutes = remember(sleepEnabled, nutritionEnabled, weightEnabled, exerciseEnabled) {
         buildList {
             if (sleepEnabled) add("home")
             if (nutritionEnabled) add("nutrition")
+            if (weightEnabled) add("weight")
+            if (exerciseEnabled) add("exercise")
             add("settings")
         }
     }
@@ -243,6 +270,36 @@ fun MainApp(
                             selected = currentRoute == "nutrition",
                             onClick = {
                                 navController.navigate("nutrition") {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        )
+                    }
+                    // Weight tab
+                    if (weightEnabled) {
+                        NavigationBarItem(
+                            icon = { Icon(Icons.Default.MonitorWeight, contentDescription = "Weight") },
+                            label = { Text("Weight") },
+                            selected = currentRoute == "weight",
+                            onClick = {
+                                navController.navigate("weight") {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        )
+                    }
+                    // Exercise tab
+                    if (exerciseEnabled) {
+                        NavigationBarItem(
+                            icon = { Icon(Icons.Default.FitnessCenter, contentDescription = "Exercise") },
+                            label = { Text("Exercise") },
+                            selected = currentRoute == "exercise",
+                            onClick = {
+                                navController.navigate("exercise") {
                                     popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                     launchSingleTop = true
                                     restoreState = true
@@ -359,12 +416,35 @@ fun MainApp(
                     navController = navController
                 )
             }
+            composable(Screen.Weight.route) {
+                WeightHomeScreen(
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository,
+                    onNavigateToPermissions = { navController.navigate(Screen.Permissions.route) }
+                )
+            }
+            composable(Screen.Exercise.route) {
+                ExerciseHomeScreen(
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository,
+                    navController = navController,
+                    onNavigateToPermissions = { navController.navigate(Screen.Permissions.route) }
+                )
+            }
+            composable(Screen.ExerciseSettings.route) {
+                ExerciseSettingsScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() },
+                    onPermissions = { navController.navigate(Screen.Permissions.route) }
+                )
+            }
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onPermissions = { navController.navigate(Screen.Permissions.route) },
                     onSleepSettings = { navController.navigate(Screen.SleepSettings.route) },
                     onNutritionSettings = { navController.navigate(Screen.NutritionSettings.route) },
+                    onExerciseSettings = { navController.navigate(Screen.ExerciseSettings.route) },
                     onNetworkAiSettings = { navController.navigate(Screen.NetworkAiSettings.route) },
                     onDeveloperPromptsSettings = { navController.navigate(Screen.DeveloperPromptsSettings.route) }
                 )
@@ -843,10 +923,13 @@ fun SleepDayCard(
 sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Nutrition : Screen("nutrition")
+    object Weight : Screen("weight")
+    object Exercise : Screen("exercise")
     object Settings : Screen("settings")
     object Permissions : Screen("permissions")
     object SleepSettings : Screen("sleep_settings")
     object NutritionSettings : Screen("nutrition_settings")
+    object ExerciseSettings : Screen("exercise_settings")
     object NetworkAiSettings : Screen("network_ai_settings")
     object DeveloperPromptsSettings : Screen("developer_prompts_settings")
     object EditSleepStages : Screen("edit_sleep_stages")
