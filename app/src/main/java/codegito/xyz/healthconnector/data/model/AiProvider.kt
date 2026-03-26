@@ -6,7 +6,9 @@ enum class AiProvider(
     val requiresBaseUrl: Boolean,
     val defaultModel: String,
     val defaultBaseUrl: String? = null,
-    val notes: String
+    val notes: String,
+    /** Whether this provider supports the OpenAI `reasoning_effort` parameter (o-series models). */
+    val supportsReasoningEffort: Boolean = false
 ) {
     OPENAI_COMPAT(
         displayName = "OpenAI-compatible (via Koog)",
@@ -14,7 +16,8 @@ enum class AiProvider(
         requiresBaseUrl = true,
         defaultModel = "gpt-4o-mini",
         defaultBaseUrl = "https://api.openai.com/v1",
-        notes = "Use this for OpenAI-compatible providers that expose a /v1 chat/completions-compatible API."
+        notes = "Use this for OpenAI-compatible providers that expose a /v1 chat/completions-compatible API.",
+        supportsReasoningEffort = true
     ),
     ANTHROPIC(
         displayName = "Anthropic (via Koog)",
@@ -44,7 +47,8 @@ enum class AiProvider(
         requiresBaseUrl = true,
         defaultModel = "openai/gpt-4o-mini",
         defaultBaseUrl = "https://openrouter.ai/api/v1",
-        notes = "Requires OpenRouter API key; many model families available behind one endpoint."
+        notes = "Requires OpenRouter API key; many model families available behind one endpoint.",
+        supportsReasoningEffort = true
     ),
     GROQ(
         displayName = "Groq",
