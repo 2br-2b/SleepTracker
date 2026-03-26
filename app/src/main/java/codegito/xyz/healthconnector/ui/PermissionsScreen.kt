@@ -35,6 +35,10 @@ data class PermissionState(
     val sleepReadGranted: Boolean = true,
     val nutritionWriteGranted: Boolean = true,
     val nutritionReadGranted: Boolean = true,
+    val weightWriteGranted: Boolean = true,
+    val weightReadGranted: Boolean = true,
+    val exerciseWriteGranted: Boolean = true,
+    val exerciseReadGranted: Boolean = true,
     val notificationsGranted: Boolean = true,
     val sensorsGranted: Boolean = true,
     val showSensors: Boolean = false,
@@ -53,6 +57,10 @@ suspend fun loadPermissionState(
         sleepReadGranted = granted.contains(healthConnectManager.sleepReadPermission),
         nutritionWriteGranted = granted.contains(healthConnectManager.nutritionWritePermission),
         nutritionReadGranted = granted.contains(healthConnectManager.nutritionReadPermission),
+        weightWriteGranted = granted.contains(healthConnectManager.weightWritePermission),
+        weightReadGranted = granted.contains(healthConnectManager.weightReadPermission),
+        exerciseWriteGranted = granted.contains(healthConnectManager.exerciseWritePermission),
+        exerciseReadGranted = granted.contains(healthConnectManager.exerciseReadPermission),
         notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED,
@@ -91,11 +99,11 @@ fun PermissionsScreen(
 
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
+    val weightEnabled by userPreferencesRepository.weightEnabled.collectAsState(initial = false)
+    val exerciseEnabled by userPreferencesRepository.exerciseEnabled.collectAsState(initial = false)
 
     var permState by remember { mutableStateOf(PermissionState()) }
 
-    // When both sleep and nutrition are enabled, request all HC permissions at once
-    // so the user only sees a single system dialog instead of two back-to-back.
     val combinedHcPermissions = buildSet {
         if (sleepEnabled) {
             add(healthConnectManager.sleepWritePermission)
@@ -104,6 +112,14 @@ fun PermissionsScreen(
         if (nutritionEnabled) {
             add(healthConnectManager.nutritionWritePermission)
             add(healthConnectManager.nutritionReadPermission)
+        }
+        if (weightEnabled) {
+            add(healthConnectManager.weightWritePermission)
+            add(healthConnectManager.weightReadPermission)
+        }
+        if (exerciseEnabled) {
+            addAll(healthConnectManager.exercisePermissions)
+            addAll(healthConnectManager.exerciseEnrichmentReadPermissions)
         }
     }
 
@@ -244,6 +260,70 @@ fun PermissionsScreen(
                 optional = true,
                 disabled = nutritionSectionDisabled,
                 disabledNote = "Nutrition tracking is disabled.",
+                onGrant = {
+                    onRequestHealthPermissions(combinedHcPermissions)
+                    refresh()
+                }
+            )
+
+            HorizontalDivider()
+
+            // ── Weight ────────────────────────────────────────────────────
+            SectionHeader("Weight")
+
+            val weightSectionDisabled = !weightEnabled
+
+            PermissionCard(
+                title = "Weight — Write",
+                reason = "Required to save weight entries to Health Connect.",
+                granted = permState.weightWriteGranted,
+                disabled = weightSectionDisabled,
+                disabledNote = "Weight tracking is disabled.",
+                onGrant = {
+                    onRequestHealthPermissions(combinedHcPermissions)
+                    refresh()
+                }
+            )
+
+            PermissionCard(
+                title = "Weight — Read",
+                reason = "Optional. Reads latest body weight to improve exercise calorie estimates.",
+                granted = permState.weightReadGranted,
+                optional = true,
+                disabled = weightSectionDisabled,
+                disabledNote = "Weight tracking is disabled.",
+                onGrant = {
+                    onRequestHealthPermissions(combinedHcPermissions)
+                    refresh()
+                }
+            )
+
+            HorizontalDivider()
+
+            // ── Exercise ──────────────────────────────────────────────────
+            SectionHeader("Exercise")
+
+            val exerciseSectionDisabled = !exerciseEnabled
+
+            PermissionCard(
+                title = "Exercise — Write",
+                reason = "Required to save exercise sessions to Health Connect.",
+                granted = permState.exerciseWriteGranted,
+                disabled = exerciseSectionDisabled,
+                disabledNote = "Exercise tracking is disabled.",
+                onGrant = {
+                    onRequestHealthPermissions(combinedHcPermissions)
+                    refresh()
+                }
+            )
+
+            PermissionCard(
+                title = "Exercise — Read + Enrichment",
+                reason = "Optional. Reads heart rate, speed, power, body composition etc. to improve calorie accuracy.",
+                granted = permState.exerciseReadGranted,
+                optional = true,
+                disabled = exerciseSectionDisabled,
+                disabledNote = "Exercise tracking is disabled.",
                 onGrant = {
                     onRequestHealthPermissions(combinedHcPermissions)
                     refresh()

@@ -30,6 +30,7 @@ fun SettingsScreen(
     onPermissions: () -> Unit,
     onSleepSettings: () -> Unit,
     onNutritionSettings: () -> Unit,
+    onExerciseSettings: () -> Unit = {},
     onNetworkAiSettings: () -> Unit,
     onDeveloperPromptsSettings: () -> Unit,
     // Kept for binary compat — not used in new flow
@@ -46,6 +47,8 @@ fun SettingsScreen(
     val showAdvancedSettings by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
+    val weightEnabled by userPreferencesRepository.weightEnabled.collectAsState(initial = false)
+    val exerciseEnabled by userPreferencesRepository.exerciseEnabled.collectAsState(initial = false)
     val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
@@ -110,6 +113,22 @@ fun SettingsScreen(
                 },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
                 modifier = Modifier.clickable { onNutritionSettings() }
+            )
+
+            ListItem(
+                headlineContent = { Text("Exercise & Weight") },
+                supportingContent = {
+                    val parts = buildList {
+                        if (weightEnabled) add("weight")
+                        if (exerciseEnabled) add("exercise")
+                    }
+                    Text(
+                        if (parts.isEmpty()) "Disabled — tap to configure"
+                        else parts.joinToString(" + ").replaceFirstChar { it.uppercase() } + " tracking enabled"
+                    )
+                },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                modifier = Modifier.clickable { onExerciseSettings() }
             )
 
             HorizontalDivider()

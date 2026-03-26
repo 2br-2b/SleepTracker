@@ -160,6 +160,14 @@ Rules:
     private val NUTRIENT_CONFIG_JSON_KEY        = stringPreferencesKey("nutrient_config_json")
     private val NUTRITION_UNIT_SYSTEM_KEY       = stringPreferencesKey("nutrition_unit_system")
     private val NUTRITION_APPLY_FILTER_TO_SEARCH_KEY = booleanPreferencesKey("nutrition_apply_filter_to_search")
+    private val WEIGHT_TRACKING_ENABLED_KEY         = booleanPreferencesKey("weight_tracking_enabled")
+    private val WEIGHT_UNIT_KEY                     = stringPreferencesKey("weight_unit")
+    private val EXERCISE_TRACKING_ENABLED_KEY       = booleanPreferencesKey("exercise_tracking_enabled")
+    private val EXERCISE_AGE_KEY                    = intPreferencesKey("exercise_age")
+    private val EXERCISE_SEX_KEY                    = stringPreferencesKey("exercise_sex")
+    private val EXERCISE_DEFAULT_WEIGHT_KG_KEY      = floatPreferencesKey("exercise_default_weight_kg")
+    private val EXERCISE_ACSM_CORRECTION_KEY        = floatPreferencesKey("exercise_acsm_correction")
+    private val EXERCISE_EPOC_MULTIPLIER_KEY        = floatPreferencesKey("exercise_epoc_multiplier")
 
     // ── Sleep flows ───────────────────────────────────────────────────────
 
@@ -310,6 +318,12 @@ Rules:
     val nutritionEnabled: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[NUTRITION_TRACKING_ENABLED_KEY] ?: true }
 
+    val weightEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[WEIGHT_TRACKING_ENABLED_KEY] ?: false }
+
+    val exerciseEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[EXERCISE_TRACKING_ENABLED_KEY] ?: false }
+
     // ── Nutrition flows ───────────────────────────────────────────────────
 
     // Consolidated: nutrition and sleep history use the same days setting
@@ -357,6 +371,36 @@ Rules:
 
     val nutritionApplyNutrientFilterToSearch: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] ?: false }
+
+    // ── Weight flows ──────────────────────────────────────────────────────────
+
+    val weightUnit: Flow<codegito.xyz.healthconnector.weight.domain.WeightUnit> = context.dataStore.data
+        .map { prefs ->
+            try { codegito.xyz.healthconnector.weight.domain.WeightUnit.valueOf(
+                prefs[WEIGHT_UNIT_KEY] ?: codegito.xyz.healthconnector.weight.domain.WeightUnit.LBS.name
+            ) } catch (_: Exception) { codegito.xyz.healthconnector.weight.domain.WeightUnit.LBS }
+        }
+
+    // ── Exercise flows ────────────────────────────────────────────────────────
+
+    val exerciseAge: Flow<Int?> = context.dataStore.data
+        .map { prefs -> prefs[EXERCISE_AGE_KEY] }
+
+    val exerciseSex: Flow<codegito.xyz.healthconnector.exercise.domain.Sex?> = context.dataStore.data
+        .map { prefs ->
+            prefs[EXERCISE_SEX_KEY]?.let {
+                runCatching { codegito.xyz.healthconnector.exercise.domain.Sex.valueOf(it) }.getOrNull()
+            }
+        }
+
+    val exerciseDefaultWeightKg: Flow<Double> = context.dataStore.data
+        .map { prefs -> (prefs[EXERCISE_DEFAULT_WEIGHT_KG_KEY] ?: 70.0f).toDouble() }
+
+    val exerciseAcsmRunningCorrection: Flow<Double> = context.dataStore.data
+        .map { prefs -> (prefs[EXERCISE_ACSM_CORRECTION_KEY] ?: 0.90f).toDouble() }
+
+    val exerciseEpocMultiplier: Flow<Double> = context.dataStore.data
+        .map { prefs -> (prefs[EXERCISE_EPOC_MULTIPLIER_KEY] ?: 1.07f).toDouble() }
 
     // ── Sleep setters ─────────────────────────────────────────────────────
 
@@ -523,6 +567,14 @@ Rules:
         context.dataStore.edit { prefs -> prefs[NUTRITION_TRACKING_ENABLED_KEY] = enabled }
     }
 
+    suspend fun setWeightEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[WEIGHT_TRACKING_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setExerciseEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_TRACKING_ENABLED_KEY] = enabled }
+    }
+
     // ── Nutrition setters ─────────────────────────────────────────────────
 
     // Consolidated with historyDays
@@ -571,6 +623,38 @@ Rules:
 
     suspend fun setNutritionApplyNutrientFilterToSearch(apply: Boolean) {
         context.dataStore.edit { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] = apply }
+    }
+
+    // ── Weight setters ────────────────────────────────────────────────────────
+
+    suspend fun setWeightUnit(unit: codegito.xyz.healthconnector.weight.domain.WeightUnit) {
+        context.dataStore.edit { prefs -> prefs[WEIGHT_UNIT_KEY] = unit.name }
+    }
+
+    // ── Exercise setters ──────────────────────────────────────────────────────
+
+    suspend fun setExerciseAge(age: Int?) {
+        context.dataStore.edit { prefs ->
+            if (age != null) prefs[EXERCISE_AGE_KEY] = age else prefs.remove(EXERCISE_AGE_KEY)
+        }
+    }
+
+    suspend fun setExerciseSex(sex: codegito.xyz.healthconnector.exercise.domain.Sex?) {
+        context.dataStore.edit { prefs ->
+            if (sex != null) prefs[EXERCISE_SEX_KEY] = sex.name else prefs.remove(EXERCISE_SEX_KEY)
+        }
+    }
+
+    suspend fun setExerciseDefaultWeightKg(kg: Double) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_DEFAULT_WEIGHT_KG_KEY] = kg.toFloat() }
+    }
+
+    suspend fun setExerciseAcsmRunningCorrection(factor: Double) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_ACSM_CORRECTION_KEY] = factor.toFloat() }
+    }
+
+    suspend fun setExerciseEpocMultiplier(multiplier: Double) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_EPOC_MULTIPLIER_KEY] = multiplier.toFloat() }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
