@@ -514,9 +514,9 @@ class HealthConnectManager(val context: Context) {
         "CYCLING"        -> ExerciseSessionRecord.EXERCISE_TYPE_BIKING
         "SWIMMING"       -> ExerciseSessionRecord.EXERCISE_TYPE_SWIMMING_POOL
         "TREADMILL"      -> ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL
-        "PUSHUP"         -> ExerciseSessionRecord.EXERCISE_TYPE_PUSH_UPS
-        "SQUAT"          -> ExerciseSessionRecord.EXERCISE_TYPE_SQUATS
-        "PULLUP"         -> ExerciseSessionRecord.EXERCISE_TYPE_PULL_UPS
+        "PUSHUP"         -> ExerciseSessionRecord.EXERCISE_TYPE_CALISTHENICS
+        "SQUAT"          -> ExerciseSessionRecord.EXERCISE_TYPE_CALISTHENICS
+        "PULLUP"         -> ExerciseSessionRecord.EXERCISE_TYPE_CALISTHENICS
         "WEIGHT_LIFTING" -> ExerciseSessionRecord.EXERCISE_TYPE_WEIGHTLIFTING
         else             -> ExerciseSessionRecord.EXERCISE_TYPE_OTHER_WORKOUT
     }

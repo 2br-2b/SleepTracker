@@ -1,5 +1,6 @@
 package codegito.xyz.healthconnector.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -191,7 +192,7 @@ fun ExerciseSettingsScreen(
                 supportingContent = { Text("Grant Health Connect access for weight and exercise") },
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth()
-                    .then(Modifier.clickable { onPermissions() })
+                    .clickable { onPermissions() }
             )
 
             // ── Developer / advanced ──────────────────────────────────────
@@ -219,6 +220,3 @@ fun ExerciseSettingsScreen(
     }
 }
 
-private fun Modifier.clickable(onClick: () -> Unit) = this.then(
-    androidx.compose.ui.Modifier.clickable { onClick() }
-)

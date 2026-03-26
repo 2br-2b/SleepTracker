@@ -24,6 +24,7 @@ data class ExerciseInputs(
     val avgPowerWatts: Double?,             // PowerRecord avg over window
     val steps: Long?,                       // StepsRecord sum over window
     val heightMeters: Double?,              // HeightRecord (latest)
+    val sets: List<ExerciseSet>? = null,    // Logged sets for strength exercises
 
     // User preferences
     val age: Int?,
