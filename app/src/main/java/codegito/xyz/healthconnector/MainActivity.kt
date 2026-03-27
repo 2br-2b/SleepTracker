@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Settings
@@ -48,6 +49,10 @@ import codegito.xyz.healthconnector.nutrition.data.NutritionDatabaseProvider
 import codegito.xyz.healthconnector.ui.EditNutrientsScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.DeveloperPromptsSettingsScreen
+import codegito.xyz.healthconnector.ui.ExerciseDayDetailScreen
+import codegito.xyz.healthconnector.ui.ExerciseHomeScreen
+import codegito.xyz.healthconnector.ui.ExerciseSettingsScreen
+import codegito.xyz.healthconnector.ui.LogExerciseScreen
 import codegito.xyz.healthconnector.ui.LogFoodScreen
 import codegito.xyz.healthconnector.ui.ManualFoodEntryScreen
 import codegito.xyz.healthconnector.ui.NutritionDayDetailScreen
@@ -166,6 +171,7 @@ fun MainApp(
 
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
+    val exerciseEnabled by userPreferencesRepository.exerciseEnabled.collectAsState(initial = false)
 
     val nutritionIndexBuildManager = remember(context) { NutritionIndexBuildManager(context) }
     val nutritionProvider = remember(context) { NutritionDatabaseProvider(context) }
@@ -193,6 +199,15 @@ fun MainApp(
         }
     }
 
+    LaunchedEffect(exerciseEnabled) {
+        if (!exerciseEnabled && navController.currentDestination?.route == Screen.Exercise.route) {
+            navController.navigate(Screen.Settings.route) {
+                popUpTo(Screen.Home.route) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
+
     // When nutrition gets toggled off while the user is on the Food screen, redirect away.
     // Do NOT touch nav state for any other condition — that's what caused the food button to break.
     LaunchedEffect(nutritionEnabled) {
@@ -207,10 +222,11 @@ fun MainApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val topLevelRoutes = remember(sleepEnabled, nutritionEnabled) {
+    val topLevelRoutes = remember(sleepEnabled, nutritionEnabled, exerciseEnabled) {
         buildList {
             if (sleepEnabled) add("home")
             if (nutritionEnabled) add("nutrition")
+            if (exerciseEnabled) add("exercise")
             add("settings")
         }
     }
@@ -243,6 +259,21 @@ fun MainApp(
                             selected = currentRoute == "nutrition",
                             onClick = {
                                 navController.navigate("nutrition") {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        )
+                    }
+                    // Exercise tab: only if exercise enabled
+                    if (exerciseEnabled) {
+                        NavigationBarItem(
+                            icon = { Icon(Icons.AutoMirrored.Filled.DirectionsRun, contentDescription = "Exercise") },
+                            label = { Text("Exercise") },
+                            selected = currentRoute == "exercise",
+                            onClick = {
+                                navController.navigate("exercise") {
                                     popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                                     launchSingleTop = true
                                     restoreState = true
@@ -359,12 +390,49 @@ fun MainApp(
                     navController = navController
                 )
             }
+            composable(Screen.Exercise.route) {
+                ExerciseHomeScreen(
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository,
+                    navController = navController,
+                    onNavigateToPermissions = { navController.navigate(Screen.Permissions.route) }
+                )
+            }
+            composable(Screen.ExerciseDay.route) { backStack ->
+                val dateStr = backStack.arguments?.getString("date") ?: return@composable
+                val date = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: return@composable
+                ExerciseDayDetailScreen(
+                    date = date,
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository,
+                    navController = navController
+                )
+            }
+            composable(Screen.LogExercise.route) { backStack ->
+                val dateStr = backStack.arguments?.getString("date") ?: return@composable
+                val date = runCatching { LocalDate.parse(dateStr) }.getOrNull() ?: return@composable
+                LogExerciseScreen(
+                    initialDate = date,
+                    healthConnectManager = healthConnectManager,
+                    userPreferencesRepository = userPreferencesRepository,
+                    navController = navController
+                )
+            }
+            composable(Screen.ExerciseSettings.route) {
+                ExerciseSettingsScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    healthConnectManager = healthConnectManager,
+                    onBack = { navController.popBackStack() },
+                    onPermissions = { navController.navigate(Screen.Permissions.route) }
+                )
+            }
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onPermissions = { navController.navigate(Screen.Permissions.route) },
                     onSleepSettings = { navController.navigate(Screen.SleepSettings.route) },
                     onNutritionSettings = { navController.navigate(Screen.NutritionSettings.route) },
+                    onExerciseSettings = { navController.navigate(Screen.ExerciseSettings.route) },
                     onNetworkAiSettings = { navController.navigate(Screen.NetworkAiSettings.route) },
                     onDeveloperPromptsSettings = { navController.navigate(Screen.DeveloperPromptsSettings.route) }
                 )
@@ -860,5 +928,13 @@ sealed class Screen(val route: String) {
     }
     object ManualFoodEntry : Screen("nutrition/manual/{date}") {
         fun route(date: LocalDate) = "nutrition/manual/$date"
+    }
+    object Exercise : Screen("exercise")
+    object ExerciseSettings : Screen("exercise_settings")
+    object ExerciseDay : Screen("exercise/day/{date}") {
+        fun route(date: LocalDate) = "exercise/day/$date"
+    }
+    object LogExercise : Screen("exercise/log/{date}") {
+        fun route(date: LocalDate) = "exercise/log/$date"
     }
 }

@@ -157,8 +157,13 @@ Rules:
     private val NUTRITION_DINNER_START_KEY      = intPreferencesKey("nutrition_dinner_start_min")
     private val NUTRITION_DINNER_END_KEY        = intPreferencesKey("nutrition_dinner_end_min")
     private val NUTRIENT_CONFIG_JSON_KEY        = stringPreferencesKey("nutrient_config_json")
-    private val NUTRITION_UNIT_SYSTEM_KEY       = stringPreferencesKey("nutrition_unit_system")
+    // NOTE: global_unit_system replaces nutrition_unit_system — DO NOT split this back out per-feature
+    private val GLOBAL_UNIT_SYSTEM_KEY          = stringPreferencesKey("nutrition_unit_system") // reuses same stored key for compat
     private val NUTRITION_APPLY_FILTER_TO_SEARCH_KEY = booleanPreferencesKey("nutrition_apply_filter_to_search")
+    private val EXERCISE_TRACKING_ENABLED_KEY   = booleanPreferencesKey("exercise_tracking_enabled")
+    private val WEIGHT_LOGGING_ENABLED_KEY      = booleanPreferencesKey("weight_logging_enabled")
+    private val WEIGHT_SOURCE_MODE_KEY          = stringPreferencesKey("weight_source_mode")
+    private val STATIC_WEIGHT_KG_KEY            = floatPreferencesKey("static_weight_kg")
 
     // ── Sleep flows ───────────────────────────────────────────────────────
 
@@ -344,14 +349,30 @@ Rules:
             } ?: NutrientDefaults.defaultConfig()
         }
 
-    val nutritionUnitSystem: Flow<NutritionUnitSystem> = context.dataStore.data
+    val globalUnitSystem: Flow<NutritionUnitSystem> = context.dataStore.data
         .map { prefs ->
-            try { NutritionUnitSystem.valueOf(prefs[NUTRITION_UNIT_SYSTEM_KEY] ?: NutritionUnitSystem.US.name) }
+            try { NutritionUnitSystem.valueOf(prefs[GLOBAL_UNIT_SYSTEM_KEY] ?: NutritionUnitSystem.US.name) }
             catch (_: Exception) { NutritionUnitSystem.US }
         }
 
+    // Alias so existing nutrition call sites compile without change
+    val nutritionUnitSystem: Flow<NutritionUnitSystem> get() = globalUnitSystem
+
     val nutritionApplyNutrientFilterToSearch: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] ?: false }
+
+    val exerciseEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[EXERCISE_TRACKING_ENABLED_KEY] ?: false }
+
+    val weightLoggingEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[WEIGHT_LOGGING_ENABLED_KEY] ?: false }
+
+    /** HEALTH_CONNECT = read weight from HC when logging is off; STATIC = use staticWeightKg */
+    val weightSourceMode: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[WEIGHT_SOURCE_MODE_KEY] ?: "HEALTH_CONNECT" }
+
+    val staticWeightKg: Flow<Float> = context.dataStore.data
+        .map { prefs -> prefs[STATIC_WEIGHT_KG_KEY] ?: 70f }
 
     // ── Sleep setters ─────────────────────────────────────────────────────
 
@@ -556,8 +577,27 @@ Rules:
         context.dataStore.edit { prefs -> prefs[NUTRIENT_CONFIG_JSON_KEY] = json.encodeToString(config) }
     }
 
-    suspend fun setNutritionUnitSystem(system: NutritionUnitSystem) {
-        context.dataStore.edit { prefs -> prefs[NUTRITION_UNIT_SYSTEM_KEY] = system.name }
+    suspend fun setGlobalUnitSystem(system: NutritionUnitSystem) {
+        context.dataStore.edit { prefs -> prefs[GLOBAL_UNIT_SYSTEM_KEY] = system.name }
+    }
+
+    // Alias for nutrition call sites
+    suspend fun setNutritionUnitSystem(system: NutritionUnitSystem) = setGlobalUnitSystem(system)
+
+    suspend fun setExerciseEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_TRACKING_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setWeightLoggingEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[WEIGHT_LOGGING_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun setWeightSourceMode(mode: String) {
+        context.dataStore.edit { prefs -> prefs[WEIGHT_SOURCE_MODE_KEY] = mode }
+    }
+
+    suspend fun setStaticWeightKg(kg: Float) {
+        context.dataStore.edit { prefs -> prefs[STATIC_WEIGHT_KG_KEY] = kg }
     }
 
     suspend fun setNutritionApplyNutrientFilterToSearch(apply: Boolean) {

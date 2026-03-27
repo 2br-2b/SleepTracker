@@ -24,6 +24,12 @@ data class ScreenEvent(
     val type: String // "LOCK", "UNLOCK", "PRESENT"
 )
 
+@Entity(tableName = "recent_exercises")
+data class RecentExerciseEntity(
+    @PrimaryKey val exerciseName: String,
+    val lastUsedAtMillis: Long
+)
+
 @Entity(tableName = "recent_foods")
 data class RecentFoodEntity(
     @PrimaryKey val foodKey: String,
@@ -156,16 +162,61 @@ class RecentFoodDao(private val db: AppDatabase) {
     }
 }
 
+class RecentExerciseDao(private val db: AppDatabase) {
+    suspend fun upsert(item: RecentExerciseEntity) = withContext(Dispatchers.IO) {
+        val stmt = db.openHelper.writableDatabase.compileStatement(
+            "INSERT OR REPLACE INTO recent_exercises (exerciseName, lastUsedAtMillis) VALUES (?, ?)"
+        )
+        stmt.use {
+            it.bindString(1, item.exerciseName)
+            it.bindLong(2, item.lastUsedAtMillis)
+            it.executeInsert()
+        }
+    }
+
+    fun getRecents(limit: Int = 30): Flow<List<RecentExerciseEntity>> =
+        callbackFlow<List<RecentExerciseEntity>> {
+            fun doQuery(): List<RecentExerciseEntity> {
+                val list = mutableListOf<RecentExerciseEntity>()
+                val cursor: Cursor = db.openHelper.readableDatabase.query(
+                    "SELECT exerciseName, lastUsedAtMillis FROM recent_exercises ORDER BY lastUsedAtMillis DESC LIMIT ?",
+                    arrayOf(limit.toString())
+                )
+                cursor.use { c ->
+                    while (c.moveToNext()) {
+                        list.add(RecentExerciseEntity(c.getString(0), c.getLong(1)))
+                    }
+                }
+                return list
+            }
+
+            trySend(doQuery())
+
+            val observer = object : InvalidationTracker.Observer("recent_exercises") {
+                override fun onInvalidated(tables: Set<String>) { trySend(doQuery()) }
+            }
+            db.invalidationTracker.addObserver(observer)
+            awaitClose { db.invalidationTracker.removeObserver(observer) }
+        }.flowOn(Dispatchers.IO)
+}
+
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL("ALTER TABLE recent_foods ADD COLUMN nutrientsJson TEXT NOT NULL DEFAULT '{}'")
     }
 }
 
-@Database(entities = [ScreenEvent::class, RecentFoodEntity::class], version = 2, exportSchema = false)
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("CREATE TABLE IF NOT EXISTS recent_exercises (exerciseName TEXT NOT NULL PRIMARY KEY, lastUsedAtMillis INTEGER NOT NULL)")
+    }
+}
+
+@Database(entities = [ScreenEvent::class, RecentFoodEntity::class, RecentExerciseEntity::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     fun screenEventDao(): ScreenEventDao = ScreenEventDao(this)
     fun recentFoodDao(): RecentFoodDao = RecentFoodDao(this)
+    fun recentExerciseDao(): RecentExerciseDao = RecentExerciseDao(this)
 
     companion object {
         @Volatile
@@ -177,7 +228,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "sleep_tracker_database"
-                ).addMigrations(MIGRATION_1_2).build()
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
                 INSTANCE = instance
                 instance
             }

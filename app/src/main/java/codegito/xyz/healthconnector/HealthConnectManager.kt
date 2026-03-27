@@ -3,10 +3,15 @@ package codegito.xyz.healthconnector
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
+import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import androidx.health.connect.client.units.Energy
+import androidx.health.connect.client.units.Mass
 import java.time.Instant
 import java.time.ZoneId
 
@@ -25,8 +30,15 @@ class HealthConnectManager(val context: Context) {
         nutritionReadPermission
     )
 
+    val exerciseWritePermission = HealthPermission.getWritePermission(ExerciseSessionRecord::class)
+    val exerciseReadPermission  = HealthPermission.getReadPermission(ExerciseSessionRecord::class)
+    val weightWritePermission   = HealthPermission.getWritePermission(WeightRecord::class)
+    val weightReadPermission    = HealthPermission.getReadPermission(WeightRecord::class)
+
     val sleepPermissions = setOf(sleepWritePermission, sleepReadPermission)
     val nutritionPermissions = setOf(nutritionWritePermission, nutritionReadPermission)
+    val exercisePermissions = setOf(exerciseWritePermission, exerciseReadPermission)
+    val weightPermissions = setOf(weightWritePermission, weightReadPermission)
 
     suspend fun getGrantedPermissions(): Set<String> =
         healthConnectClient.permissionController.getGrantedPermissions()
@@ -119,6 +131,112 @@ class HealthConnectManager(val context: Context) {
                 recordIdsList = listOf(id),
                 clientRecordIdsList = emptyList()
             )
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun hasExerciseWritePermission(): Boolean =
+        getGrantedPermissions().contains(exerciseWritePermission)
+
+    suspend fun hasExerciseReadPermission(): Boolean =
+        getGrantedPermissions().contains(exerciseReadPermission)
+
+    suspend fun hasWeightReadPermission(): Boolean =
+        getGrantedPermissions().contains(weightReadPermission)
+
+    suspend fun hasWeightWritePermission(): Boolean =
+        getGrantedPermissions().contains(weightWritePermission)
+
+    /** Write an exercise session to Health Connect. Returns the inserted record ID. */
+    suspend fun writeExerciseSession(
+        startTime: Instant,
+        endTime: Instant,
+        title: String,
+        caloriesKcal: Double?
+    ): Result<String> {
+        return try {
+            if (!hasExerciseWritePermission()) return Result.failure(Exception("Exercise write permission not granted"))
+            val zoneId = ZoneId.systemDefault()
+            val record = ExerciseSessionRecord(
+                startTime = startTime,
+                startZoneOffset = zoneId.rules.getOffset(startTime),
+                endTime = endTime,
+                endZoneOffset = zoneId.rules.getOffset(endTime),
+                exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_OTHER_WORKOUT,
+                title = title
+            )
+            val result = healthConnectClient.insertRecords(listOf(record))
+            if (caloriesKcal != null && caloriesKcal > 0) {
+                val calorieRecord = ActiveCaloriesBurnedRecord(
+                    startTime = startTime,
+                    startZoneOffset = zoneId.rules.getOffset(startTime),
+                    endTime = endTime,
+                    endZoneOffset = zoneId.rules.getOffset(endTime),
+                    energy = Energy.kilocalories(caloriesKcal)
+                )
+                healthConnectClient.insertRecords(listOf(calorieRecord))
+            }
+            Result.success(result.recordIdsList.firstOrNull() ?: "")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getExerciseSessions(start: Instant, end: Instant): Result<List<ExerciseSessionRecord>> {
+        return try {
+            if (!hasExerciseReadPermission()) return Result.failure(Exception("Exercise read permission not granted"))
+            val request = ReadRecordsRequest(
+                recordType = ExerciseSessionRecord::class,
+                timeRangeFilter = TimeRangeFilter.between(start, end)
+            )
+            Result.success(healthConnectClient.readRecords(request).records)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteExerciseSession(id: String): Result<Unit> {
+        return try {
+            if (!hasExerciseWritePermission()) return Result.failure(Exception("Exercise write permission not granted"))
+            healthConnectClient.deleteRecords(
+                recordType = ExerciseSessionRecord::class,
+                recordIdsList = listOf(id),
+                clientRecordIdsList = emptyList()
+            )
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Read the most recent weight record, or null if unavailable / no permission. */
+    suspend fun getLatestWeightKg(): Double? {
+        return try {
+            if (!hasWeightReadPermission()) return null
+            val end = Instant.now()
+            val start = end.minus(java.time.Duration.ofDays(365))
+            val request = ReadRecordsRequest(
+                recordType = WeightRecord::class,
+                timeRangeFilter = TimeRangeFilter.between(start, end)
+            )
+            healthConnectClient.readRecords(request).records
+                .maxByOrNull { it.time }
+                ?.weight?.inKilograms
+        } catch (_: Exception) { null }
+    }
+
+    suspend fun writeWeight(weightKg: Double): Result<Unit> {
+        return try {
+            if (!hasWeightWritePermission()) return Result.failure(Exception("Weight write permission not granted"))
+            val now = Instant.now()
+            val record = WeightRecord(
+                time = now,
+                zoneOffset = ZoneId.systemDefault().rules.getOffset(now),
+                weight = Mass.kilograms(weightKg)
+            )
+            healthConnectClient.insertRecords(listOf(record))
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

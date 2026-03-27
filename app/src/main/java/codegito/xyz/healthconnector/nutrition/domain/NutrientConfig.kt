@@ -236,6 +236,32 @@ object NutrientDefaults {
     }
 }
 
+/** Kilograms per pound. */
+const val KG_PER_LB = 0.453592
+
+fun Double.kgToLbs(): Double = this / KG_PER_LB
+fun Double.lbsToKg(): Double = this * KG_PER_LB
+
+/** Format a body weight for display given the unit system. */
+fun formatWeight(kg: Double, unitSystem: NutritionUnitSystem): String =
+    if (unitSystem == NutritionUnitSystem.US) "%.1f lbs".format(kg.kgToLbs())
+    else "%.1f kg".format(kg)
+
+/** Label for weight input field given the unit system. */
+fun weightUnitLabel(unitSystem: NutritionUnitSystem): String =
+    if (unitSystem == NutritionUnitSystem.US) "lbs" else "kg"
+
+/** Parse a weight string to kg given the unit system. */
+fun parseWeightToKg(text: String, unitSystem: NutritionUnitSystem): Double? {
+    val v = text.toDoubleOrNull()?.takeIf { it > 0.0 } ?: return null
+    return if (unitSystem == NutritionUnitSystem.US) v.lbsToKg() else v
+}
+
+/** Convert kg to display string for weight input field. */
+fun kgToWeightText(kg: Double, unitSystem: NutritionUnitSystem): String =
+    if (unitSystem == NutritionUnitSystem.US) "%.1f".format(kg.kgToLbs())
+    else "%.1f".format(kg)
+
 /** Grams per US fluid ounce (weight ounce for solids). */
 const val GRAMS_PER_OZ = 28.3495
 

@@ -30,7 +30,6 @@ import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.TimeRange
 import androidx.compose.ui.platform.LocalUriHandler
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
-import codegito.xyz.healthconnector.nutrition.domain.NutritionUnitSystem
 import codegito.xyz.healthconnector.nutrition.provider.NutritionProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,7 +57,6 @@ fun NutritionSettingsScreen(
     val dinnerRange by userPreferencesRepository.nutritionDinnerRange.collectAsState(initial = TimeRange.DINNER)
     val mealDuration by userPreferencesRepository.nutritionMealDurationMinutes.collectAsState(initial = 30)
     val snackDuration by userPreferencesRepository.nutritionSnackDurationMinutes.collectAsState(initial = 10)
-    val unitSystem by userPreferencesRepository.nutritionUnitSystem.collectAsState(initial = NutritionUnitSystem.US)
     val applyFilterToSearch by userPreferencesRepository.nutritionApplyNutrientFilterToSearch.collectAsState(initial = false)
 
     var datasetRecordCount by remember { mutableIntStateOf(-1) }
@@ -311,32 +309,6 @@ fun NutritionSettingsScreen(
             )
 
             HorizontalDivider()
-
-            // ── Unit system ───────────────────────────────────────────────
-            SectionHeader("Units")
-
-            Text(
-                "Choose the unit system used when entering and displaying food amounts.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                NutritionUnitSystem.entries.forEach { system ->
-                    val label = when (system) {
-                        NutritionUnitSystem.US -> "US (oz)"
-                        NutritionUnitSystem.METRIC -> "Metric (g)"
-                    }
-                    FilterChip(
-                        selected = unitSystem == system,
-                        onClick = { scope.launch { userPreferencesRepository.setNutritionUnitSystem(system) } },
-                        label = { Text(label) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
 
             val uriHandler = LocalUriHandler.current
             ListItem(

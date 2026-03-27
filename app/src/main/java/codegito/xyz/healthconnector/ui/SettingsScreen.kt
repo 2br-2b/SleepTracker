@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import codegito.xyz.healthconnector.NotificationHelper
 import codegito.xyz.healthconnector.SleepTrackingService
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
+import codegito.xyz.healthconnector.nutrition.domain.NutritionUnitSystem
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
@@ -30,6 +31,7 @@ fun SettingsScreen(
     onPermissions: () -> Unit,
     onSleepSettings: () -> Unit,
     onNutritionSettings: () -> Unit,
+    onExerciseSettings: () -> Unit = {},
     onNetworkAiSettings: () -> Unit,
     onDeveloperPromptsSettings: () -> Unit,
     // Kept for binary compat — not used in new flow
@@ -46,9 +48,11 @@ fun SettingsScreen(
     val showAdvancedSettings by userPreferencesRepository.showAdvancedSettings.collectAsState(initial = false)
     val sleepEnabled by userPreferencesRepository.sleepEnabled.collectAsState(initial = true)
     val nutritionEnabled by userPreferencesRepository.nutritionEnabled.collectAsState(initial = true)
+    val exerciseEnabled by userPreferencesRepository.exerciseEnabled.collectAsState(initial = false)
     val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
+    val globalUnitSystem by userPreferencesRepository.globalUnitSystem.collectAsState(initial = NutritionUnitSystem.US)
 
     var versionTapCount by remember { mutableIntStateOf(0) }
     var isServiceActive by remember { mutableStateOf(false) }
@@ -112,6 +116,18 @@ fun SettingsScreen(
                 modifier = Modifier.clickable { onNutritionSettings() }
             )
 
+            ListItem(
+                headlineContent = { Text("Exercise") },
+                supportingContent = {
+                    Text(
+                        if (exerciseEnabled) "Workouts, duration, calorie burn, weight"
+                        else "Disabled — tap to configure"
+                    )
+                },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                modifier = Modifier.clickable { onExerciseSettings() }
+            )
+
             HorizontalDivider()
 
             if (!aiFeaturesDisabled) {
@@ -148,6 +164,28 @@ fun SettingsScreen(
 
             // ── General ───────────────────────────────────────────────────
             SectionHeader("General")
+
+            // NOTE: This is the ONE place to change units — do NOT add per-feature unit toggles elsewhere
+            ListItem(
+                headlineContent = { Text("Units") },
+                supportingContent = { Text("Applies to food amounts, body weight, and all measurements across the app.") },
+                trailingContent = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        NutritionUnitSystem.entries.forEach { system ->
+                            FilterChip(
+                                selected = globalUnitSystem == system,
+                                onClick = { scope.launch { userPreferencesRepository.setGlobalUnitSystem(system) } },
+                                label = {
+                                    Text(when (system) {
+                                        NutritionUnitSystem.US -> "US"
+                                        NutritionUnitSystem.METRIC -> "Metric"
+                                    })
+                                }
+                            )
+                        }
+                    }
+                }
+            )
 
             ListItem(
                 headlineContent = { Text("Day cutover time") },
