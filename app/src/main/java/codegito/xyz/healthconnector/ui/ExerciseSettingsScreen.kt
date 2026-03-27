@@ -15,7 +15,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.exercise.domain.Sex
-import codegito.xyz.healthconnector.weight.domain.WeightUnit
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -29,7 +28,7 @@ fun ExerciseSettingsScreen(
 
     val exerciseEnabled by userPreferencesRepository.exerciseEnabled.collectAsState(initial = false)
     val weightEnabled by userPreferencesRepository.weightEnabled.collectAsState(initial = false)
-    val weightUnit by userPreferencesRepository.weightUnit.collectAsState(initial = WeightUnit.LBS)
+    val weightUnit by userPreferencesRepository.weightUnit.collectAsState(initial = codegito.xyz.healthconnector.weight.domain.WeightUnit.LBS)
     val exerciseAge by userPreferencesRepository.exerciseAge.collectAsState(initial = null)
     val exerciseSex by userPreferencesRepository.exerciseSex.collectAsState(initial = null)
     val defaultWeightKg by userPreferencesRepository.exerciseDefaultWeightKg.collectAsState(initial = 70.0)
@@ -38,7 +37,7 @@ fun ExerciseSettingsScreen(
 
     var ageInput by remember(exerciseAge) { mutableStateOf(exerciseAge?.toString() ?: "") }
     var weightInput by remember(defaultWeightKg, weightUnit) {
-        val display = if (weightUnit == WeightUnit.KG) defaultWeightKg
+        val display = if (weightUnit == codegito.xyz.healthconnector.weight.domain.WeightUnit.KG) defaultWeightKg
                       else defaultWeightKg * 2.20462
         mutableStateOf("%.1f".format(display))
     }
@@ -47,7 +46,7 @@ fun ExerciseSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Exercise & Weight Settings") },
+                title = { Text("Exercise Settings") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -69,7 +68,7 @@ fun ExerciseSettingsScreen(
 
             ListItem(
                 headlineContent = { Text("Weight tracking") },
-                supportingContent = { Text("Show a weight tab and log body weight to Health Connect") },
+                supportingContent = { Text("Show a weight tab and log body weight to Health Connect. Weight data is always read from Health Connect for calorie estimation, even when this is off.") },
                 trailingContent = {
                     Switch(
                         checked = weightEnabled,
@@ -91,30 +90,8 @@ fun ExerciseSettingsScreen(
 
             HorizontalDivider()
 
-            // ── Units ────────────────────────────────────────────────────
-            SectionHeader("Units")
-
-            ListItem(
-                headlineContent = { Text("Weight unit") },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterChip(
-                            selected = weightUnit == WeightUnit.LBS,
-                            onClick = { scope.launch { userPreferencesRepository.setWeightUnit(WeightUnit.LBS) } },
-                            label = { Text("lbs") }
-                        )
-                        FilterChip(
-                            selected = weightUnit == WeightUnit.KG,
-                            onClick = { scope.launch { userPreferencesRepository.setWeightUnit(WeightUnit.KG) } },
-                            label = { Text("kg") }
-                        )
-                    }
-                }
-            )
-
-            HorizontalDivider()
-
             // ── Calorie estimation inputs ─────────────────────────────────
+            // Note: unit system (metric/imperial) is a global setting — do NOT add a per-feature unit toggle here.
             SectionHeader("Calorie Estimation")
 
             Text(
@@ -168,7 +145,7 @@ fun ExerciseSettingsScreen(
             OutlinedTextField(
                 value = weightInput,
                 onValueChange = { weightInput = it },
-                label = { Text("Default body weight (${if (weightUnit == WeightUnit.KG) "kg" else "lbs"})") },
+                label = { Text("Default body weight (${if (weightUnit == codegito.xyz.healthconnector.weight.domain.WeightUnit.KG) "kg" else "lbs"})") },
                 supportingText = { Text("Used as fallback when no weight is logged in Health Connect") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
@@ -176,7 +153,7 @@ fun ExerciseSettingsScreen(
                 trailingIcon = {
                     TextButton(onClick = {
                         val value = weightInput.toDoubleOrNull() ?: return@TextButton
-                        val kg = if (weightUnit == WeightUnit.KG) value else value / 2.20462
+                        val kg = if (weightUnit == codegito.xyz.healthconnector.weight.domain.WeightUnit.KG) value else value / 2.20462
                         scope.launch { userPreferencesRepository.setExerciseDefaultWeightKg(kg) }
                     }) { Text("Save") }
                 }

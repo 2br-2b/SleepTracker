@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import codegito.xyz.healthconnector.NotificationHelper
 import codegito.xyz.healthconnector.SleepTrackingService
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
+import codegito.xyz.healthconnector.weight.domain.UnitSystem
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
@@ -52,6 +53,7 @@ fun SettingsScreen(
     val historyDays by userPreferencesRepository.historyDays.collectAsState(initial = 7)
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(initial = false)
+    val unitSystem by userPreferencesRepository.globalUnitSystem.collectAsState(initial = UnitSystem.IMPERIAL)
 
     var versionTapCount by remember { mutableIntStateOf(0) }
     var isServiceActive by remember { mutableStateOf(false) }
@@ -167,6 +169,27 @@ fun SettingsScreen(
 
             // ── General ───────────────────────────────────────────────────
             SectionHeader("General")
+
+            // Global unit system — applies to weight, nutrition, and exercise distance.
+            // DO NOT move this to per-feature settings.
+            ListItem(
+                headlineContent = { Text("Units") },
+                supportingContent = { Text("Applies to weight, food amounts, and exercise distance across the whole app") },
+                trailingContent = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilterChip(
+                            selected = unitSystem == UnitSystem.IMPERIAL,
+                            onClick = { scope.launch { userPreferencesRepository.setUnitSystem(UnitSystem.IMPERIAL) } },
+                            label = { Text("Imperial") }
+                        )
+                        FilterChip(
+                            selected = unitSystem == UnitSystem.METRIC,
+                            onClick = { scope.launch { userPreferencesRepository.setUnitSystem(UnitSystem.METRIC) } },
+                            label = { Text("Metric") }
+                        )
+                    }
+                }
+            )
 
             ListItem(
                 headlineContent = { Text("Day cutover time") },

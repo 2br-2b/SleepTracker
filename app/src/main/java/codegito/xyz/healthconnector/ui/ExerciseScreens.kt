@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import java.time.Instant as JavaInstant
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +33,7 @@ import codegito.xyz.healthconnector.exercise.domain.ExerciseType
 import codegito.xyz.healthconnector.exercise.domain.ExerciseUserPrefs
 import codegito.xyz.healthconnector.exercise.domain.LoggedExerciseEntry
 import codegito.xyz.healthconnector.exercise.domain.Sex
+import codegito.xyz.healthconnector.weight.domain.UnitSystem
 import codegito.xyz.healthconnector.weight.domain.WeightUnit
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -224,8 +226,16 @@ fun LogExerciseSheet(
     val defaultWeightKg by userPreferencesRepository.exerciseDefaultWeightKg.collectAsState(initial = 70.0)
     val acsmCorrection by userPreferencesRepository.exerciseAcsmRunningCorrection.collectAsState(initial = 0.90)
     val epocMultiplier by userPreferencesRepository.exerciseEpocMultiplier.collectAsState(initial = 1.07)
+    val unitSystem by userPreferencesRepository.globalUnitSystem.collectAsState(initial = UnitSystem.IMPERIAL)
+    val recentTypeIds by userPreferencesRepository.exerciseRecentTypeIds.collectAsState(initial = emptyList())
 
-    var selectedType by remember { mutableStateOf(DefaultExerciseTypes.all.first()) }
+    val sortedExerciseTypes = remember(recentTypeIds) {
+        val recentMap = recentTypeIds.withIndex().associate { (idx, id) -> id to idx }
+        DefaultExerciseTypes.all.sortedBy { recentMap[it.id] ?: Int.MAX_VALUE }
+    }
+
+    var selectedType by remember { mutableStateOf(sortedExerciseTypes.first()) }
+    var selectedDate by remember { mutableStateOf(LocalDate.now()) }
     var startTime by remember { mutableStateOf(LocalTime.now().withSecond(0).withNano(0)) }
     var endTime by remember { mutableStateOf(LocalTime.now().plusHours(1).withSecond(0).withNano(0)) }
     var distanceInput by remember { mutableStateOf("") }
@@ -233,12 +243,15 @@ fun LogExerciseSheet(
     var isSaving by remember { mutableStateOf(false) }
     var showStartPicker by remember { mutableStateOf(false) }
     var showEndPicker by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
-    val today = LocalDate.now()
+    val dateFormatter = DateTimeFormatter.ofPattern("EEE, MMM d")
+    val isMetric = unitSystem == UnitSystem.METRIC
+    val distanceLabel = if (isMetric) "km" else "mi"
 
     fun buildEntry(): LoggedExerciseEntry {
-        val startInstant = today.atTime(startTime).atZone(zoneId).toInstant()
-        val endInstant = today.atTime(endTime).atZone(zoneId).toInstant()
+        val startInstant = selectedDate.atTime(startTime).atZone(zoneId).toInstant()
+        val endInstant = selectedDate.atTime(endTime).atZone(zoneId).toInstant()
             .let { if (it <= startInstant) startInstant.plusSeconds(60) else it }
         val durationMin = Duration.between(startInstant, endInstant).toMinutes().toDouble()
         val prefs = ExerciseUserPrefs(
@@ -248,7 +261,10 @@ fun LogExerciseSheet(
             acsmRunningCorrectionFactor = acsmCorrection,
             epocMultiplierStrength = epocMultiplier
         )
-        val distanceM = distanceInput.toDoubleOrNull()?.let { it * 1000 } // user inputs km
+        // Convert user input to meters: km×1000 or miles×1609.34
+        val distanceM = distanceInput.toDoubleOrNull()?.let { v ->
+            if (isMetric) v * 1000 else v * 1609.34
+        }
         val inputs = codegito.xyz.healthconnector.exercise.domain.ExerciseInputs(
             exerciseType = selectedType,
             durationMinutes = durationMin,
@@ -284,16 +300,24 @@ fun LogExerciseSheet(
         ) {
             Text("Log Exercise", style = MaterialTheme.typography.titleLarge)
 
-            // Exercise type chips
+            // Exercise type chips (most recently used first)
             Text("Exercise Type", style = MaterialTheme.typography.labelLarge)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(DefaultExerciseTypes.all) { type ->
+                items(sortedExerciseTypes) { type ->
                     FilterChip(
                         selected = selectedType.id == type.id,
                         onClick = { selectedType = type; distanceInput = ""; sets = listOf(ExerciseSet(10)) },
                         label = { Text("${type.icon} ${type.displayName}") }
                     )
                 }
+            }
+
+            // Date row
+            OutlinedButton(
+                onClick = { showDatePicker = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Date: ${selectedDate.format(dateFormatter)}")
             }
 
             // Time row
@@ -317,7 +341,7 @@ fun LogExerciseSheet(
                 OutlinedTextField(
                     value = distanceInput,
                     onValueChange = { distanceInput = it },
-                    label = { Text("Distance (km) — optional") },
+                    label = { Text("Distance ($distanceLabel) — optional") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -402,6 +426,7 @@ fun LogExerciseSheet(
                             caloriesTier = result.tier
                         )
                         healthConnectManager.writeExerciseSession(finalEntry)
+                        userPreferencesRepository.markExerciseTypeUsed(entry.exerciseType.id)
                         isSaving = false
                         onSaved()
                     }
@@ -430,5 +455,27 @@ fun LogExerciseSheet(
             onConfirm = { h, m -> endTime = LocalTime.of(h, m); showEndPicker = false },
             onDismiss = { showEndPicker = false }
         )
+    }
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = selectedDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        selectedDate = JavaInstant.ofEpochMilli(millis)
+                            .atZone(zoneId).toLocalDate()
+                    }
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
     }
 }

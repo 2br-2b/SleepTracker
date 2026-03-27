@@ -161,13 +161,16 @@ Rules:
     private val NUTRITION_UNIT_SYSTEM_KEY       = stringPreferencesKey("nutrition_unit_system")
     private val NUTRITION_APPLY_FILTER_TO_SEARCH_KEY = booleanPreferencesKey("nutrition_apply_filter_to_search")
     private val WEIGHT_TRACKING_ENABLED_KEY         = booleanPreferencesKey("weight_tracking_enabled")
-    private val WEIGHT_UNIT_KEY                     = stringPreferencesKey("weight_unit")
     private val EXERCISE_TRACKING_ENABLED_KEY       = booleanPreferencesKey("exercise_tracking_enabled")
     private val EXERCISE_AGE_KEY                    = intPreferencesKey("exercise_age")
     private val EXERCISE_SEX_KEY                    = stringPreferencesKey("exercise_sex")
     private val EXERCISE_DEFAULT_WEIGHT_KG_KEY      = floatPreferencesKey("exercise_default_weight_kg")
     private val EXERCISE_ACSM_CORRECTION_KEY        = floatPreferencesKey("exercise_acsm_correction")
     private val EXERCISE_EPOC_MULTIPLIER_KEY        = floatPreferencesKey("exercise_epoc_multiplier")
+    private val EXERCISE_RECENT_TYPE_IDS_KEY        = stringPreferencesKey("exercise_recent_type_ids")
+    // Global unit system — controls weight (kg/lbs), nutrition (g/oz), distance (km/mi).
+    // DO NOT split this into per-feature unit settings.
+    private val GLOBAL_UNIT_SYSTEM_KEY              = stringPreferencesKey("global_unit_system")
 
     // ── Sleep flows ───────────────────────────────────────────────────────
 
@@ -363,23 +366,37 @@ Rules:
             } ?: NutrientDefaults.defaultConfig()
         }
 
-    val nutritionUnitSystem: Flow<NutritionUnitSystem> = context.dataStore.data
-        .map { prefs ->
-            try { NutritionUnitSystem.valueOf(prefs[NUTRITION_UNIT_SYSTEM_KEY] ?: NutritionUnitSystem.US.name) }
-            catch (_: Exception) { NutritionUnitSystem.US }
-        }
+    // ── Global unit system ────────────────────────────────────────────────────
+    // Controls weight (kg/lbs), nutrition (g/oz), and exercise distance (km/mi).
+    // DO NOT split into per-feature unit settings.
 
-    val nutritionApplyNutrientFilterToSearch: Flow<Boolean> = context.dataStore.data
-        .map { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] ?: false }
+    val globalUnitSystem: Flow<codegito.xyz.healthconnector.weight.domain.UnitSystem> = context.dataStore.data
+        .map { prefs ->
+            try { codegito.xyz.healthconnector.weight.domain.UnitSystem.valueOf(
+                prefs[GLOBAL_UNIT_SYSTEM_KEY] ?: codegito.xyz.healthconnector.weight.domain.UnitSystem.IMPERIAL.name
+            ) } catch (_: Exception) { codegito.xyz.healthconnector.weight.domain.UnitSystem.IMPERIAL }
+        }
 
     // ── Weight flows ──────────────────────────────────────────────────────────
 
-    val weightUnit: Flow<codegito.xyz.healthconnector.weight.domain.WeightUnit> = context.dataStore.data
-        .map { prefs ->
-            try { codegito.xyz.healthconnector.weight.domain.WeightUnit.valueOf(
-                prefs[WEIGHT_UNIT_KEY] ?: codegito.xyz.healthconnector.weight.domain.WeightUnit.LBS.name
-            ) } catch (_: Exception) { codegito.xyz.healthconnector.weight.domain.WeightUnit.LBS }
+    /** Derived from globalUnitSystem — do not expose a separate setter. */
+    val weightUnit: Flow<codegito.xyz.healthconnector.weight.domain.WeightUnit> = globalUnitSystem.map { system ->
+        when (system) {
+            codegito.xyz.healthconnector.weight.domain.UnitSystem.METRIC -> codegito.xyz.healthconnector.weight.domain.WeightUnit.KG
+            codegito.xyz.healthconnector.weight.domain.UnitSystem.IMPERIAL -> codegito.xyz.healthconnector.weight.domain.WeightUnit.LBS
         }
+    }
+
+    /** Derived from globalUnitSystem — do not expose a separate setter. */
+    val nutritionUnitSystem: Flow<NutritionUnitSystem> = globalUnitSystem.map { system ->
+        when (system) {
+            codegito.xyz.healthconnector.weight.domain.UnitSystem.METRIC -> NutritionUnitSystem.METRIC
+            codegito.xyz.healthconnector.weight.domain.UnitSystem.IMPERIAL -> NutritionUnitSystem.US
+        }
+    }
+
+    val nutritionApplyNutrientFilterToSearch: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] ?: false }
 
     // ── Exercise flows ────────────────────────────────────────────────────────
 
@@ -401,6 +418,10 @@ Rules:
 
     val exerciseEpocMultiplier: Flow<Double> = context.dataStore.data
         .map { prefs -> (prefs[EXERCISE_EPOC_MULTIPLIER_KEY] ?: 1.07f).toDouble() }
+
+    /** Ordered list of recently used exercise type IDs, most recent first. */
+    val exerciseRecentTypeIds: Flow<List<String>> = context.dataStore.data
+        .map { prefs -> prefs[EXERCISE_RECENT_TYPE_IDS_KEY]?.split(",")?.filter { it.isNotBlank() } ?: emptyList() }
 
     // ── Sleep setters ─────────────────────────────────────────────────────
 
@@ -625,11 +646,13 @@ Rules:
         context.dataStore.edit { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] = apply }
     }
 
-    // ── Weight setters ────────────────────────────────────────────────────────
+    // ── Global unit system setter ─────────────────────────────────────────────
 
-    suspend fun setWeightUnit(unit: codegito.xyz.healthconnector.weight.domain.WeightUnit) {
-        context.dataStore.edit { prefs -> prefs[WEIGHT_UNIT_KEY] = unit.name }
+    suspend fun setUnitSystem(system: codegito.xyz.healthconnector.weight.domain.UnitSystem) {
+        context.dataStore.edit { prefs -> prefs[GLOBAL_UNIT_SYSTEM_KEY] = system.name }
     }
+
+    // ── Weight setters ────────────────────────────────────────────────────────
 
     // ── Exercise setters ──────────────────────────────────────────────────────
 
@@ -655,6 +678,17 @@ Rules:
 
     suspend fun setExerciseEpocMultiplier(multiplier: Double) {
         context.dataStore.edit { prefs -> prefs[EXERCISE_EPOC_MULTIPLIER_KEY] = multiplier.toFloat() }
+    }
+
+    suspend fun setExerciseRecentTypeIds(ids: List<String>) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_RECENT_TYPE_IDS_KEY] = ids.joinToString(",") }
+    }
+
+    /** Moves the given exercise type to the front of the recently used list. */
+    suspend fun markExerciseTypeUsed(typeId: String) {
+        val current = exerciseRecentTypeIds.first()
+        val updated = listOf(typeId) + current.filter { it != typeId }
+        setExerciseRecentTypeIds(updated.take(20))
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
