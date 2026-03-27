@@ -394,11 +394,14 @@ class NutritionDatabase private constructor(private val context: Context) {
 
             if (ftsResults.isNotEmpty()) return@withContext ftsResults
 
-            // Fallback: LIKE on name column
+            // Fallback: per-word LIKE AND on name column so word order doesn't matter
             runCatching {
+                val words = normalized.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+                val whereClause = words.joinToString(" AND ") { "name LIKE ?" }
+                val args = (words.map { "%$it%" } + listOf(limit.toString())).toTypedArray()
                 val cursor = openDb().rawQuery(
-                    "SELECT * FROM foods WHERE name LIKE ? LIMIT ?",
-                    arrayOf("%$normalized%", limit.toString())
+                    "SELECT * FROM foods WHERE $whereClause LIMIT ?",
+                    args
                 )
                 cursor.use { parseFoodCandidates(it) }
             }.getOrElse { emptyList() }
@@ -438,16 +441,17 @@ class NutritionDatabase private constructor(private val context: Context) {
     // -------------------------------------------------------------------------
 
     /**
-     * Build an FTS5 MATCH expression from a plain text query.
-     * Each word is quoted (exact token) and the last word gets a prefix wildcard.
-     * Special FTS5 characters are escaped.
+     * Build an FTS4 MATCH expression from a plain text query.
+     * Tokens are space-separated (implicit AND); the last token gets a prefix wildcard.
+     * Non-alphanumeric characters are stripped since FTS4 tokenizes on them anyway.
      */
     private fun buildFtsMatchExpr(query: String): String {
-        val tokens = query.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val tokens = query.trim().lowercase().split(Regex("\\s+"))
+            .map { it.replace(Regex("[^a-z0-9]"), "") }
+            .filter { it.isNotEmpty() }
         if (tokens.isEmpty()) return ""
         return tokens.mapIndexed { index, token ->
-            val escaped = token.replace("\"", "\"\"")
-            if (index == tokens.lastIndex) "\"$escaped\"*" else "\"$escaped\""
+            if (index == tokens.lastIndex) "$token*" else token
         }.joinToString(" ")
     }
 
