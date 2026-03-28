@@ -38,23 +38,13 @@ fun DeveloperPromptsSettingsScreen(
     val aiBaseSystemPrompt by userPreferencesRepository.aiBaseSystemPrompt.collectAsState(
         UserPreferencesRepository.DEFAULT_AI_BASE_SYSTEM_PROMPT
     )
-    val aiDecisionPromptTemplate by userPreferencesRepository.aiDecisionPromptTemplate.collectAsState(
-        UserPreferencesRepository.DEFAULT_AI_DECISION_PROMPT_TEMPLATE
-    )
-    val aiRepairPromptTemplate by userPreferencesRepository.aiRepairPromptTemplate.collectAsState(
-        UserPreferencesRepository.DEFAULT_AI_REPAIR_PROMPT_TEMPLATE
-    )
 
     var draftSystemPrompt by remember { mutableStateOf("") }
     var draftBaseSystemPrompt by remember { mutableStateOf("") }
-    var draftDecisionPromptTemplate by remember { mutableStateOf("") }
-    var draftRepairPromptTemplate by remember { mutableStateOf("") }
 
-    LaunchedEffect(aiSystemPrompt, aiBaseSystemPrompt, aiDecisionPromptTemplate, aiRepairPromptTemplate) {
+    LaunchedEffect(aiSystemPrompt, aiBaseSystemPrompt) {
         draftSystemPrompt = aiSystemPrompt
         draftBaseSystemPrompt = aiBaseSystemPrompt
-        draftDecisionPromptTemplate = aiDecisionPromptTemplate
-        draftRepairPromptTemplate = aiRepairPromptTemplate
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Developer AI Prompts") }) }) { innerPadding ->
@@ -91,35 +81,11 @@ fun DeveloperPromptsSettingsScreen(
                 minLines = 4
             )
 
-            OutlinedTextField(
-                value = draftDecisionPromptTemplate,
-                onValueChange = { draftDecisionPromptTemplate = it },
-                label = { Text("Candidate decision prompt template") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 8,
-                supportingText = {
-                    Text("Available placeholders: {{mention}}, {{quantity}}, {{unit}}, {{candidates}}")
-                }
-            )
-
-            OutlinedTextField(
-                value = draftRepairPromptTemplate,
-                onValueChange = { draftRepairPromptTemplate = it },
-                label = { Text("Unparsable output repair prompt template") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 7,
-                supportingText = {
-                    Text("Available placeholders: {{error}}, {{previous_output}}")
-                }
-            )
-
             Button(
                 onClick = {
                     scope.launch {
                         userPreferencesRepository.setAiBaseSystemPrompt(draftBaseSystemPrompt)
                         userPreferencesRepository.setAiSystemPrompt(draftSystemPrompt)
-                        userPreferencesRepository.setAiDecisionPromptTemplate(draftDecisionPromptTemplate)
-                        userPreferencesRepository.setAiRepairPromptTemplate(draftRepairPromptTemplate)
                     }
                 },
                 modifier = Modifier.fillMaxWidth()

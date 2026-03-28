@@ -39,6 +39,16 @@ data class RecentFoodEntity(
     val nutrientsJson: String = "{}"
 )
 
+@Entity(tableName = "food_serving_history")
+data class FoodServingHistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val foodKey: String,
+    val displayName: String,
+    val quantity: Double,
+    val unit: String,
+    val loggedAtMillis: Long
+)
+
 class ScreenEventDao(private val db: AppDatabase) {
     suspend fun insert(event: ScreenEvent) = withContext(Dispatchers.IO) {
         val stmt = db.openHelper.writableDatabase.compileStatement(
@@ -156,16 +166,92 @@ class RecentFoodDao(private val db: AppDatabase) {
     }
 }
 
+class FoodServingHistoryDao(private val db: AppDatabase) {
+    suspend fun insert(entry: FoodServingHistoryEntity) = withContext(Dispatchers.IO) {
+        val stmt = db.openHelper.writableDatabase.compileStatement(
+            "INSERT INTO food_serving_history (foodKey, displayName, quantity, unit, loggedAtMillis) VALUES (?, ?, ?, ?, ?)"
+        )
+        stmt.use {
+            it.bindString(1, entry.foodKey)
+            it.bindString(2, entry.displayName)
+            it.bindDouble(3, entry.quantity)
+            it.bindString(4, entry.unit)
+            it.bindLong(5, entry.loggedAtMillis)
+            it.executeInsert()
+        }
+    }
+
+    fun getHistory(foodKey: String, limit: Int = 10): Flow<List<FoodServingHistoryEntity>> =
+        callbackFlow<List<FoodServingHistoryEntity>> {
+            fun doQuery(): List<FoodServingHistoryEntity> {
+                val list = mutableListOf<FoodServingHistoryEntity>()
+                val cursor: Cursor = db.openHelper.readableDatabase.query(
+                    "SELECT id, foodKey, displayName, quantity, unit, loggedAtMillis FROM food_serving_history WHERE foodKey = ? ORDER BY loggedAtMillis DESC LIMIT ?",
+                    arrayOf(foodKey, limit.toString())
+                )
+                cursor.use { c ->
+                    while (c.moveToNext()) {
+                        list.add(FoodServingHistoryEntity(
+                            id = c.getLong(0),
+                            foodKey = c.getString(1),
+                            displayName = c.getString(2),
+                            quantity = c.getDouble(3),
+                            unit = c.getString(4),
+                            loggedAtMillis = c.getLong(5)
+                        ))
+                    }
+                }
+                return list
+            }
+
+            trySend(doQuery())
+
+            val observer = object : InvalidationTracker.Observer("food_serving_history") {
+                override fun onInvalidated(tables: Set<String>) {
+                    trySend(doQuery())
+                }
+            }
+            db.invalidationTracker.addObserver(observer)
+            awaitClose { db.invalidationTracker.removeObserver(observer) }
+        }.flowOn(Dispatchers.IO)
+
+    suspend fun deleteOldEntries(threshold: Long) = withContext(Dispatchers.IO) {
+        val stmt = db.openHelper.writableDatabase.compileStatement(
+            "DELETE FROM food_serving_history WHERE loggedAtMillis < ?"
+        )
+        stmt.use {
+            it.bindLong(1, threshold)
+            it.executeUpdateDelete()
+        }
+    }
+}
+
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL("ALTER TABLE recent_foods ADD COLUMN nutrientsJson TEXT NOT NULL DEFAULT '{}'")
     }
 }
 
-@Database(entities = [ScreenEvent::class, RecentFoodEntity::class], version = 2, exportSchema = false)
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """CREATE TABLE food_serving_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                foodKey TEXT NOT NULL,
+                displayName TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                unit TEXT NOT NULL,
+                loggedAtMillis INTEGER NOT NULL
+            )"""
+        )
+    }
+}
+
+@Database(entities = [ScreenEvent::class, RecentFoodEntity::class, FoodServingHistoryEntity::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     fun screenEventDao(): ScreenEventDao = ScreenEventDao(this)
     fun recentFoodDao(): RecentFoodDao = RecentFoodDao(this)
+    fun foodServingHistoryDao(): FoodServingHistoryDao = FoodServingHistoryDao(this)
 
     companion object {
         @Volatile
@@ -177,7 +263,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "sleep_tracker_database"
-                ).addMigrations(MIGRATION_1_2).build()
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
                 INSTANCE = instance
                 instance
             }

@@ -16,6 +16,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://packages.jetbrains.team/maven/p/ai/maven") }
     }
 }
 

@@ -30,68 +30,24 @@ class UserPreferencesRepository private constructor(private val context: Context
         @Volatile
         private var INSTANCE: UserPreferencesRepository? = null
         const val DEFAULT_AI_BASE_SYSTEM_PROMPT =
-            """You are SleepTracker's nutrition logging copilot. Your job is to transform natural-language food descriptions into high-quality logging decisions using candidate rows from the local nutrition database.
+            """You are SleepTracker's nutrition logging copilot. Your job is to use tools to search the nutrition database, find the best foods, and calculate accurate nutrition for what the user ate.
 
-Behavior requirements:
-1) Never treat meal labels or time phrases as foods (examples: breakfast, lunch, dinner, at 9, an hour ago, today).
-2) Prioritize semantic food matching over token overlap.
-3) If there is no strong direct match, decompose the mention into realistic edible sub-items (example: 'ham hot honey egg and cheese sandwich on a bagel' -> ham, egg, cheese, honey, bagel, sandwich) and resolve those.
-4) Use serving-size math carefully. Prefer provided serving units/grams; if uncertain, make a conservative best estimate.
-5) Do not hallucinate impossible foods from non-food context words.
-6) Keep all timestamps in the past.
-7) When follow-up questions are allowed, ask concise clarifying questions only when ambiguity materially changes nutrition. Otherwise proceed with best effort.
-8) Be robust to duplicate/near-duplicate products in the DB and pick the most plausible candidate by food identity and serving context.
+You have four tools: search_food, get_food_nutrition, calculate_nutrition, get_recent_foods.
 
-Structured output discipline:
-- Always return strict JSON only when asked for structured output.
-- No markdown, no prose outside required JSON."""
+Behavior instructions:
+1) If the user references habitual foods ("the usual", "same as yesterday", "my morning coffee"), call get_recent_foods first to see what they typically eat.
+2) For each food item, search with the brand name first (e.g. "McDonald's Quarter Pounder"). If no good match, retry with a generic name (e.g. "hamburger").
+3) Call get_food_nutrition to inspect the serving size before deciding how much the user had.
+4) Use calculate_nutrition with serving-aware units and partial quantities (e.g. quantity=0.7, unit="burger" for a small burger). If the described portion seems smaller or larger than the DB serving, adjust the quantity fraction accordingly.
+5) Never invent nutrition data — all values must come directly from tool responses.
+6) When finished searching and calculating, write a brief summary of what you found. Then end with exactly one code block like this:
+   ````
+   ```json
+   {"logged_items": [{"food_id": "...", "food_name": "...", "grams": 0.0}]}
+   ```
+   ````
+7) Each food_id in the output must correspond to a food you searched for or found in recent foods. The grams value is the final resolved amount to log (the app will scale nutrition per 100g by this value)."""
         const val DEFAULT_AI_SYSTEM_PROMPT = ""
-        const val DEFAULT_AI_DECISION_PROMPT_TEMPLATE = """Task: choose the best nutrition candidate for a single food mention and provide normalization math.
-
-Food mention details:
-- mention text: "{{mention}}"
-- user quantity: {{quantity}}
-- user unit: {{unit}}
-
-Candidate rows (indexed):
-{{candidates}}
-
-Decision procedure (follow in order):
-1) Identify whether the mention is an actual food item, not a meal label/time phrase.
-2) Compare identity fit (food type, preparation, ingredients, brand clues), then serving plausibility.
-3) Prefer candidate rows whose serving/unit context is compatible with the mention.
-4) If nothing is a real match, return candidateIndex=-1.
-5) If a candidate matches, choose quantity/unit/multiplier so nutrition best reflects the user statement.
-
-Return EXACTLY one JSON object with these keys only:
-{"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
-
-Key semantics:
-- candidateIndex: index of chosen candidate, or -1 if no valid match
-- quantity: normalized quantity to use (null = keep caller quantity)
-- unit: normalized unit string to use (null = keep caller unit)
-- multiplier: global nutrient multiplier (null = 1.0)
-
-Hard constraints:
-- Output must be valid JSON object (no trailing text).
-- Never output markdown/code fences."""
-        const val DEFAULT_AI_REPAIR_PROMPT_TEMPLATE = """Your previous output could not be parsed by the app.
-
-Error detail:
-{{error}}
-
-Previous output:
-{{previous_output}}
-
-You must now return EXACTLY one valid JSON object with this exact schema and key names:
-{"candidateIndex":int,"quantity":number|null,"unit":string|null,"multiplier":number|null}
-
-Rules:
-- No markdown
-- No commentary
-- No extra keys
-- No code fences
-- JSON only"""
 
         fun getInstance(context: Context): UserPreferencesRepository {
             return INSTANCE ?: synchronized(this) {
@@ -141,8 +97,6 @@ Rules:
     private val AI_SYSTEM_PROMPT_KEY            = stringPreferencesKey("ai_system_prompt")
     private val AI_BASE_SYSTEM_PROMPT_KEY       = stringPreferencesKey("ai_base_system_prompt")
     private val AI_MEMORY_NOTES_KEY             = stringPreferencesKey("ai_memory_notes")
-    private val AI_DECISION_PROMPT_TEMPLATE_KEY = stringPreferencesKey("ai_decision_prompt_template")
-    private val AI_REPAIR_PROMPT_TEMPLATE_KEY   = stringPreferencesKey("ai_repair_prompt_template")
     private val AI_FOLLOWUP_DEFAULT_COUNT_KEY   = intPreferencesKey("ai_followup_default_count")
     private val AI_FEATURES_DISABLED_KEY        = booleanPreferencesKey("ai_features_disabled")
     private val AI_REASONING_EFFORT_KEY         = stringPreferencesKey("ai_reasoning_effort")
@@ -296,12 +250,6 @@ Rules:
 
     val aiMemoryNotes: Flow<String> = context.dataStore.data
         .map { prefs -> prefs[AI_MEMORY_NOTES_KEY] ?: "" }
-
-    val aiDecisionPromptTemplate: Flow<String> = context.dataStore.data
-        .map { prefs -> prefs[AI_DECISION_PROMPT_TEMPLATE_KEY] ?: DEFAULT_AI_DECISION_PROMPT_TEMPLATE }
-
-    val aiRepairPromptTemplate: Flow<String> = context.dataStore.data
-        .map { prefs -> prefs[AI_REPAIR_PROMPT_TEMPLATE_KEY] ?: DEFAULT_AI_REPAIR_PROMPT_TEMPLATE }
 
     val aiFollowupDefaultCount: Flow<Int> = context.dataStore.data
         .map { prefs -> (prefs[AI_FOLLOWUP_DEFAULT_COUNT_KEY] ?: 1).coerceIn(0, 5) }
@@ -551,14 +499,6 @@ Rules:
         context.dataStore.edit { prefs -> prefs[AI_MEMORY_NOTES_KEY] = notes }
     }
 
-    suspend fun setAiDecisionPromptTemplate(template: String) {
-        context.dataStore.edit { prefs -> prefs[AI_DECISION_PROMPT_TEMPLATE_KEY] = template }
-    }
-
-    suspend fun setAiRepairPromptTemplate(template: String) {
-        context.dataStore.edit { prefs -> prefs[AI_REPAIR_PROMPT_TEMPLATE_KEY] = template }
-    }
-
     suspend fun setAiFollowupDefaultCount(count: Int) {
         context.dataStore.edit { prefs -> prefs[AI_FOLLOWUP_DEFAULT_COUNT_KEY] = count.coerceIn(0, 5) }
     }
@@ -575,8 +515,6 @@ Rules:
         context.dataStore.edit { prefs ->
             prefs[AI_BASE_SYSTEM_PROMPT_KEY] = DEFAULT_AI_BASE_SYSTEM_PROMPT
             prefs[AI_SYSTEM_PROMPT_KEY] = DEFAULT_AI_SYSTEM_PROMPT
-            prefs[AI_DECISION_PROMPT_TEMPLATE_KEY] = DEFAULT_AI_DECISION_PROMPT_TEMPLATE
-            prefs[AI_REPAIR_PROMPT_TEMPLATE_KEY] = DEFAULT_AI_REPAIR_PROMPT_TEMPLATE
         }
     }
 

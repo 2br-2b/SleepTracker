@@ -38,6 +38,22 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            pickFirsts += listOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/DEPENDENCIES"
+            )
+            excludes += listOf(
+                "META-INF/NOTICE.md",
+                "META-INF/LICENSE.md",
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+                "META-INF/versions/*/module-info.class",
+                "META-INF/MANIFEST.MF"
+            )
+        }
+    }
 }
 
 dependencies {
@@ -71,6 +87,9 @@ dependencies {
 
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
+
+    // Koog AI Agent Framework
+    implementation(libs.koog.agents)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

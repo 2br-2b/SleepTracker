@@ -73,6 +73,13 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import ai.koog.agents.core.agent.AIAgent
+import ai.koog.agents.core.tools.ToolRegistry
+import ai.koog.prompt.executor.clients.openai.OpenAIModels
+import ai.koog.prompt.executor.llms.all.simpleOpenAIExecutor
+import ai.koog.agents.core.tools.annotations.LLMDescription
+import ai.koog.agents.core.tools.annotations.Tool
+import codegito.xyz.healthconnector.nutrition.ai.FoodTools
 
 private data class AiChatMessage(val fromUser: Boolean, val text: String)
 
@@ -790,16 +797,13 @@ fun LogFoodScreen(
     }
 
 
-    suspend fun handleAiFoodLogPrompt(prompt: String, allowFollowup: Boolean) {
-        data class ParsedMention(val quantity: Double, val unit: String?, val foodPhrase: String)
-        data class ModelDecision(
-            val candidateIndex: Int,
-            val quantity: Double?,
-            val unit: String?,
-            val multiplier: Double?
-        )
+    suspend fun handleAiFoodLogWithTools(userInput: String, allowFollowup: Boolean) {
+        data class LoggedItem(val food_id: String, val food_name: String, val grams: Double)
 
-        // ── Read AI config upfront ─────────────────────────────────────────────
+        aiBusy = true
+        aiMessages += AiChatMessage(fromUser = true, text = userInput)
+        aiStatus = "Initializing AI agent with tools…"
+
         val aiEnabled = userPreferencesRepository.effectiveGlobalAiEnabled.first()
         val provider = userPreferencesRepository.aiProvider.first()
         val baseUrl = userPreferencesRepository.aiBaseUrl.first().trim()
@@ -807,294 +811,9 @@ fun LogFoodScreen(
         val model = userPreferencesRepository.aiModel.first().ifBlank { provider.defaultModel }
         val baseSystemPrompt = userPreferencesRepository.aiBaseSystemPrompt.first().trim()
         val userSystemPrompt = userPreferencesRepository.aiSystemPrompt.first().trim()
-        val decisionTemplate = userPreferencesRepository.aiDecisionPromptTemplate.first().ifBlank {
-            UserPreferencesRepository.DEFAULT_AI_DECISION_PROMPT_TEMPLATE
-        }
-        val repairTemplate = userPreferencesRepository.aiRepairPromptTemplate.first().ifBlank {
-            UserPreferencesRepository.DEFAULT_AI_REPAIR_PROMPT_TEMPLATE
-        }
-        val reasoningEffort = userPreferencesRepository.aiReasoningEffort.first()
         val combinedSystemPrompt = listOf(baseSystemPrompt, userSystemPrompt)
             .filter { it.isNotBlank() }
             .joinToString("\n\n")
-
-        // ── Shared HTTP helper ──────────────────────────────────────────────────
-        suspend fun callModel(userText: String, systemPrompt: String = combinedSystemPrompt): String? {
-            if (developerModeEnabled) {
-                if (systemPrompt.isNotBlank()) {
-                    aiMessages += AiChatMessage(fromUser = false, text = "[MODEL SYSTEM]\n$systemPrompt\n- - -")
-                }
-                aiMessages += AiChatMessage(fromUser = false, text = "[MODEL REQUEST]\n$userText\n- - -")
-            }
-            val messages = org.json.JSONArray().apply {
-                if (systemPrompt.isNotBlank()) put(org.json.JSONObject().put("role", "system").put("content", systemPrompt))
-                put(org.json.JSONObject().put("role", "user").put("content", userText))
-            }
-            val payload = org.json.JSONObject().apply {
-                put("model", model)
-                put("messages", messages)
-                put("temperature", 0.1)
-                // reasoning_effort is only supported by OpenAI o-series models (o1, o3, o4-mini, etc.)
-                val isReasoningModel = provider.supportsReasoningEffort && model.matches(Regex("o\\d.*", RegexOption.IGNORE_CASE))
-                if (isReasoningModel && reasoningEffort != "none") put("reasoning_effort", reasoningEffort)
-            }.toString()
-
-            // Blocking IO must run off the main thread
-            val httpResult = withContext(Dispatchers.IO) {
-                runCatching {
-                    val url = URL(baseUrl.trimEnd('/') + "/chat/completions")
-                    val conn = (url.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        connectTimeout = 15000
-                        readTimeout = 30000
-                        doOutput = true
-                        setRequestProperty("Content-Type", "application/json")
-                        if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
-                    }
-                    conn.outputStream.use { it.write(payload.toByteArray()) }
-                    val code = conn.responseCode
-                    val body = try {
-                        conn.inputStream.bufferedReader().use { it.readText() }
-                    } catch (_: Exception) {
-                        conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                    }
-                    Pair(code, body)
-                }
-            }
-
-            if (httpResult.isFailure) {
-                val err = httpResult.exceptionOrNull()
-                appendAiTrace("MODEL ERROR", "Network error: ${err?.javaClass?.simpleName}: ${err?.message}")
-                return null
-            }
-
-            val (code, body) = httpResult.getOrThrow()
-            if (developerModeEnabled) {
-                aiMessages += AiChatMessage(fromUser = false, text = "[MODEL HTTP]\nstatus=$code\nbody=$body\n- - -")
-            }
-            if (code !in 200..299) {
-                appendAiTrace("MODEL ERROR", "HTTP $code: ${body.take(300)}")
-                return null
-            }
-            val content = runCatching {
-                val root = org.json.JSONObject(body)
-                root.getJSONArray("choices")
-                    .getJSONObject(0)
-                    .getJSONObject("message")
-                    .getString("content")
-            }
-            if (content.isFailure) {
-                appendAiTrace("MODEL ERROR", "Failed to parse response JSON: ${content.exceptionOrNull()?.message}\nbody=${body.take(300)}")
-                return null
-            }
-            val text = content.getOrThrow().replace("\n", " ").trim()
-            if (developerModeEnabled) {
-                aiMessages += AiChatMessage(fromUser = false, text = "[MODEL RESPONSE]\n${text.ifBlank { "(empty)" }}\n- - -")
-            }
-            return text.ifBlank { null }
-        }
-
-        fun parseMentionsFromJson(raw: String): List<ParsedMention> = runCatching {
-            val s = raw.indexOf('[')
-            val e = raw.lastIndexOf(']')
-            if (s == -1 || e == -1 || e <= s) return@runCatching emptyList()
-            val arr = org.json.JSONArray(raw.substring(s, e + 1))
-            (0 until arr.length()).mapNotNull { i ->
-                val obj = arr.getJSONObject(i)
-                val food = obj.optString("foodPhrase").trim()
-                if (food.isBlank()) null
-                else ParsedMention(
-                    quantity = obj.optDouble("quantity", 1.0).takeIf { !it.isNaN() } ?: 1.0,
-                    unit = obj.optString("unit", "").takeIf { it.isNotBlank() },
-                    foodPhrase = food
-                )
-            }
-        }.getOrElse { emptyList() }
-
-        // ── AI-powered mention parsing ──────────────────────────────────────────
-        suspend fun aiParseMentions(input: String): List<ParsedMention> {
-            val parsePrompt = """Parse the following food log entry into a JSON array of food items.
-
-Input: "$input"
-
-Return ONLY a JSON array. Each element must have exactly these keys:
-- "foodPhrase": string — the food item as described, preserving all descriptors, preparation style, and brand names. Do NOT split compound dishes (e.g. "ham hot honey egg and cheese sandwich on a bagel" is ONE item).
-- "quantity": number — the numeric amount (1.0 if not specified; treat "a"/"an" as 1.0)
-- "unit": string or null — explicit unit of measure such as "cup", "oz", "slice" (null if count-based or unspecified)
-
-Rules:
-- "a"/"an" = quantity 1.0, never a unit or part of the food name
-- Strip only conversational filler: "I had", "I ate", "I drank", "for breakfast/lunch/dinner/snack", restaurant attribution ("from X"), time references
-- Preserve all food descriptors: "hot honey", "a la mode", "extra crispy", "spicy", etc.
-- If multiple distinct foods are mentioned, emit one object per food
-- JSON array only — no markdown, no prose"""
-            val raw = callModel(parsePrompt, systemPrompt = "") ?: return emptyList()
-            appendAiTrace("AI PARSE RAW", raw)
-            return parseMentionsFromJson(raw)
-        }
-
-        // ── AI-powered decomposition ────────────────────────────────────────────
-        suspend fun aiDecomposeMention(foodPhrase: String): List<ParsedMention> {
-            val decomposePrompt = """The food item "$foodPhrase" was not found in the nutrition database.
-Break it down into individual ingredients that would appear in a standard nutrition database.
-
-Return ONLY a JSON array (max 6 items). Each element must have:
-- "foodPhrase": string — simple, generic ingredient name (e.g. "egg", "ham", "bagel", "american cheese")
-- "quantity": number — realistic amount of this ingredient (1.0 if uncertain)
-- "unit": string or null — unit if applicable (e.g. "slice"), otherwise null
-
-Rules:
-- Use generic ingredient names, not brand names or full dish names
-- Only include trackable food ingredients
-- JSON array only — no markdown, no prose"""
-            val raw = callModel(decomposePrompt, systemPrompt = "") ?: return emptyList()
-            appendAiTrace("AI DECOMPOSE RAW", raw)
-            return parseMentionsFromJson(raw)
-        }
-
-        fun tokenize(text: String): Set<String> = text
-            .lowercase()
-            .replace(Regex("""[^a-z0-9 ]"""), " ")
-            .split(Regex("""\s+"""))
-            .filter { it.length >= 2 }
-            .toSet()
-
-        fun similarityScore(query: String, candidateName: String): Int {
-            val qTokens = tokenize(query)
-            val cTokens = tokenize(candidateName)
-            if (qTokens.isEmpty() || cTokens.isEmpty()) return 0
-            val overlap = qTokens.intersect(cTokens).size
-            val startsWithBoost = if (candidateName.lowercase().startsWith(query.lowercase())) 2 else 0
-            val containsBoost = if (candidateName.lowercase().contains(query.lowercase())) 1 else 0
-            return overlap * 3 + startsWithBoost + containsBoost
-        }
-
-        suspend fun findCandidates(foodPhrase: String): List<FoodCandidate> {
-            val queryVariants = linkedSetOf<String>()
-            queryVariants += foodPhrase
-            if (" of " in foodPhrase.lowercase()) queryVariants += foodPhrase.substringAfterLast(" of ").trim()
-            queryVariants += foodPhrase.replace(Regex("""\b(slices?|bags?|pieces?|cups?|oz|ounces?|servings?)\b""", RegexOption.IGNORE_CASE), "").trim()
-            queryVariants += foodPhrase.replace(Regex("""\b(extra|large|small|big|medium|fresh|hot)\b""", RegexOption.IGNORE_CASE), "").trim()
-
-            val scored = mutableMapOf<String, Pair<FoodCandidate, Int>>()
-            val normalizedQueries = queryVariants.map { it.replace(Regex("""\s+"""), " ").trim() }.filter { it.isNotBlank() }
-            appendAiTrace("TOOL QUERY PLAN", "Food phrase '$foodPhrase' -> queries: ${normalizedQueries.joinToString()} ")
-            for (query in normalizedQueries) {
-                aiStatus = "Searching nutrition DB for '$query'…"
-                val results = nutritionProvider.searchFoods(query, limit = 12)
-                appendAiTrace("TOOL QUERY", "query='$query' returned ${results.size} rows")
-                for (candidate in results) {
-                    val score = similarityScore(query, candidate.name)
-                    val existing = scored[candidate.id]
-                    if (existing == null || score > existing.second) {
-                        scored[candidate.id] = candidate to score
-                    }
-                }
-            }
-            val ranked = scored.values.sortedByDescending { it.second }.map { it.first }.take(8)
-            appendAiTrace(
-                "TOOL QUERY RESULT",
-                ranked.mapIndexed { idx, c -> "$idx) ${c.name}" }.joinToString("\n").ifBlank { "No candidates" }
-            )
-            return ranked
-        }
-
-        suspend fun askModelForDecision(mention: ParsedMention, candidates: List<FoodCandidate>): Result<ModelDecision> {
-            if (candidates.isEmpty()) return Result.failure(IllegalStateException("No candidates"))
-
-            val candidateText = candidates.mapIndexed { idx, c ->
-                val si = c.servingInfo
-                val servingDesc = if (si != null) {
-                    "serving: ${si.commonQuantity ?: 1.0} ${si.commonUnit ?: "serving"} ≈ ${"%.1f".format(si.gramsPerCommonUnit)}g"
-                } else "serving: unknown"
-                "[$idx] ${c.name}; $servingDesc; per100g: kcal=${c.nutrientsPer100g.calories}, carbs=${c.nutrientsPer100g.carbsGrams}g, protein=${c.nutrientsPer100g.proteinGrams}g, fat=${c.nutrientsPer100g.fatGrams}g"
-            }.joinToString("\n")
-
-            fun parseDecision(raw: String): ModelDecision? {
-                val idx = Regex("""\"candidateIndex\"\s*:\s*(-?\d+)""").find(raw)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return null
-                val qty = Regex("""\"quantity\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-                val unit = Regex("""\"unit\"\s*:\s*\"(.*?)\"""").find(raw)?.groupValues?.getOrNull(1)
-                val mult = Regex("""\"multiplier\"\s*:\s*([0-9]+(?:\.[0-9]+)?)""").find(raw)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-                return ModelDecision(candidateIndex = idx, quantity = qty, unit = unit?.takeIf { it.isNotBlank() }, multiplier = mult)
-            }
-
-            fun renderTemplate(template: String, values: Map<String, String>): String {
-                var output = template
-                values.forEach { (key, value) -> output = output.replace("{{$key}}", value) }
-                return output
-            }
-
-            val basePrompt = renderTemplate(
-                template = decisionTemplate,
-                values = mapOf(
-                    "mention" to mention.foodPhrase,
-                    "quantity" to mention.quantity.toString(),
-                    "unit" to (mention.unit ?: "(none)"),
-                    "candidates" to candidateText
-                )
-            )
-
-            val first = callModel(basePrompt)
-            val firstDecision = first?.let(::parseDecision)
-            if (firstDecision != null) return Result.success(firstDecision)
-
-            val repairPrompt = renderTemplate(
-                template = repairTemplate,
-                values = mapOf(
-                    "error" to "Could not parse strict JSON keys candidateIndex/quantity/unit/multiplier.",
-                    "previous_output" to (first ?: "(empty)")
-                )
-            )
-            val second = callModel(repairPrompt)
-            val secondDecision = second?.let(::parseDecision)
-            if (secondDecision != null) return Result.success(secondDecision)
-
-            return Result.failure(IllegalStateException("Model returned unparsable output twice"))
-        }
-
-        suspend fun logFallbackEstimate(mention: ParsedMention) {
-            val zone = ZoneId.systemDefault()
-            val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
-            val snackDurationMinutes = userPreferencesRepository.nutritionSnackDurationMinutes.first().coerceAtLeast(1)
-
-            val endTime = if (askEatenTime) {
-                date.atTime(eatenTime).atZone(zone).toInstant()
-            } else if (date == LocalDate.now()) {
-                Instant.now()
-            } else {
-                date.atTime(12, 0).atZone(zone).toInstant()
-            }
-            val effectiveTime = if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
-            val mealType = mealTypeInt(effectiveTime.hour * 60 + effectiveTime.minute)
-            val durationMinutes = if (mealType == MealType.MEAL_TYPE_SNACK) snackDurationMinutes else mealDurationMinutes
-            val startTime = endTime.minusSeconds(durationMinutes * 60L)
-            val zoneOffset = zone.rules.getOffset(endTime)
-
-            val estimatedCalories = (150.0 * mention.quantity).coerceAtLeast(50.0)
-            val estimatedCarbsG = (18.0 * mention.quantity).coerceAtLeast(1.0)
-            val estimatedFatG = (7.0 * mention.quantity).coerceAtLeast(0.5)
-            val estimatedProteinG = (4.0 * mention.quantity).coerceAtLeast(0.5)
-            val estimatedSodiumG = (0.35 * mention.quantity).coerceAtLeast(0.05)
-
-            val record = NutritionRecord(
-                name = "${mention.foodPhrase} (estimated)",
-                startTime = startTime,
-                startZoneOffset = zoneOffset,
-                endTime = endTime,
-                endZoneOffset = zoneOffset,
-                mealType = mealType,
-                energy = Energy.calories(estimatedCalories),
-                totalCarbohydrate = Mass.grams(estimatedCarbsG),
-                totalFat = Mass.grams(estimatedFatG),
-                protein = Mass.grams(estimatedProteinG),
-                sodium = Mass.grams(estimatedSodiumG)
-            )
-            healthConnectManager.healthConnectClient.insertRecords(listOf(record))
-        }
-
-        aiBusy = true
-        aiMessages += AiChatMessage(fromUser = true, text = prompt)
-        aiStatus = "Understanding your food log…"
 
         if (!aiEnabled || provider == codegito.xyz.healthconnector.data.model.AiProvider.ANTHROPIC ||
             provider == codegito.xyz.healthconnector.data.model.AiProvider.GEMINI ||
@@ -1113,119 +832,179 @@ Rules:
             return
         }
 
-        aiStatus = "Parsing your food log…"
-        val mentions = aiParseMentions(prompt)
-        appendAiTrace(
-            section = "PARSE",
-            body = buildString {
-                appendLine("Input: $prompt")
-                appendLine("Detected mentions (${mentions.size}):")
-                mentions.forEachIndexed { idx, m -> appendLine("$idx) qty=${m.quantity}, unit=${m.unit ?: "(none)"}, food='${m.foodPhrase}'") }
-            }
-        )
-        if (mentions.isEmpty()) {
-            val msg = "Could not identify any food items in your message. Please try again."
-            aiStatus = msg
-            aiMessages += AiChatMessage(fromUser = false, text = msg)
-            aiBusy = false
-            return
-        }
-
-        var loggedCount = 0
-        for (mention in mentions) {
-            appendAiTrace("ITEM START", "mention='${mention.foodPhrase}', qty=${mention.quantity}, unit=${mention.unit ?: "(none)"}")
-            val candidates = findCandidates(mention.foodPhrase)
-            if (candidates.isNotEmpty()) {
-                val decisionResult = askModelForDecision(mention, candidates)
-                val decision = decisionResult.getOrNull()
-                if (decision == null) {
-                    val err = "AI response could not be parsed after retry. Please try again or adjust model settings."
-                    aiStatus = err
-                    aiMessages += AiChatMessage(fromUser = false, text = err)
-                    aiBusy = false
-                    return
-                }
-
-                val chosen = if (decision.candidateIndex in candidates.indices) candidates[decision.candidateIndex] else candidates.first()
-                val qty = (decision.quantity ?: mention.quantity).coerceAtLeast(0.1)
-                val unit = decision.unit ?: mention.unit
-                val multiplier = (decision.multiplier ?: 1.0).coerceIn(0.5, 3.0)
-
-                appendAiTrace(
-                    "MODEL DECISION",
-                    "candidateIndex=${decision.candidateIndex}, qty=${decision.quantity}, unit=${decision.unit}, multiplier=${decision.multiplier}"
-                )
-                val resolved = nutritionProvider.resolveAmount(chosen, qty, unit)
-                val grams = (resolved?.value ?: (qty * chosen.baseAmount.value)) * multiplier
-                appendAiTrace(
-                    "TOOL RESOLVE_AMOUNT",
-                    "chosen='${chosen.name}', requestedQty=$qty, requestedUnit=${unit ?: "(none)"}, resolvedGrams=${resolved?.value}, finalGrams=$grams"
-                )
-                aiStatus = "Logging ${chosen.name}…"
-                logFood(chosen, grams, navigateBack = false)
-                appendAiTrace("TOOL LOG_RECORD", "Logged '${chosen.name}' at $grams g")
-                loggedCount += 1
-                continue
-            }
-
-            aiStatus = "No direct match for '${mention.foodPhrase}', decomposing…"
-            val decomposed = aiDecomposeMention(mention.foodPhrase)
-            appendAiTrace(
-                "TOOL DECOMPOSE",
-                if (decomposed.isEmpty()) {
-                    "No decomposition produced for '${mention.foodPhrase}'"
-                } else {
-                    "No direct DB match for '${mention.foodPhrase}'. Decomposed into: " +
-                        decomposed.joinToString { "'${it.foodPhrase}'" }
-                }
+        try {
+            // Initialize FoodTools
+            val foodTools = FoodTools(
+                nutritionProvider = nutritionProvider,
+                recentsRepository = NutritionRecentsRepository(
+                    AppDatabase.getDatabase(context).recentFoodDao(),
+                    AppDatabase.getDatabase(context).foodServingHistoryDao()
+                ),
+                servingHistoryDao = AppDatabase.getDatabase(context).foodServingHistoryDao()
             )
 
-            var subLogged = 0
-            for (sub in decomposed) {
-                val subCandidates = findCandidates(sub.foodPhrase)
-                if (subCandidates.isEmpty()) continue
-                val subDecision = askModelForDecision(sub, subCandidates).getOrNull() ?: continue
-                val subChosen = if (subDecision.candidateIndex in subCandidates.indices) subCandidates[subDecision.candidateIndex] else subCandidates.first()
-                val subQty = (subDecision.quantity ?: sub.quantity).coerceAtLeast(0.1)
-                val subUnit = subDecision.unit ?: sub.unit
-                val subMultiplier = (subDecision.multiplier ?: 1.0).coerceIn(0.5, 3.0)
-                val subResolved = nutritionProvider.resolveAmount(subChosen, subQty, subUnit)
-                val subGrams = (subResolved?.value ?: (subQty * subChosen.baseAmount.value)) * subMultiplier
-                appendAiTrace("TOOL RESOLVE_AMOUNT", "decomposed='${sub.foodPhrase}' -> '${subChosen.name}', grams=$subGrams")
-                logFood(subChosen, subGrams, navigateBack = false)
-                appendAiTrace("TOOL LOG_RECORD", "Logged decomposed '${subChosen.name}' at $subGrams g")
-                subLogged += 1
-            }
-            if (subLogged > 0) {
-                loggedCount += subLogged
-                continue
+            // Set up tool registry
+            val toolRegistry = ToolRegistry.builder()
+                .tools(foodTools)
+                .build()
+
+            // Create and configure agent with event handlers
+            aiStatus = "Running AI agent with tools…"
+            val agent = AIAgent.builder()
+                .promptExecutor(simpleOpenAIExecutor(apiKey))
+                .systemPrompt(combinedSystemPrompt)
+                .llmModel(OpenAIModels.Chat.GPT4oMini)
+                .toolRegistry(toolRegistry)
+                .maxIterations(20)
+                .build()
+
+            // Run agent with user input
+            val finalText = withContext(Dispatchers.IO) {
+                agent.run(userInput)
             }
 
-            runCatching {
-                aiStatus = "No strong match for '${mention.foodPhrase}'. Logging estimate…"
-                appendAiTrace("TOOL ESTIMATE", "No DB/decomposed match for '${mention.foodPhrase}', writing estimated nutrition record")
-                logFallbackEstimate(mention)
-                loggedCount += 1
-            }.onFailure {
-                if (allowFollowup && followupRemaining > 0) {
-                    followupRemaining -= 1
-                    askFollowupQuestions = false
-                    val msg = "I couldn't match '${mention.foodPhrase}'. Please clarify that item (the DB has duplicates and odd serving names)."
-                    aiStatus = msg
-                    aiMessages += AiChatMessage(fromUser = false, text = msg)
+            if (developerModeEnabled) {
+                appendAiTrace("FINAL OUTPUT", finalText.take(800))
+            }
+            aiMessages += AiChatMessage(fromUser = false, text = finalText)
+
+            // Parse JSON code block from final output
+            fun extractLoggedItems(text: String): List<LoggedItem>? = runCatching {
+                val blockRegex = Regex("""```json\s*([\\s\\S]*?)```""")
+                val block = blockRegex.find(text)?.groupValues?.get(1) ?: return@runCatching null
+                val jsonObj = org.json.JSONObject(block)
+                val arr = jsonObj.getJSONArray("logged_items")
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    LoggedItem(
+                        food_id = o.getString("food_id"),
+                        food_name = o.optString("food_name", "?"),
+                        grams = o.getDouble("grams")
+                    )
+                }
+            }.getOrNull()
+
+            // Parse JSON from response
+            var loggedItems: List<LoggedItem>? = extractLoggedItems(finalText)
+            var parseAttempts = 0
+            while (loggedItems == null && parseAttempts < 2) {
+                parseAttempts++
+                if (developerModeEnabled) {
+                    appendAiTrace("JSON PARSE FAIL", "Attempt $parseAttempts")
+                }
+                val retryPrompt = """Your response didn't contain a valid \`\`\`json block. Please end with:
+\`\`\`json
+{"logged_items":[{"food_id":"...", "food_name":"...", "grams":0.0}]}
+\`\`\`"""
+                val retryText = withContext(Dispatchers.IO) {
+                    agent.run(retryPrompt)
+                }
+                if (developerModeEnabled) {
+                    appendAiTrace("FINAL OUTPUT (RETRY)", retryText.take(800))
+                }
+                loggedItems = extractLoggedItems(retryText)
+            }
+
+            if (loggedItems == null) {
+                val err = "AI returned invalid JSON after retries. Please check developer mode."
+                aiStatus = err
+                aiMessages += AiChatMessage(fromUser = false, text = err)
+                aiBusy = false
+                return
+            }
+
+            if (developerModeEnabled) {
+                appendAiTrace("JSON PARSE SUCCESS", "Extracted ${loggedItems.size} items")
+            }
+
+            // Log each item
+            var successCount = 0
+            for (item in loggedItems) {
+                val candidate = foodTools.candidateCache[item.food_id]
+                    ?: nutritionProvider.getFoodById(item.food_id)
+                    ?: runCatching {
+                        nutritionProvider.searchFoods(item.food_name, limit = 5).firstOrNull()
+                    }.getOrNull()
+
+                if (candidate != null) {
+                    try {
+                        aiStatus = "Logging ${candidate.name}…"
+                        logFood(candidate, item.grams, navigateBack = false)
+                        if (developerModeEnabled) {
+                            appendAiTrace("LOG RECORD", "Logged '${candidate.name}' at ${item.grams}g")
+                        }
+                        successCount++
+                    } catch (e: Exception) {
+                        if (developerModeEnabled) {
+                            appendAiTrace("LOG ERROR", e.message ?: "Unknown")
+                        }
+                    }
+                } else {
+                    // Fallback: log estimate by name
+                    try {
+                        val zone = ZoneId.systemDefault()
+                        val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
+                        val snackDurationMinutes = userPreferencesRepository.nutritionSnackDurationMinutes.first().coerceAtLeast(1)
+
+                        val endTime = if (askEatenTime) {
+                            date.atTime(eatenTime).atZone(zone).toInstant()
+                        } else if (date == LocalDate.now()) {
+                            Instant.now()
+                        } else {
+                            date.atTime(12, 0).atZone(zone).toInstant()
+                        }
+                        val effectiveTime = if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
+                        val mealType = mealTypeInt(effectiveTime.hour * 60 + effectiveTime.minute)
+                        val durationMinutes = if (mealType == MealType.MEAL_TYPE_SNACK) snackDurationMinutes else mealDurationMinutes
+                        val startTime = endTime.minusSeconds(durationMinutes * 60L)
+                        val zoneOffset = zone.rules.getOffset(endTime)
+
+                        val record = NutritionRecord(
+                            name = "${item.food_name} (estimated)",
+                            startTime = startTime,
+                            startZoneOffset = zoneOffset,
+                            endTime = endTime,
+                            endZoneOffset = zoneOffset,
+                            mealType = mealType,
+                            energy = Energy.calories((150.0 * item.grams / 100.0).coerceAtLeast(50.0)),
+                            totalCarbohydrate = Mass.grams((18.0 * item.grams / 100.0).coerceAtLeast(1.0)),
+                            totalFat = Mass.grams((7.0 * item.grams / 100.0).coerceAtLeast(0.5)),
+                            protein = Mass.grams((4.0 * item.grams / 100.0).coerceAtLeast(0.5)),
+                            sodium = Mass.grams((0.35 * item.grams / 100.0).coerceAtLeast(0.05))
+                        )
+                        healthConnectManager.healthConnectClient.insertRecords(listOf(record))
+                        successCount++
+                        if (developerModeEnabled) {
+                            appendAiTrace("LOG ESTIMATE", "Logged estimated '${item.food_name}'")
+                        }
+                    } catch (e: Exception) {
+                        if (developerModeEnabled) {
+                            appendAiTrace("ESTIMATE ERROR", e.message ?: "Unknown")
+                        }
+                    }
                 }
             }
-        }
 
-        val finalMsg = if (loggedCount > 0) {
-            "Logged $loggedCount food item(s). I queried DB candidates per item, let AI choose from serving/grams/per100g context, and applied quantity math."
-        } else {
-            "No items were logged."
+            val finalMsg = if (successCount > 0) {
+                "Logged $successCount food item(s) using AI tool calling."
+            } else {
+                "No items were successfully logged."
+            }
+            aiStatus = finalMsg
+            if (developerModeEnabled) {
+                appendAiTrace("RUN SUMMARY", "successCount=$successCount, totalItems=${loggedItems.size}")
+            }
+
+        } catch (e: Exception) {
+            val err = "AI agent error: ${e.message}"
+            aiStatus = err
+            aiMessages += AiChatMessage(fromUser = false, text = err)
+            if (developerModeEnabled) {
+                appendAiTrace("AGENT EXCEPTION", "${e.javaClass.simpleName}: ${e.message}")
+            }
+        } finally {
+            aiBusy = false
         }
-        aiStatus = finalMsg
-        appendAiTrace("RUN SUMMARY", "loggedCount=$loggedCount, followupRemaining=$followupRemaining")
-        aiMessages += AiChatMessage(fromUser = false, text = finalMsg)
-        aiBusy = false
     }
 
     val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
@@ -1310,7 +1089,7 @@ Rules:
                                 Text("Ask follow-up questions if needed (${followupRemaining} left)")
                             }
                             Button(
-                                onClick = { scope.launch { handleAiFoodLogPrompt(aiPrompt, askFollowupQuestions) } },
+                                onClick = { scope.launch { handleAiFoodLogWithTools(aiPrompt, askFollowupQuestions) } },
                                 enabled = !aiBusy && aiPrompt.isNotBlank(),
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("Send") }

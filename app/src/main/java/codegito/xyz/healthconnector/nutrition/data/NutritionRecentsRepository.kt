@@ -2,6 +2,8 @@ package codegito.xyz.healthconnector.nutrition.data
 
 import codegito.xyz.healthconnector.data.db.RecentFoodDao
 import codegito.xyz.healthconnector.data.db.RecentFoodEntity
+import codegito.xyz.healthconnector.data.db.FoodServingHistoryDao
+import codegito.xyz.healthconnector.data.db.FoodServingHistoryEntity
 import codegito.xyz.healthconnector.nutrition.domain.FoodCandidate
 import codegito.xyz.healthconnector.nutrition.domain.NutritionAmount
 import codegito.xyz.healthconnector.nutrition.domain.NutrientVector
@@ -11,7 +13,8 @@ import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 
 class NutritionRecentsRepository(
-    private val dao: RecentFoodDao
+    private val dao: RecentFoodDao,
+    private val servingHistoryDao: FoodServingHistoryDao? = null
 ) {
     fun recents(): Flow<List<Pair<FoodCandidate, NutritionAmount>>> {
         return dao.getRecents().map { rows ->
@@ -28,6 +31,7 @@ class NutritionRecentsRepository(
     }
 
     suspend fun saveRecent(candidate: FoodCandidate, amount: NutritionAmount, sourceType: String) {
+        val now = System.currentTimeMillis()
         dao.upsert(
             RecentFoodEntity(
                 foodKey = candidate.id,
@@ -38,9 +42,20 @@ class NutritionRecentsRepository(
                 proteinGrams = candidate.nutrientsPer100g.proteinGrams,
                 carbsGrams = candidate.nutrientsPer100g.carbsGrams,
                 fatGrams = candidate.nutrientsPer100g.fatGrams,
-                lastUsedAtMillis = System.currentTimeMillis(),
+                lastUsedAtMillis = now,
                 sourceType = sourceType,
                 nutrientsJson = nutrientsToJson(candidate.nutrientsPer100g)
+            )
+        )
+
+        // Also append to serving history
+        servingHistoryDao?.insert(
+            FoodServingHistoryEntity(
+                foodKey = candidate.id,
+                displayName = candidate.name,
+                quantity = amount.value,
+                unit = amount.unit.name,
+                loggedAtMillis = now
             )
         )
     }
