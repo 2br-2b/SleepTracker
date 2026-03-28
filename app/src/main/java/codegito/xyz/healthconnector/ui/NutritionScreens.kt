@@ -868,10 +868,18 @@ fun LogFoodScreen(
                 .maxIterations(maxIterations)
                 .build()
 
-            // Run agent with user input
+            // Run agent with user input + explicit format instructions
+            val userInputWithFormat = """$userInput
+
+IMPORTANT: Your response MUST end with EXACTLY this json code block:
+```json
+{"logged_items":[{"food_id":"FOOD_ID","food_name":"NAME","grams":123.45}]}
+```
+Only output food names and portions in your text. Put all food details in the json block only."""
+
             val finalText = withContext(Dispatchers.IO) {
                 try {
-                    agent.run(userInput)
+                    agent.run(userInputWithFormat)
                 } catch (e: Exception) {
                     val msg = e.message ?: "Unknown error"
                     if (msg.contains("Reached max iterations") || msg.contains("max iterations")) {
@@ -894,7 +902,7 @@ fun LogFoodScreen(
 
             // Parse JSON code block from final output
             fun extractLoggedItems(text: String): List<LoggedItem>? = runCatching {
-                val blockRegex = Regex("""```json\s*([\\s\\S]*?)```""")
+                val blockRegex = Regex("""```json\s*([\s\S]*?)```""")
                 val block = blockRegex.find(text)?.groupValues?.get(1) ?: return@runCatching null
                 val jsonObj = org.json.JSONObject(block)
                 val arr = jsonObj.getJSONArray("logged_items")
@@ -916,10 +924,13 @@ fun LogFoodScreen(
                 if (developerModeEnabled) {
                     appendAiTrace("JSON PARSE FAIL", "Attempt $parseAttempts")
                 }
-                val retryPrompt = """Your response didn't contain a valid \`\`\`json block. Please end with:
-\`\`\`json
-{"logged_items":[{"food_id":"...", "food_name":"...", "grams":0.0}]}
-\`\`\`"""
+                val retryPrompt = """CRITICAL: Your previous response did not have the required json code block. You MUST end with this exact format:
+
+```json
+{"logged_items":[{"food_id":"ACTUAL_ID","food_name":"Food Name","grams":123.45}]}
+```
+
+Use the food IDs from your search results. Do NOT use "..." or placeholders. Use REAL food IDs and amounts."""
                 val retryText = withContext(Dispatchers.IO) {
                     agent.run(retryPrompt)
                 }
