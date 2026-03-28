@@ -37,7 +37,7 @@ class FoodTools(
                 "serving: ${it.commonQuantity ?: 1.0} ${it.commonUnit ?: "serving"} ≈ ${"%.1f".format(it.gramsPerCommonUnit)}g"
             } ?: "serving: unknown"
             val labels = if (food.labels.isNotEmpty()) "; labels: ${food.labels}" else ""
-            "[$idx] ${food.name}; $serving$labels"
+            "ID=${food.id} | ${food.name}; $serving$labels"
         }.joinToString("\n")
     }
 

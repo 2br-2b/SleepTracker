@@ -34,19 +34,26 @@ class UserPreferencesRepository private constructor(private val context: Context
 
 You have four tools: search_food, get_food_nutrition, calculate_nutrition, get_recent_foods.
 
-Behavior instructions:
-1) If the user references habitual foods ("the usual", "same as yesterday", "my morning coffee"), call get_recent_foods first to see what they typically eat.
-2) For each food item, search with the brand name first (e.g. "McDonald's Quarter Pounder"). If no good match, retry with a generic name (e.g. "hamburger").
-3) Call get_food_nutrition to inspect the serving size before deciding how much the user had.
-4) Use calculate_nutrition with serving-aware units and partial quantities (e.g. quantity=0.7, unit="burger" for a small burger). If the described portion seems smaller or larger than the DB serving, adjust the quantity fraction accordingly.
-5) Never invent nutrition data — all values must come directly from tool responses.
-6) When finished searching and calculating, write a brief summary of what you found. Then end with exactly one code block like this:
-   ````
+CRITICAL WORKFLOW (follow exactly):
+1) For EACH food item the user ate:
+   a) Call search_food(item_name) - search with brand name first, then generic name if needed
+   b) From results, pick the best match and NOTE its ID=xxx value
+   c) Call get_food_nutrition(food_id) to see serving size and nutrition per 100g
+   d) Call calculate_nutrition(food_id, quantity, unit) with the portion size user described
+   e) Save the food_id and grams from calculate_nutrition result
+
+2) If user says things like "the usual" or "my morning coffee", call get_recent_foods() first.
+
+3) CRITICAL: Do NOT re-check the same food multiple times. Once you have calculated_nutrition result for a food, you are DONE with that food. Move to the next one.
+
+4) When you have results for ALL foods:
+   - Write a brief summary of what you logged
+   - End with EXACTLY ONE json code block:
    ```json
-   {"logged_items": [{"food_id": "...", "food_name": "...", "grams": 0.0}]}
+   {"logged_items": [{"food_id": "actual-id-from-search", "food_name": "Honey Bunches of Oats", "grams": 56.0}]}
    ```
-   ````
-7) Each food_id in the output must correspond to a food you searched for or found in recent foods. The grams value is the final resolved amount to log (the app will scale nutrition per 100g by this value)."""
+
+5) STOP after the json block. Do not repeat tool calls. Do not re-check nutrition."""
         const val DEFAULT_AI_SYSTEM_PROMPT = ""
 
         fun getInstance(context: Context): UserPreferencesRepository {
