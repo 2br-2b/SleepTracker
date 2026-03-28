@@ -227,14 +227,14 @@ class FoodServingHistoryDao(private val db: AppDatabase) {
 }
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
-    override fun migrate(database: SupportSQLiteDatabase) {
-        database.execSQL("ALTER TABLE recent_foods ADD COLUMN nutrientsJson TEXT NOT NULL DEFAULT '{}'")
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE recent_foods ADD COLUMN nutrientsJson TEXT NOT NULL DEFAULT '{}'")
     }
 }
 
 val MIGRATION_2_3 = object : Migration(2, 3) {
-    override fun migrate(database: SupportSQLiteDatabase) {
-        database.execSQL(
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
             """CREATE TABLE food_serving_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                 foodKey TEXT NOT NULL,

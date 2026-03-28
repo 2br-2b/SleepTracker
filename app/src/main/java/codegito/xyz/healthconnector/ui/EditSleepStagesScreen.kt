@@ -177,7 +177,7 @@ fun LazyItemScope.SleepStageEditRow(
                             scaleY = 1.02f
                         }
                 } else {
-                    Modifier.animateItemPlacement() // Requires ExperimentalFoundationApi in strict mode but usually fine
+                    Modifier.animateItem()
                 }
             ),
         colors = CardDefaults.cardColors(

@@ -13,7 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
-import codegito.xyz.healthconnector.data.db.SleepEventDatabase
+import codegito.xyz.healthconnector.data.db.AppDatabase
 import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.model.SleepLogTemplate
@@ -124,7 +124,7 @@ class SleepDataLogger : ComponentActivity() {
                                 )
                             }
                         } else if (detectionMode == SleepDetectionMode.AUTO) {
-                            val db = SleepEventDatabase.getDatabase(this@SleepDataLogger)
+                            val db = AppDatabase.getDatabase(this@SleepDataLogger)
                             // Start at bedtime window start (on the previous calendar day for overnight windows)
                             // so early bedtimes aren't cut off by a hardcoded buffer.
                             val bedtimeDay = if (bedtimeStart > rolloverHour * 60) targetDate.minusDays(1) else targetDate

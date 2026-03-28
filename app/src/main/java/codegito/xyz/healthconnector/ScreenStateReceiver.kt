@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import codegito.xyz.healthconnector.data.db.ScreenEvent
-import codegito.xyz.healthconnector.data.db.SleepEventDatabase
+import codegito.xyz.healthconnector.data.db.AppDatabase
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.data.model.SleepDetectionMode
 import kotlinx.coroutines.CoroutineScope
@@ -57,7 +57,7 @@ class ScreenStateReceiver : BroadcastReceiver() {
         val inWakeupWindow = isTimeInWindow(nowMins, wakeupStart, wakeupEnd)
 
         if (inBedtimeWindow || inWakeupWindow) {
-            val db = SleepEventDatabase.getDatabase(context)
+            val db = AppDatabase.getDatabase(context)
             db.screenEventDao().insert(ScreenEvent(timestampMillis = timestamp, type = type))
             Log.d("ScreenStateReceiver", "Inserted event $type into DB (Window active)")
             

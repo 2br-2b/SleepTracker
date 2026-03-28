@@ -155,7 +155,7 @@ fun LazyItemScope.NutrientEditRow(
                             scaleY = 1.02f
                         }
                 } else {
-                    Modifier.animateItemPlacement()
+                    Modifier.animateItem()
                 }
             ),
         colors = CardDefaults.cardColors(

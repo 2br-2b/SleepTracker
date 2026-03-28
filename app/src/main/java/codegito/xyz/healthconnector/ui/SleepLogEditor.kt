@@ -402,7 +402,7 @@ fun SleepSegmentCard(
                         readOnly = true,
                         label = { Text("Sleep stage") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                        modifier = Modifier.menuAnchor()
+                        modifier = Modifier.menuAnchor(type = MenuAnchorType.PrimaryEditable, enabled = true)
                     )
                     ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                         sleepStages.filter { it.isEnabled }.forEach { config ->

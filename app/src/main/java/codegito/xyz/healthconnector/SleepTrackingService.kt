@@ -79,7 +79,7 @@ class SleepTrackingService : Service() {
                 val prefs = UserPreferencesRepository.getInstance(this@SleepTrackingService)
                 val retentionDays = prefs.dataRetentionDays.first()
                 val threshold = System.currentTimeMillis() - retentionDays * 24 * 60 * 60 * 1000L
-                val db = codegito.xyz.healthconnector.data.db.SleepEventDatabase.getDatabase(this@SleepTrackingService)
+                val db = codegito.xyz.healthconnector.data.db.AppDatabase.getDatabase(this@SleepTrackingService)
                 db.screenEventDao().deleteOldEvents(threshold)
                 db.foodServingHistoryDao().deleteOldEntries(threshold)
                 Log.d("SleepTrackingService", "Cleaned up data older than $retentionDays days")

@@ -525,7 +525,7 @@ fun HomeScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
 
     val rolloverHour by userPreferencesRepository.rolloverHour.collectAsState(initial = 2)
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
