@@ -14,7 +14,8 @@ class FoodTools(
     private val nutritionProvider: NutritionProvider,
     private val recentsRepository: NutritionRecentsRepository,
     private val servingHistoryDao: FoodServingHistoryDao,
-    val candidateCache: MutableMap<String, FoodCandidate> = mutableMapOf()
+    val candidateCache: MutableMap<String, FoodCandidate> = mutableMapOf(),
+    var onToolCall: ((String) -> Unit)? = null  // Optional callback for logging tool calls
 ) : ToolSet {
 
     @Tool
@@ -22,6 +23,7 @@ class FoodTools(
     suspend fun search_food(
         @LLMDescription("Search query string") query: String
     ): String {
+        onToolCall?.invoke("🔧 **search_food**('$query')")
         val results = nutritionProvider.searchFoods(query, limit = 10)
 
         if (results.isEmpty()) {
@@ -44,6 +46,7 @@ class FoodTools(
     suspend fun get_food_nutrition(
         @LLMDescription("Food ID from search results") food_id: String
     ): String {
+        onToolCall?.invoke("🔧 **get_food_nutrition**('$food_id')")
         val food = candidateCache[food_id] ?: nutritionProvider.getFoodById(food_id)
 
         if (food == null) {
@@ -71,6 +74,7 @@ class FoodTools(
         @LLMDescription("Amount (in the given unit, or in grams if unit is omitted)") quantity: Double,
         @LLMDescription("Unit string from serving info, or omit/null to treat quantity as grams") unit: String? = null
     ): String {
+        onToolCall?.invoke("🔧 **calculate_nutrition**('$food_id', $quantity${if (unit != null) ", '$unit'" else ""})")
         val food = candidateCache[food_id] ?: nutritionProvider.getFoodById(food_id)
 
         if (food == null) {
@@ -108,6 +112,7 @@ class FoodTools(
     @Tool
     @LLMDescription("Returns recently logged foods with their last 10 serving sizes. Call this first when the user references habitual foods ('the usual', 'same as yesterday', 'my morning coffee'). Results are added to the candidate cache and can be used directly in the final output by food ID.")
     suspend fun get_recent_foods(): String {
+        onToolCall?.invoke("🔧 **get_recent_foods**()")
         val recents = try {
             recentsRepository.recents().first()
         } catch (e: Exception) {

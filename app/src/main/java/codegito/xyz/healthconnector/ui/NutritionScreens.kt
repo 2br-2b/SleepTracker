@@ -80,6 +80,7 @@ import ai.koog.prompt.executor.clients.openai.OpenAIModels
 import ai.koog.prompt.executor.llms.all.simpleOpenAIExecutor
 import ai.koog.agents.core.tools.annotations.LLMDescription
 import ai.koog.agents.core.tools.annotations.Tool
+import ai.koog.agents.features.eventHandler.feature.handleEvents
 import codegito.xyz.healthconnector.nutrition.ai.FoodTools
 
 private data class AiChatMessage(val fromUser: Boolean, val text: String)
@@ -837,23 +838,27 @@ fun LogFoodScreen(
             // Get iteration limit from preferences
             val maxIterations = userPreferencesRepository.aiMaxIterations.first()
 
-            // Initialize FoodTools
+            // Create and configure agent
+            aiStatus = "Running AI agent with tools…"
+
             val foodTools = FoodTools(
                 nutritionProvider = nutritionProvider,
                 recentsRepository = NutritionRecentsRepository(
                     AppDatabase.getDatabase(context).recentFoodDao(),
                     AppDatabase.getDatabase(context).foodServingHistoryDao()
                 ),
-                servingHistoryDao = AppDatabase.getDatabase(context).foodServingHistoryDao()
+                servingHistoryDao = AppDatabase.getDatabase(context).foodServingHistoryDao(),
+                onToolCall = { toolCall ->
+                    // Log tool calls in real-time to chat
+                    aiMessages += AiChatMessage(fromUser = false, text = toolCall)
+                    aiStatus = toolCall
+                }
             )
 
             // Set up tool registry
             val toolRegistry = ToolRegistry.builder()
                 .tools(foodTools)
                 .build()
-
-            // Create and configure agent
-            aiStatus = "Running AI agent with tools…"
 
             val agent = AIAgent.builder()
                 .promptExecutor(simpleOpenAIExecutor(apiKey))
