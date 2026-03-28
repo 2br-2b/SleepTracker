@@ -834,6 +834,9 @@ fun LogFoodScreen(
         }
 
         try {
+            // Get iteration limit from preferences
+            val maxIterations = userPreferencesRepository.aiMaxIterations.first()
+
             // Initialize FoodTools
             val foodTools = FoodTools(
                 nutritionProvider = nutritionProvider,
@@ -849,19 +852,34 @@ fun LogFoodScreen(
                 .tools(foodTools)
                 .build()
 
-            // Create and configure agent with event handlers
+            // Create and configure agent
             aiStatus = "Running AI agent with tools…"
+
             val agent = AIAgent.builder()
                 .promptExecutor(simpleOpenAIExecutor(apiKey))
                 .systemPrompt(combinedSystemPrompt)
                 .llmModel(OpenAIModels.Chat.GPT4oMini)
                 .toolRegistry(toolRegistry)
-                .maxIterations(20)
+                .maxIterations(maxIterations)
                 .build()
 
             // Run agent with user input
             val finalText = withContext(Dispatchers.IO) {
-                agent.run(userInput)
+                try {
+                    agent.run(userInput)
+                } catch (e: Exception) {
+                    val msg = e.message ?: "Unknown error"
+                    if (msg.contains("Reached max iterations") || msg.contains("max iterations")) {
+                        // Agent hit iteration limit; use partial response
+                        aiMessages += AiChatMessage(
+                            fromUser = false,
+                            text = "⚠️ Agent reached iteration limit ($maxIterations). Attempting to log items based on partial reasoning…"
+                        )
+                        ""  // Return empty string to indicate partial response
+                    } else {
+                        throw e
+                    }
+                }
             }
 
             if (developerModeEnabled) {

@@ -98,6 +98,7 @@ Behavior instructions:
     private val AI_BASE_SYSTEM_PROMPT_KEY       = stringPreferencesKey("ai_base_system_prompt")
     private val AI_MEMORY_NOTES_KEY             = stringPreferencesKey("ai_memory_notes")
     private val AI_FOLLOWUP_DEFAULT_COUNT_KEY   = intPreferencesKey("ai_followup_default_count")
+    private val AI_MAX_ITERATIONS_KEY           = intPreferencesKey("ai_max_iterations")
     private val AI_FEATURES_DISABLED_KEY        = booleanPreferencesKey("ai_features_disabled")
     private val AI_REASONING_EFFORT_KEY         = stringPreferencesKey("ai_reasoning_effort")
     private val NUTRITION_PAST_DATE_RANGE_DAYS_KEY  = intPreferencesKey("nutrition_past_date_range_days")
@@ -253,6 +254,9 @@ Behavior instructions:
 
     val aiFollowupDefaultCount: Flow<Int> = context.dataStore.data
         .map { prefs -> (prefs[AI_FOLLOWUP_DEFAULT_COUNT_KEY] ?: 1).coerceIn(0, 5) }
+
+    val aiMaxIterations: Flow<Int> = context.dataStore.data
+        .map { prefs -> (prefs[AI_MAX_ITERATIONS_KEY] ?: 50).coerceIn(5, 200) }
 
     val aiFeaturesDisabled: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[AI_FEATURES_DISABLED_KEY] ?: false }
@@ -501,6 +505,10 @@ Behavior instructions:
 
     suspend fun setAiFollowupDefaultCount(count: Int) {
         context.dataStore.edit { prefs -> prefs[AI_FOLLOWUP_DEFAULT_COUNT_KEY] = count.coerceIn(0, 5) }
+    }
+
+    suspend fun setAiMaxIterations(maxIterations: Int) {
+        context.dataStore.edit { prefs -> prefs[AI_MAX_ITERATIONS_KEY] = maxIterations.coerceIn(5, 200) }
     }
 
     suspend fun setAiFeaturesDisabled(disabled: Boolean) {

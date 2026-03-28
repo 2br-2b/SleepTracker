@@ -60,6 +60,7 @@ fun NetworkAiSettingsScreen(
     val aiMaxTokens by userPreferencesRepository.aiMaxTokens.collectAsState(1024)
     val aiMemoryNotes by userPreferencesRepository.aiMemoryNotes.collectAsState("")
     val aiFollowupDefaultCount by userPreferencesRepository.aiFollowupDefaultCount.collectAsState(1)
+    val aiMaxIterations by userPreferencesRepository.aiMaxIterations.collectAsState(50)
     val aiFeaturesDisabled by userPreferencesRepository.aiFeaturesDisabled.collectAsState(false)
     val aiReasoningEffort by userPreferencesRepository.aiReasoningEffort.collectAsState("none")
     val developerModeEnabled by userPreferencesRepository.developerModeEnabled.collectAsState(false)
@@ -72,11 +73,12 @@ fun NetworkAiSettingsScreen(
     var draftMaxTokensText by remember { mutableStateOf("1024") }
     var draftMemoryNotes by remember { mutableStateOf("") }
     var draftFollowupCountText by remember { mutableStateOf("1") }
+    var draftMaxIterationsText by remember { mutableStateOf("50") }
     var draftReasoningEffort by remember { mutableStateOf("none") }
     var testConsoleInput by remember { mutableStateOf("") }
     var testConsoleOutput by remember { mutableStateOf("Not tested yet") }
 
-    LaunchedEffect(aiProvider, aiModel, aiApiKey, aiBaseUrl, aiTemperature, aiMaxTokens, aiMemoryNotes, aiFollowupDefaultCount, aiReasoningEffort) {
+    LaunchedEffect(aiProvider, aiModel, aiApiKey, aiBaseUrl, aiTemperature, aiMaxTokens, aiMemoryNotes, aiFollowupDefaultCount, aiMaxIterations, aiReasoningEffort) {
         draftProvider = aiProvider
         draftModel = aiModel
         draftApiKey = aiApiKey
@@ -85,6 +87,7 @@ fun NetworkAiSettingsScreen(
         draftMaxTokensText = aiMaxTokens.toString()
         draftMemoryNotes = aiMemoryNotes
         draftFollowupCountText = aiFollowupDefaultCount.toString()
+        draftMaxIterationsText = aiMaxIterations.toString()
         draftReasoningEffort = aiReasoningEffort
     }
 
@@ -267,6 +270,14 @@ fun NetworkAiSettingsScreen(
                     )
 
                     OutlinedTextField(
+                        value = draftMaxIterationsText,
+                        onValueChange = { input -> draftMaxIterationsText = input.filter { it.isDigit() } },
+                        enabled = networkEnabled,
+                        label = { Text("AI agent max iterations (5-200, default 50)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
                         value = draftMemoryNotes,
                         onValueChange = { draftMemoryNotes = it },
                         enabled = networkEnabled,
@@ -317,6 +328,7 @@ fun NetworkAiSettingsScreen(
                                 userPreferencesRepository.setAiMaxTokens(draftMaxTokensText.toIntOrNull() ?: 1024)
                                 userPreferencesRepository.setAiMemoryNotes(draftMemoryNotes)
                                 userPreferencesRepository.setAiFollowupDefaultCount(draftFollowupCountText.toIntOrNull() ?: 1)
+                                userPreferencesRepository.setAiMaxIterations(draftMaxIterationsText.toIntOrNull() ?: 50)
                                 userPreferencesRepository.setAiReasoningEffort(draftReasoningEffort)
                             }
                         },
