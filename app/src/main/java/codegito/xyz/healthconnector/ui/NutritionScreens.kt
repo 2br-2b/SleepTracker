@@ -916,32 +916,62 @@ Only output food names and portions in your text. Put all food details in the js
                 }
             }.getOrNull()
 
-            // Parse JSON from response
+            // Parse JSON from response with 3 extract-retry cycles
             var loggedItems: List<LoggedItem>? = extractLoggedItems(finalText)
-            var parseAttempts = 0
-            while (loggedItems == null && parseAttempts < 2) {
-                parseAttempts++
+
+            // Cycle through extract-retry-extract 3 times
+            for (cycle in 1..3) {
+                if (loggedItems != null) break
+
                 if (developerModeEnabled) {
-                    appendAiTrace("JSON PARSE FAIL", "Attempt $parseAttempts")
+                    appendAiTrace("JSON PARSE FAIL", "Cycle $cycle")
                 }
-                val retryPrompt = """CRITICAL: Your previous response did not have the required json code block. You MUST end with this exact format:
+
+                // Step 1: JSON-only extraction (no conversation thread)
+                val jsonOnlyPrompt = """Your previous response did not parse. Extract and output ONLY this json, nothing else:
+
+```json
+{"logged_items":[{"food_id":"ID","food_name":"Name","grams":123.45}]}
+```
+
+Look at your previous work and fill in the actual food IDs, names, and gram amounts from your tool results. Output ONLY the json code block."""
+                val jsonOnlyText = withContext(Dispatchers.IO) {
+                    try {
+                        agent.run(jsonOnlyPrompt)
+                    } catch (e: Exception) {
+                        ""
+                    }
+                }
+                if (developerModeEnabled && jsonOnlyText.isNotBlank()) {
+                    appendAiTrace("JSON-ONLY EXTRACTION (CYCLE $cycle)", jsonOnlyText.take(400))
+                }
+                loggedItems = extractLoggedItems(jsonOnlyText)
+
+                if (loggedItems != null) break
+
+                // Step 2: Conversation retry (within agent thread)
+                val conversationRetryPrompt = """Your json block didn't parse correctly. Retry by ending your response with:
 
 ```json
 {"logged_items":[{"food_id":"ACTUAL_ID","food_name":"Food Name","grams":123.45}]}
 ```
 
-Use the food IDs from your search results. Do NOT use "..." or placeholders. Use REAL food IDs and amounts."""
+Use the REAL food IDs from your search results. No "..." or generic placeholders."""
                 val retryText = withContext(Dispatchers.IO) {
-                    agent.run(retryPrompt)
+                    try {
+                        agent.run(conversationRetryPrompt)
+                    } catch (e: Exception) {
+                        ""
+                    }
                 }
-                if (developerModeEnabled) {
-                    appendAiTrace("FINAL OUTPUT (RETRY)", retryText.take(800))
+                if (developerModeEnabled && retryText.isNotBlank()) {
+                    appendAiTrace("CONVERSATION RETRY (CYCLE $cycle)", retryText.take(400))
                 }
                 loggedItems = extractLoggedItems(retryText)
             }
 
             if (loggedItems == null) {
-                val err = "AI returned invalid JSON after retries. Please check developer mode."
+                val err = "AI returned invalid JSON after 3 extract-retry cycles. Please check developer mode."
                 aiStatus = err
                 aiMessages += AiChatMessage(fromUser = false, text = err)
                 aiBusy = false
