@@ -139,6 +139,7 @@ CRITICAL RULES:
     private val NUTRIENT_CONFIG_JSON_KEY        = stringPreferencesKey("nutrient_config_json")
     private val NUTRITION_UNIT_SYSTEM_KEY       = stringPreferencesKey("nutrition_unit_system")
     private val NUTRITION_APPLY_FILTER_TO_SEARCH_KEY = booleanPreferencesKey("nutrition_apply_filter_to_search")
+    private val AI_FOOD_LOGGING_RETRY_CYCLES_KEY = intPreferencesKey("ai_food_logging_retry_cycles")
     private val WEIGHT_TRACKING_ENABLED_KEY         = booleanPreferencesKey("weight_tracking_enabled")
     private val EXERCISE_TRACKING_ENABLED_KEY       = booleanPreferencesKey("exercise_tracking_enabled")
     private val EXERCISE_AGE_KEY                    = intPreferencesKey("exercise_age")
@@ -373,6 +374,9 @@ CRITICAL RULES:
 
     val nutritionApplyNutrientFilterToSearch: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] ?: false }
+
+    val aiFoodLoggingRetryCycles: Flow<Int> = context.dataStore.data
+        .map { prefs -> (prefs[AI_FOOD_LOGGING_RETRY_CYCLES_KEY] ?: 3).coerceIn(1, 10) }
 
     // ── Exercise flows ────────────────────────────────────────────────────────
 
@@ -614,6 +618,10 @@ CRITICAL RULES:
 
     suspend fun setNutritionApplyNutrientFilterToSearch(apply: Boolean) {
         context.dataStore.edit { prefs -> prefs[NUTRITION_APPLY_FILTER_TO_SEARCH_KEY] = apply }
+    }
+
+    suspend fun setAiFoodLoggingRetryCycles(cycles: Int) {
+        context.dataStore.edit { prefs -> prefs[AI_FOOD_LOGGING_RETRY_CYCLES_KEY] = cycles.coerceIn(1, 10) }
     }
 
     // ── Global unit system setter ─────────────────────────────────────────────

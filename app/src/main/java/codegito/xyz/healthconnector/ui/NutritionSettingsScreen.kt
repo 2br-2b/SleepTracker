@@ -58,6 +58,8 @@ fun NutritionSettingsScreen(
     val mealDuration by userPreferencesRepository.nutritionMealDurationMinutes.collectAsState(initial = 30)
     val snackDuration by userPreferencesRepository.nutritionSnackDurationMinutes.collectAsState(initial = 10)
     val applyFilterToSearch by userPreferencesRepository.nutritionApplyNutrientFilterToSearch.collectAsState(initial = false)
+    val aiFoodLoggingRetryCycles by userPreferencesRepository.aiFoodLoggingRetryCycles.collectAsState(initial = 3)
+    val effectiveGlobalAiEnabled by userPreferencesRepository.effectiveGlobalAiEnabled.collectAsState(initial = true)
 
     var datasetRecordCount by remember { mutableIntStateOf(-1) }
     var isBuildingDataset by remember { mutableStateOf(false) }
@@ -344,6 +346,35 @@ fun NutritionSettingsScreen(
                         )
                     }
                 )
+
+                // AI Food Logging Retry Cycles (only show if AI is enabled)
+                if (effectiveGlobalAiEnabled) {
+                    ListItem(
+                        headlineContent = { Text("AI food logging retry cycles") },
+                        supportingContent = {
+                            Text("Number of extract-retry cycles when parsing AI responses (1-10, default 3)")
+                        },
+                        trailingContent = {
+                            var cyclesText by remember { mutableStateOf(aiFoodLoggingRetryCycles.toString()) }
+                            LaunchedEffect(aiFoodLoggingRetryCycles) {
+                                cyclesText = aiFoodLoggingRetryCycles.toString()
+                            }
+                            OutlinedTextField(
+                                value = cyclesText,
+                                onValueChange = { text ->
+                                    cyclesText = text
+                                    text.toIntOrNull()?.let { cycles ->
+                                        if (cycles in 1..10) {
+                                            scope.launch { userPreferencesRepository.setAiFoodLoggingRetryCycles(cycles) }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.width(70.dp),
+                                singleLine = true
+                            )
+                        }
+                    )
+                }
 
                 HorizontalDivider()
 

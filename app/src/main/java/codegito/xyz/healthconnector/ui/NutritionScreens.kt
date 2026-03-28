@@ -835,8 +835,9 @@ fun LogFoodScreen(
         }
 
         try {
-            // Get iteration limit from preferences
+            // Get iteration limit and retry cycles from preferences
             val maxIterations = userPreferencesRepository.aiMaxIterations.first()
+            val retryCycles = userPreferencesRepository.aiFoodLoggingRetryCycles.first()
 
             // Create and configure agent
             aiStatus = "Running AI agent with tools…"
@@ -916,11 +917,11 @@ Only output food names and portions in your text. Put all food details in the js
                 }
             }.getOrNull()
 
-            // Parse JSON from response with 3 extract-retry cycles
+            // Parse JSON from response with configurable extract-retry cycles
             var loggedItems: List<LoggedItem>? = extractLoggedItems(finalText)
 
-            // Cycle through extract-retry-extract 3 times
-            for (cycle in 1..3) {
+            // Cycle through extract-retry-extract N times (based on user preference)
+            for (cycle in 1..retryCycles) {
                 if (loggedItems != null) break
 
                 if (developerModeEnabled) {
@@ -971,7 +972,7 @@ Use the REAL food IDs from your search results. No "..." or generic placeholders
             }
 
             if (loggedItems == null) {
-                val err = "AI returned invalid JSON after 3 extract-retry cycles. Please check developer mode."
+                val err = "AI returned invalid JSON after $retryCycles extract-retry cycles. Please check developer mode."
                 aiStatus = err
                 aiMessages += AiChatMessage(fromUser = false, text = err)
                 aiBusy = false
