@@ -236,8 +236,8 @@ fun LogExerciseSheet(
 
     var selectedType by remember { mutableStateOf(sortedExerciseTypes.first()) }
     var selectedDate by remember { mutableStateOf(LocalDate.now()) }
-    var startTime by remember { mutableStateOf(LocalTime.now().withSecond(0).withNano(0)) }
-    var endTime by remember { mutableStateOf(LocalTime.now().plusHours(1).withSecond(0).withNano(0)) }
+    var startTime by remember { mutableStateOf(LocalTime.now().minusHours(1).withSecond(0).withNano(0)) }
+    var endTime by remember { mutableStateOf(LocalTime.now().withSecond(0).withNano(0)) }
     var distanceInput by remember { mutableStateOf("") }
     var sets by remember { mutableStateOf(listOf(ExerciseSet(reps = 10))) }
     var isSaving by remember { mutableStateOf(false) }
