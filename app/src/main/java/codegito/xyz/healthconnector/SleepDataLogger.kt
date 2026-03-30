@@ -1,5 +1,6 @@
 package codegito.xyz.healthconnector
 
+import android.app.NotificationManager
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
@@ -268,6 +269,9 @@ class SleepDataLogger : ComponentActivity() {
 
                 if (result.isSuccess) {
                     Toast.makeText(this@SleepDataLogger, "Saved sleep data", Toast.LENGTH_SHORT).show()
+                    // Dismiss any pending sleep reminder notification now that sleep has been logged
+                    val notificationManager = getSystemService(NotificationManager::class.java)
+                    notificationManager.cancel(NotificationHelper.REMINDER_NOTIFICATION_ID)
                     if (!isNap) {
                         val mode = userPreferencesRepository.sleepDetectionMode.first()
                         if (mode == SleepDetectionMode.AUTO) {

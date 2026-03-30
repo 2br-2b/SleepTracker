@@ -78,10 +78,19 @@ object NotificationHelper {
 
     fun scheduleDeadlineAlarm(context: Context, wakeupEndMinutes: Int) {
         val alarmManager = context.getSystemService(android.app.AlarmManager::class.java)
+
+        // Compute when the alarm will actually fire before deriving targetDate from it
+        val now = java.time.LocalDateTime.now()
+        var deadline = LocalDate.now().atTime(wakeupEndMinutes / 60, wakeupEndMinutes % 60)
+        if (now.isAfter(deadline)) {
+            deadline = deadline.plusDays(1)
+        }
+
+        // targetDate is the night we are tracking: the calendar day before the alarm fires
+        val targetDate = deadline.toLocalDate().minusDays(1)
+
         val intent = Intent(context, ReminderReceiver::class.java).apply {
             putExtra("reminder_type", "DEADLINE")
-            // Target date is yesterday (the night we are logging for)
-            val targetDate = LocalDate.now().minusDays(1)
             putExtra("target_date_millis", targetDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
         }
 
@@ -91,15 +100,6 @@ object NotificationHelper {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        val now = java.time.LocalDateTime.now()
-        var deadline = LocalDate.now().atTime(wakeupEndMinutes / 60, wakeupEndMinutes % 60)
-        
-        if (now.isAfter(deadline)) {
-            // If already passed today, schedule for tomorrow (unlikely to be useful for *last* night, 
-            // but keeps the cycle going)
-            deadline = deadline.plusDays(1)
-        }
 
         scheduleWakeupAlarm(
             alarmManager,
