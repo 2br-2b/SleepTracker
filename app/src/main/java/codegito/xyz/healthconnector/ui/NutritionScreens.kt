@@ -718,21 +718,20 @@ fun LogFoodScreen(
         }
     }
 
-    suspend fun logFood(candidate: FoodCandidate, grams: Double, navigateBack: Boolean = true) {
+    suspend fun logFood(candidate: FoodCandidate, grams: Double, navigateBack: Boolean = true, eatenTimeOverride: LocalTime? = null) {
         isLogging = true
         val zone = ZoneId.systemDefault()
         val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
         val snackDurationMinutes = userPreferencesRepository.nutritionSnackDurationMinutes.first().coerceAtLeast(1)
 
-        val endTime = if (askEatenTime) {
-            date.atTime(eatenTime).atZone(zone).toInstant()
-        } else if (date == LocalDate.now()) {
-            Instant.now()
-        } else {
-            date.atTime(12, 0).atZone(zone).toInstant()
+        val endTime = when {
+            eatenTimeOverride != null -> date.atTime(eatenTimeOverride).atZone(zone).toInstant()
+            askEatenTime -> date.atTime(eatenTime).atZone(zone).toInstant()
+            date == LocalDate.now() -> Instant.now()
+            else -> date.atTime(12, 0).atZone(zone).toInstant()
         }
 
-        val effectiveTime = if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
+        val effectiveTime = eatenTimeOverride ?: if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
         val mealType = mealTypeInt(effectiveTime.hour * 60 + effectiveTime.minute)
         val durationMinutes = if (mealType == MealType.MEAL_TYPE_SNACK) snackDurationMinutes
                               else mealDurationMinutes
@@ -800,7 +799,7 @@ fun LogFoodScreen(
 
 
     suspend fun handleAiFoodLogWithTools(userInput: String, allowFollowup: Boolean) {
-        data class LoggedItem(val food_id: String, val food_name: String, val grams: Double)
+        data class LoggedItem(val food_id: String, val food_name: String, val grams: Double, val eating_time: String? = null)
 
         aiBusy = true
         aiMessages += AiChatMessage(fromUser = true, text = userInput)
@@ -816,6 +815,27 @@ fun LogFoodScreen(
         val combinedSystemPrompt = listOf(baseSystemPrompt, userSystemPrompt)
             .filter { it.isNotBlank() }
             .joinToString("\n\n")
+
+        // Build time context to inject into the prompt
+        val zone = ZoneId.systemDefault()
+        val nowTime = LocalTime.now(zone)
+        val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+        val currentTimeStr = nowTime.format(timeFormatter)
+        val isToday = date == LocalDate.now()
+        val bfRange = userPreferencesRepository.nutritionBreakfastRange.first()
+        val luRange = userPreferencesRepository.nutritionLunchRange.first()
+        val diRange = userPreferencesRepository.nutritionDinnerRange.first()
+        fun minutesToHHMM(m: Int) = "%02d:%02d".format(m / 60, m % 60)
+        val timeContext = buildString {
+            appendLine("[Context]")
+            appendLine("Current time: $currentTimeStr (${if (isToday) "today" else "past date: $date"})")
+            appendLine("Meal windows — Breakfast: ${minutesToHHMM(bfRange.startMinutes)}–${minutesToHHMM(bfRange.endMinutes)}, Lunch: ${minutesToHHMM(luRange.startMinutes)}–${minutesToHHMM(luRange.endMinutes)}, Dinner: ${minutesToHHMM(diRange.startMinutes)}–${minutesToHHMM(diRange.endMinutes)}")
+            if (isToday) {
+                appendLine("⚠ Health Connect requires eating_time to be in the PAST. Do NOT use a time after $currentTimeStr.")
+            } else {
+                appendLine("Logging for a past date. Set eating_time to a reasonable time for that day (e.g. within a meal window).")
+            }
+        }
 
         if (!aiEnabled || provider == codegito.xyz.healthconnector.data.model.AiProvider.ANTHROPIC ||
             provider == codegito.xyz.healthconnector.data.model.AiProvider.GEMINI ||
@@ -869,12 +889,13 @@ fun LogFoodScreen(
                 .maxIterations(maxIterations)
                 .build()
 
-            // Run agent with user input + explicit format instructions
-            val userInputWithFormat = """$userInput
+            // Run agent with user input + time context + explicit format instructions
+            val userInputWithFormat = """$timeContext
+$userInput
 
-IMPORTANT: Your response MUST end with EXACTLY this json code block:
+IMPORTANT: Your response MUST end with EXACTLY this json code block (include eating_time as HH:MM):
 ```json
-{"logged_items":[{"food_id":"FOOD_ID","food_name":"NAME","grams":123.45}]}
+{"logged_items":[{"food_id":"FOOD_ID","food_name":"NAME","grams":123.45,"eating_time":"HH:MM"}]}
 ```
 Only output food names and portions in your text. Put all food details in the json block only."""
 
@@ -912,7 +933,8 @@ Only output food names and portions in your text. Put all food details in the js
                     LoggedItem(
                         food_id = o.getString("food_id"),
                         food_name = o.optString("food_name", "?"),
-                        grams = o.getDouble("grams")
+                        grams = o.getDouble("grams"),
+                        eating_time = o.optString("eating_time").takeIf { it.isNotBlank() }
                     )
                 }
             }.getOrNull()
@@ -932,10 +954,10 @@ Only output food names and portions in your text. Put all food details in the js
                 val jsonOnlyPrompt = """Your previous response did not parse. Extract and output ONLY this json, nothing else:
 
 ```json
-{"logged_items":[{"food_id":"ID","food_name":"Name","grams":123.45}]}
+{"logged_items":[{"food_id":"ID","food_name":"Name","grams":123.45,"eating_time":"HH:MM"}]}
 ```
 
-Look at your previous work and fill in the actual food IDs, names, and gram amounts from your tool results. Output ONLY the json code block."""
+Look at your previous work and fill in the actual food IDs, names, gram amounts, and eating times from your tool results. Output ONLY the json code block."""
                 val jsonOnlyText = withContext(Dispatchers.IO) {
                     try {
                         agent.run(jsonOnlyPrompt)
@@ -954,10 +976,10 @@ Look at your previous work and fill in the actual food IDs, names, and gram amou
                 val conversationRetryPrompt = """Your json block didn't parse correctly. Retry by ending your response with:
 
 ```json
-{"logged_items":[{"food_id":"ACTUAL_ID","food_name":"Food Name","grams":123.45}]}
+{"logged_items":[{"food_id":"ACTUAL_ID","food_name":"Food Name","grams":123.45,"eating_time":"HH:MM"}]}
 ```
 
-Use the REAL food IDs from your search results. No "..." or generic placeholders."""
+Use the REAL food IDs from your search results. Include eating_time in HH:MM (24-hour) format. No "..." or generic placeholders."""
                 val retryText = withContext(Dispatchers.IO) {
                     try {
                         agent.run(conversationRetryPrompt)
@@ -992,12 +1014,19 @@ Use the REAL food IDs from your search results. No "..." or generic placeholders
                         nutritionProvider.searchFoods(item.food_name, limit = 5).firstOrNull()
                     }.getOrNull()
 
+                // Parse AI-suggested eating time; cap to now if today and in the future
+                val aiEatingTime: LocalTime? = item.eating_time?.let { timeStr ->
+                    runCatching { LocalTime.parse(timeStr, DateTimeFormatter.ofPattern("HH:mm")) }.getOrNull()
+                }?.let { parsedTime ->
+                    if (isToday && parsedTime.isAfter(nowTime)) nowTime else parsedTime
+                }
+
                 if (candidate != null) {
                     try {
                         aiStatus = "Logging ${candidate.name}…"
-                        logFood(candidate, item.grams, navigateBack = false)
+                        logFood(candidate, item.grams, navigateBack = false, eatenTimeOverride = aiEatingTime)
                         if (developerModeEnabled) {
-                            appendAiTrace("LOG RECORD", "Logged '${candidate.name}' at ${item.grams}g")
+                            appendAiTrace("LOG RECORD", "Logged '${candidate.name}' at ${item.grams}g, eating_time=${aiEatingTime ?: "default"}")
                         }
                         successCount++
                     } catch (e: Exception) {
@@ -1008,22 +1037,21 @@ Use the REAL food IDs from your search results. No "..." or generic placeholders
                 } else {
                     // Fallback: log estimate by name
                     try {
-                        val zone = ZoneId.systemDefault()
+                        val fallbackZone = ZoneId.systemDefault()
                         val mealDurationMinutes = userPreferencesRepository.nutritionMealDurationMinutes.first().coerceAtLeast(1)
                         val snackDurationMinutes = userPreferencesRepository.nutritionSnackDurationMinutes.first().coerceAtLeast(1)
 
-                        val endTime = if (askEatenTime) {
-                            date.atTime(eatenTime).atZone(zone).toInstant()
-                        } else if (date == LocalDate.now()) {
-                            Instant.now()
-                        } else {
-                            date.atTime(12, 0).atZone(zone).toInstant()
+                        val endTime = when {
+                            aiEatingTime != null -> date.atTime(aiEatingTime).atZone(fallbackZone).toInstant()
+                            askEatenTime -> date.atTime(eatenTime).atZone(fallbackZone).toInstant()
+                            date == LocalDate.now() -> Instant.now()
+                            else -> date.atTime(12, 0).atZone(fallbackZone).toInstant()
                         }
-                        val effectiveTime = if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, zone)
+                        val effectiveTime = aiEatingTime ?: if (askEatenTime) eatenTime else LocalTime.ofInstant(endTime, fallbackZone)
                         val mealType = mealTypeInt(effectiveTime.hour * 60 + effectiveTime.minute)
                         val durationMinutes = if (mealType == MealType.MEAL_TYPE_SNACK) snackDurationMinutes else mealDurationMinutes
                         val startTime = endTime.minusSeconds(durationMinutes * 60L)
-                        val zoneOffset = zone.rules.getOffset(endTime)
+                        val zoneOffset = fallbackZone.rules.getOffset(endTime)
 
                         val record = NutritionRecord(
                             name = "${item.food_name} (estimated)",

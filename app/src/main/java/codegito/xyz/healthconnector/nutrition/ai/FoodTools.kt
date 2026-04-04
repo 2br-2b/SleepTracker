@@ -110,6 +110,23 @@ class FoodTools(
     }
 
     @Tool
+    @LLMDescription("Simple calculator for add, subtract, multiply, or divide operations. Use this to avoid arithmetic errors when scaling portions or converting units.")
+    suspend fun calculate(
+        @LLMDescription("Operation: 'add', 'subtract', 'multiply', or 'divide'") operation: String,
+        @LLMDescription("First number") a: Double,
+        @LLMDescription("Second number") b: Double
+    ): String {
+        onToolCall?.invoke("🔧 **calculate**($a $operation $b)")
+        return when (operation.lowercase().trim()) {
+            "add"      -> "Result: ${a + b}"
+            "subtract" -> "Result: ${a - b}"
+            "multiply" -> "Result: ${a * b}"
+            "divide"   -> if (b == 0.0) "Error: division by zero" else "Result: ${a / b}"
+            else       -> "Error: unknown operation '$operation'. Use add, subtract, multiply, or divide."
+        }
+    }
+
+    @Tool
     @LLMDescription("Returns recently logged foods with their last 10 serving sizes. Call this first when the user references habitual foods ('the usual', 'same as yesterday', 'my morning coffee'). Results are added to the candidate cache and can be used directly in the final output by food ID.")
     suspend fun get_recent_foods(): String {
         onToolCall?.invoke("🔧 **get_recent_foods**()")
