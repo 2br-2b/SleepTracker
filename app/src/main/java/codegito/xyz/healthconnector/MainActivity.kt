@@ -554,16 +554,28 @@ fun HomeScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    val today = LocalDate.now()
+    val zoneId = ZoneId.systemDefault()
+    val todayOvernightLogged = remember(sleepSessions, rolloverHour) {
+        val startBound = today.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
+        val endBound = today.plusDays(1).atTime(rolloverHour, 0).atZone(zoneId).toInstant()
+        sleepSessions.any { session ->
+            session.startTime.isAfter(startBound) && session.startTime.isBefore(endBound)
+                    && session.title != SleepDataLogger.NAP_TITLE
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Sleep Tracker") })
         },
         floatingActionButton = {
             if (hasSleepWrite == true) {
+                val fabLabel = if (!todayOvernightLogged) "Log Today's Sleep" else "Add Nap"
                 ExtendedFloatingActionButton(
-                    text = { Text("Add Nap") },
-                    icon = { Icon(Icons.Default.Add, contentDescription = "Add Nap") },
-                    onClick = { onOpenSession(LocalDate.now(), null, true) }
+                    text = { Text(fabLabel) },
+                    icon = { Icon(Icons.Default.Add, contentDescription = fabLabel) },
+                    onClick = { onOpenSession(LocalDate.now(), null, todayOvernightLogged) }
                 )
             }
         }
@@ -614,9 +626,7 @@ fun HomeScreen(
                 }
             }
 
-            val today = LocalDate.now()
             val weekDays = (0 until historyDisplayDays).map { today.minusDays(it.toLong()) }
-            val zoneId = ZoneId.systemDefault()
 
             LazyColumn(
                 contentPadding = PaddingValues(16.dp),
