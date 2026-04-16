@@ -444,9 +444,17 @@ fun MainApp(
                     onPermissions = { navController.navigate(Screen.Permissions.route) },
                     onSleepSettings = { navController.navigate(Screen.SleepSettings.route) },
                     onNutritionSettings = { navController.navigate(Screen.NutritionSettings.route) },
+                    onWeightSettings = { navController.navigate(Screen.WeightSettings.route) },
                     onExerciseSettings = { navController.navigate(Screen.ExerciseSettings.route) },
                     onNetworkAiSettings = { navController.navigate(Screen.NetworkAiSettings.route) },
                     onDeveloperPromptsSettings = { navController.navigate(Screen.DeveloperPromptsSettings.route) }
+                )
+            }
+            composable(Screen.WeightSettings.route) {
+                WeightSettingsScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() },
+                    onPermissions = { navController.navigate(Screen.Permissions.route) }
                 )
             }
             composable(Screen.Permissions.route) {
@@ -940,6 +948,7 @@ sealed class Screen(val route: String) {
     object SleepSettings : Screen("sleep_settings")
     object NutritionSettings : Screen("nutrition_settings")
     object ExerciseSettings : Screen("exercise_settings")
+    object WeightSettings : Screen("weight_settings")
     object NetworkAiSettings : Screen("network_ai_settings")
     object DeveloperPromptsSettings : Screen("developer_prompts_settings")
     object EditSleepStages : Screen("edit_sleep_stages")

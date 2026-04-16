@@ -1,13 +1,11 @@
 package codegito.xyz.healthconnector.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -27,20 +25,12 @@ fun ExerciseSettingsScreen(
     val scope = rememberCoroutineScope()
 
     val exerciseEnabled by userPreferencesRepository.exerciseEnabled.collectAsState(initial = false)
-    val weightEnabled by userPreferencesRepository.weightEnabled.collectAsState(initial = false)
-    val weightUnit by userPreferencesRepository.weightUnit.collectAsState(initial = codegito.xyz.healthconnector.weight.domain.WeightUnit.LBS)
     val exerciseAge by userPreferencesRepository.exerciseAge.collectAsState(initial = null)
     val exerciseSex by userPreferencesRepository.exerciseSex.collectAsState(initial = null)
-    val defaultWeightKg by userPreferencesRepository.exerciseDefaultWeightKg.collectAsState(initial = 70.0)
     val developerMode by userPreferencesRepository.developerModeEnabled.collectAsState(initial = false)
     val epocMultiplier by userPreferencesRepository.exerciseEpocMultiplier.collectAsState(initial = 1.07)
 
     var ageInput by remember(exerciseAge) { mutableStateOf(exerciseAge?.toString() ?: "") }
-    var weightInput by remember(defaultWeightKg, weightUnit) {
-        val display = if (weightUnit == codegito.xyz.healthconnector.weight.domain.WeightUnit.KG) defaultWeightKg
-                      else defaultWeightKg * 2.20462
-        mutableStateOf("%.1f".format(display))
-    }
     var epocInput by remember(epocMultiplier) { mutableStateOf("%.2f".format(epocMultiplier)) }
 
     Scaffold(
@@ -63,35 +53,17 @@ fun ExerciseSettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            // ── Feature toggles ──────────────────────────────────────────
-            SectionHeader("Features")
-
-            ListItem(
-                headlineContent = { Text("Weight tracking") },
-                supportingContent = { Text("Show a weight tab and log body weight to Health Connect. Weight data is always read from Health Connect for calorie estimation, even when this is off.") },
-                trailingContent = {
-                    Switch(
-                        checked = weightEnabled,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setWeightEnabled(it) } }
-                    )
-                }
-            )
-
-            ListItem(
-                headlineContent = { Text("Exercise tracking") },
-                supportingContent = { Text("Show an exercise tab and log workouts to Health Connect") },
-                trailingContent = {
-                    Switch(
-                        checked = exerciseEnabled,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setExerciseEnabled(it) } }
-                    )
-                }
+            // ── Feature toggle ────────────────────────────────────────────
+            SettingsSwitchRow(
+                title = "Exercise tracking",
+                subtitle = "Show an exercise tab and log workouts to Health Connect",
+                checked = exerciseEnabled,
+                onCheckedChange = { scope.launch { userPreferencesRepository.setExerciseEnabled(it) } }
             )
 
             HorizontalDivider()
 
-            // ── Calorie estimation inputs ─────────────────────────────────
-            // Note: unit system (metric/imperial) is a global setting — do NOT add a per-feature unit toggle here.
+            // ── Calorie estimation ────────────────────────────────────────
             SectionHeader("Calorie Estimation")
 
             Text(
@@ -110,14 +82,11 @@ fun ExerciseSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 trailingIcon = {
                     TextButton(onClick = {
-                        scope.launch {
-                            userPreferencesRepository.setExerciseAge(ageInput.toIntOrNull())
-                        }
+                        scope.launch { userPreferencesRepository.setExerciseAge(ageInput.toIntOrNull()) }
                     }) { Text("Save") }
                 }
             )
 
-            // Sex selector
             ListItem(
                 headlineContent = { Text("Sex — optional") },
                 supportingContent = { Text("Used in HR-based calorie formula") },
@@ -142,37 +111,18 @@ fun ExerciseSettingsScreen(
                 }
             )
 
-            OutlinedTextField(
-                value = weightInput,
-                onValueChange = { weightInput = it },
-                label = { Text("Default body weight (${if (weightUnit == codegito.xyz.healthconnector.weight.domain.WeightUnit.KG) "kg" else "lbs"})") },
-                supportingText = { Text("Used as fallback when no weight is logged in Health Connect") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                trailingIcon = {
-                    TextButton(onClick = {
-                        val value = weightInput.toDoubleOrNull() ?: return@TextButton
-                        val kg = if (weightUnit == codegito.xyz.healthconnector.weight.domain.WeightUnit.KG) value else value / 2.20462
-                        scope.launch { userPreferencesRepository.setExerciseDefaultWeightKg(kg) }
-                    }) { Text("Save") }
-                }
-            )
-
             HorizontalDivider()
 
-            // ── Permissions link ──────────────────────────────────────────
+            // ── Permissions ───────────────────────────────────────────────
             SectionHeader("Permissions")
 
-            ListItem(
-                headlineContent = { Text("Permissions") },
-                supportingContent = { Text("Grant Health Connect access for weight and exercise") },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth()
-                    .clickable { onPermissions() }
+            SettingsNavRow(
+                title = "Permissions",
+                subtitle = "Grant Health Connect access for exercise",
+                onClick = onPermissions
             )
 
-            // ── Developer / advanced ──────────────────────────────────────
+            // ── Advanced (developer only) ─────────────────────────────────
             if (developerMode) {
                 HorizontalDivider()
                 SectionHeader("Advanced (Developer)")
@@ -196,4 +146,3 @@ fun ExerciseSettingsScreen(
         }
     }
 }
-

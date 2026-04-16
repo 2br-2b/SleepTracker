@@ -1,12 +1,10 @@
 package codegito.xyz.healthconnector.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -248,57 +246,37 @@ fun SleepSettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)
             )
-            ListItem(
-                headlineContent = { Text("First Unlock Reminder",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)) },
-                supportingContent = { Text("Fires after your awakening threshold passes since you first pick up your phone.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)) },
-                trailingContent = {
-                    Switch(
-                        checked = reminderFirstUnlock,
-                        enabled = sleepEnabled,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderFirstUnlockEnabled(it) } }
-                    )
-                }
+            SettingsSwitchRow(
+                title = "First Unlock Reminder",
+                subtitle = "Fires after your awakening threshold passes since you first pick up your phone",
+                checked = reminderFirstUnlock,
+                enabled = sleepEnabled,
+                onCheckedChange = { scope.launch { userPreferencesRepository.setReminderFirstUnlockEnabled(it) } }
             )
-            ListItem(
-                headlineContent = { Text("Deadline Reminder (Loud)",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)) },
-                supportingContent = { Text("Alerts you at the end of the wakeup window if you've been active.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)) },
-                trailingContent = {
-                    Switch(
-                        checked = reminderDeadlineLoud,
-                        enabled = sleepEnabled,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineLoudEnabled(it) } }
-                    )
-                }
+            SettingsSwitchRow(
+                title = "Deadline Reminder (Loud)",
+                subtitle = "Alerts you at the end of the wakeup window if you've been active",
+                checked = reminderDeadlineLoud,
+                enabled = sleepEnabled,
+                onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineLoudEnabled(it) } }
             )
-            ListItem(
-                headlineContent = { Text("Deadline Reminder (Silent)",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)) },
-                supportingContent = { Text("Silent notification at the end of the window if you haven't unlocked your phone.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)) },
-                trailingContent = {
-                    Switch(
-                        checked = reminderDeadlineSilent,
-                        enabled = sleepEnabled,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineSilentEnabled(it) } }
-                    )
-                }
+            SettingsSwitchRow(
+                title = "Deadline Reminder (Silent)",
+                subtitle = "Silent notification at the end of the window if you haven't unlocked your phone",
+                checked = reminderDeadlineSilent,
+                enabled = sleepEnabled,
+                onCheckedChange = { scope.launch { userPreferencesRepository.setReminderDeadlineSilentEnabled(it) } }
             )
 
             HorizontalDivider()
 
             // ── Sleep Stages ───────────────────────────────────────────────
             SectionHeader("Sleep Stages")
-            ListItem(
-                headlineContent = { Text("Customize Sleep Stages",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)) },
-                supportingContent = { Text("Reorder, enable/disable, and change emojis",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha)) },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = if (sleepEnabled) Modifier.clickable { onEditSleepStages() } else Modifier
+            SettingsNavRow(
+                title = "Customize Sleep Stages",
+                subtitle = "Reorder, enable/disable, and change emojis",
+                enabled = sleepEnabled,
+                onClick = onEditSleepStages
             )
 
             if (showAdvanced && sleepEnabled) {

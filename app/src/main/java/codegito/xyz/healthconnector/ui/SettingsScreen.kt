@@ -32,6 +32,7 @@ fun SettingsScreen(
     onSleepSettings: () -> Unit,
     onNutritionSettings: () -> Unit,
     onExerciseSettings: () -> Unit = {},
+    onWeightSettings: () -> Unit = {},
     onNetworkAiSettings: () -> Unit,
     onDeveloperPromptsSettings: () -> Unit,
     // Kept for binary compat — not used in new flow
@@ -81,69 +82,55 @@ fun SettingsScreen(
             // ── Permissions ───────────────────────────────────────────────
             SectionHeader("Permissions")
 
-            ListItem(
-                headlineContent = { Text("Permissions") },
-                supportingContent = { Text("Health Connect, notifications, sensors, alarms") },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = Modifier.clickable { onPermissions() }
+            SettingsNavRow(
+                title = "Permissions",
+                subtitle = "Health Connect, notifications, sensors, alarms",
+                onClick = onPermissions
             )
 
             HorizontalDivider()
 
-            // ── Tracking categories ───────────────────────────────────────
+            // ── Tracking ──────────────────────────────────────────────────
             SectionHeader("Tracking")
 
-            ListItem(
-                headlineContent = { Text("Sleep") },
-                supportingContent = {
-                    Text(
-                        if (sleepEnabled) "Detection, reminders, stages, rollover time"
-                        else "Disabled — tap to configure"
-                    )
-                },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = Modifier.clickable { onSleepSettings() }
+            SettingsNavRow(
+                title = "Sleep",
+                subtitle = if (sleepEnabled) "Detection, reminders, stages, rollover time"
+                           else "Disabled — tap to configure",
+                onClick = onSleepSettings
             )
 
-            ListItem(
-                headlineContent = { Text("Nutrition") },
-                supportingContent = {
-                    Text(
-                        if (nutritionEnabled) "Food database, date range, meal windows"
-                        else "Disabled — tap to configure"
-                    )
-                },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = Modifier.clickable { onNutritionSettings() }
+            SettingsNavRow(
+                title = "Nutrition",
+                subtitle = if (nutritionEnabled) "Food database, nutrients, meal windows"
+                           else "Disabled — tap to configure",
+                onClick = onNutritionSettings
             )
 
-            ListItem(
-                headlineContent = { Text("Exercise & Weight") },
-                supportingContent = {
-                    val parts = buildList {
-                        if (weightEnabled) add("weight")
-                        if (exerciseEnabled) add("exercise")
-                    }
-                    Text(
-                        if (parts.isEmpty()) "Disabled — tap to configure"
-                        else parts.joinToString(" + ").replaceFirstChar { it.uppercase() } + " tracking enabled"
-                    )
-                },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = Modifier.clickable { onExerciseSettings() }
+            SettingsNavRow(
+                title = "Weight",
+                subtitle = if (weightEnabled) "Weight tracking enabled"
+                           else "Disabled — tap to configure",
+                onClick = onWeightSettings
+            )
+
+            SettingsNavRow(
+                title = "Exercise",
+                subtitle = if (exerciseEnabled) "Exercise tracking enabled"
+                           else "Disabled — tap to configure",
+                onClick = onExerciseSettings
             )
 
             HorizontalDivider()
 
             if (!aiFeaturesDisabled) {
-                // ── Connectivity & AI ────────────────────────────────────────
+                // ── Connectivity & AI ─────────────────────────────────────
                 SectionHeader("Connectivity & AI")
 
-                ListItem(
-                    headlineContent = { Text("Network & AI") },
-                    supportingContent = { Text("Global network toggle, AI toggle, and Koog model configuration") },
-                    trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                    modifier = Modifier.clickable { onNetworkAiSettings() }
+                SettingsNavRow(
+                    title = "Network & AI",
+                    subtitle = "Global network toggle, AI toggle, and model configuration",
+                    onClick = onNetworkAiSettings
                 )
 
                 HorizontalDivider()
@@ -152,16 +139,12 @@ fun SettingsScreen(
             // ── Appearance ────────────────────────────────────────────────
             SectionHeader("Appearance")
 
-            ListItem(
-                headlineContent = { Text("Pitch black (AMOLED)") },
-                supportingContent = { Text("Use pure black backgrounds in dark mode.") },
-                trailingContent = {
-                    Switch(
-                        checked = amoledPitchBlackEnabled,
-                        onCheckedChange = { enabled ->
-                            scope.launch { userPreferencesRepository.setAmoledPitchBlackEnabled(enabled) }
-                        }
-                    )
+            SettingsSwitchRow(
+                title = "Pitch black (AMOLED)",
+                subtitle = "Use pure black backgrounds in dark mode",
+                checked = amoledPitchBlackEnabled,
+                onCheckedChange = { enabled ->
+                    scope.launch { userPreferencesRepository.setAmoledPitchBlackEnabled(enabled) }
                 }
             )
 
@@ -195,9 +178,8 @@ fun SettingsScreen(
                 headlineContent = { Text("Day cutover time") },
                 supportingContent = {
                     Text(
-                        "You can't always get to bed before midnight. This controls when one day " +
-                        "ends and the next begins for grouping sleep and food data. It only affects " +
-                        "how this app displays entries — data already saved in Health Connect is not changed."
+                        "Controls when one day ends and the next begins for grouping sleep and food data. " +
+                        "Only affects how this app displays entries — data in Health Connect is not changed."
                     )
                 },
                 trailingContent = {
@@ -210,41 +192,23 @@ fun SettingsScreen(
                 modifier = Modifier.clickable { showRolloverPicker = true }
             )
 
-
-            ListItem(
-                headlineContent = { Text("Disable all AI features") },
-                supportingContent = { Text("Hides AI controls across the app, including AI logging and AI settings entry points.") },
-                trailingContent = {
-                    Checkbox(
-                        checked = aiFeaturesDisabled,
-                        onCheckedChange = { disabled ->
-                            scope.launch {
-                                userPreferencesRepository.setAiFeaturesDisabled(disabled)
-                                if (disabled) userPreferencesRepository.setGlobalAiEnabled(false)
-                            }
-                        }
-                    )
-                },
-                modifier = Modifier.clickable {
-                    scope.launch {
-                        val next = !aiFeaturesDisabled
-                        userPreferencesRepository.setAiFeaturesDisabled(next)
-                        if (next) userPreferencesRepository.setGlobalAiEnabled(false)
-                    }
-                }
+            SettingsStepperRow(
+                title = "Days to show",
+                value = historyDays,
+                subtitle = "$historyDays days back — applies to sleep history, food log, and data retention",
+                min = 1,
+                max = 30,
+                onValueChange = { scope.launch { userPreferencesRepository.setHistoryDays(it) } }
             )
 
-            ListItem(
-                headlineContent = { Text("Days to show") },
-                supportingContent = { Text("$historyDays days back — applies to sleep history, food log, and data retention") },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = { scope.launch { userPreferencesRepository.setHistoryDays((historyDays - 1).coerceAtLeast(1)) } }
-                        ) { Text("-") }
-                        OutlinedButton(
-                            onClick = { scope.launch { userPreferencesRepository.setHistoryDays((historyDays + 1).coerceAtMost(30)) } }
-                        ) { Text("+") }
+            SettingsCheckRow(
+                title = "Disable all AI features",
+                subtitle = "Hides AI controls across the app, including AI logging and AI settings entry points",
+                checked = aiFeaturesDisabled,
+                onCheckedChange = { disabled ->
+                    scope.launch {
+                        userPreferencesRepository.setAiFeaturesDisabled(disabled)
+                        if (disabled) userPreferencesRepository.setGlobalAiEnabled(false)
                     }
                 }
             )
@@ -254,19 +218,12 @@ fun SettingsScreen(
             // ── Advanced ──────────────────────────────────────────────────
             SectionHeader("Advanced")
 
-            ListItem(
-                headlineContent = { Text("Show advanced settings") },
-                supportingContent = { Text("Reveal extra options on the Sleep and Nutrition settings pages.") },
-                trailingContent = {
-                    Checkbox(
-                        checked = showAdvancedSettings,
-                        onCheckedChange = { enabled ->
-                            scope.launch { userPreferencesRepository.setShowAdvancedSettings(enabled) }
-                        }
-                    )
-                },
-                modifier = Modifier.clickable {
-                    scope.launch { userPreferencesRepository.setShowAdvancedSettings(!showAdvancedSettings) }
+            SettingsCheckRow(
+                title = "Show advanced settings",
+                subtitle = "Reveal extra options on the Sleep and Nutrition settings pages",
+                checked = showAdvancedSettings,
+                onCheckedChange = { enabled ->
+                    scope.launch { userPreferencesRepository.setShowAdvancedSettings(enabled) }
                 }
             )
 
@@ -301,12 +258,10 @@ fun SettingsScreen(
                     Text("Trigger Test Notification")
                 }
 
-
-                ListItem(
-                    headlineContent = { Text("AI Prompts") },
-                    supportingContent = { Text("Developer-only system prompt templates and reset controls") },
-                    trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                    modifier = Modifier.clickable { onDeveloperPromptsSettings() }
+                SettingsNavRow(
+                    title = "AI Prompts",
+                    subtitle = "Developer-only system prompt templates and reset controls",
+                    onClick = onDeveloperPromptsSettings
                 )
 
                 OutlinedButton(

@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -188,19 +187,13 @@ fun NutritionSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             // ── Enable / Disable toggle ────────────────────────────────────
-            ListItem(
-                headlineContent = { Text("Nutrition Tracking Enabled") },
-                supportingContent = {
-                    Text(if (nutritionEnabled) "Nutrition is active and visible in the app."
-                         else "Nutrition is disabled. Food tab and settings below are hidden.")
-                },
-                trailingContent = {
-                    Switch(
-                        checked = nutritionEnabled,
-                        onCheckedChange = { enabled ->
-                            scope.launch { userPreferencesRepository.setNutritionEnabled(enabled) }
-                        }
-                    )
+            SettingsSwitchRow(
+                title = "Nutrition Tracking Enabled",
+                subtitle = if (nutritionEnabled) "Nutrition is active and visible in the app."
+                           else "Nutrition is disabled. Food tab and settings below are hidden.",
+                checked = nutritionEnabled,
+                onCheckedChange = { enabled ->
+                    scope.launch { userPreferencesRepository.setNutritionEnabled(enabled) }
                 }
             )
 
@@ -285,29 +278,23 @@ fun NutritionSettingsScreen(
             // ── Nutrients ─────────────────────────────────────────────────
             SectionHeader("Nutrients")
 
-            ListItem(
-                headlineContent = { Text("Configure Nutrients") },
-                supportingContent = { Text("Choose which nutrients to track, their display order, and whether to show core nutrients") },
-                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                modifier = if (contentEnabled) Modifier.clickable { onEditNutrients() } else Modifier
+            SettingsNavRow(
+                title = "Configure Nutrients",
+                subtitle = "Choose which nutrients to track, their display order, and whether to show core nutrients",
+                enabled = contentEnabled,
+                onClick = onEditNutrients
             )
 
             // ── Time Tracking ─────────────────────────────────────────────
             SectionHeader("Time Tracking")
 
-            ListItem(
-                headlineContent = { Text("Ask when food was eaten") },
-                supportingContent = {
-                    Text(if (askEatenTime) "Shows a time picker each time you log food."
-                         else "Logs at current time without asking.")
-                },
-                trailingContent = {
-                    Switch(
-                        checked = askEatenTime,
-                        onCheckedChange = { scope.launch { userPreferencesRepository.setNutritionAskEatenTime(it) } },
-                        enabled = contentEnabled
-                    )
-                }
+            SettingsSwitchRow(
+                title = "Ask when food was eaten",
+                subtitle = if (askEatenTime) "Shows a time picker each time you log food."
+                           else "Logs at current time without asking.",
+                checked = askEatenTime,
+                enabled = contentEnabled,
+                onCheckedChange = { scope.launch { userPreferencesRepository.setNutritionAskEatenTime(it) } }
             )
 
             // Note: unit system (metric/imperial) is a global setting in General Settings — do NOT add a per-feature unit toggle here.
@@ -329,22 +316,14 @@ fun NutritionSettingsScreen(
                 HorizontalDivider()
                 SectionHeader("Advanced")
 
-                ListItem(
-                    headlineContent = { Text("Apply nutrient filter to searched foods") },
-                    supportingContent = {
-                        Text(
-                            if (applyFilterToSearch)
-                                "Only enabled extra nutrients are stored when logging from search results."
-                            else
-                                "All available nutrient data is stored when logging from search results."
-                        )
-                    },
-                    trailingContent = {
-                        Switch(
-                            checked = applyFilterToSearch,
-                            onCheckedChange = { scope.launch { userPreferencesRepository.setNutritionApplyNutrientFilterToSearch(it) } }
-                        )
-                    }
+                SettingsSwitchRow(
+                    title = "Apply nutrient filter to searched foods",
+                    subtitle = if (applyFilterToSearch)
+                        "Only enabled extra nutrients are stored when logging from search results."
+                    else
+                        "All available nutrient data is stored when logging from search results.",
+                    checked = applyFilterToSearch,
+                    onCheckedChange = { scope.launch { userPreferencesRepository.setNutritionApplyNutrientFilterToSearch(it) } }
                 )
 
                 // AI Food Logging Retry Cycles (only show if AI is enabled)
@@ -402,25 +381,23 @@ fun NutritionSettingsScreen(
                 )
 
                 Text("Entry Duration", style = MaterialTheme.typography.labelLarge)
-                ListItem(
-                    headlineContent = { Text("Meal duration") },
-                    supportingContent = { Text("$mealDuration min — backfilled from eaten time for breakfast, lunch, dinner") },
-                    trailingContent = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { scope.launch { userPreferencesRepository.setNutritionMealDurationMinutes((mealDuration - 5).coerceAtLeast(5)) } }) { Text("-") }
-                            OutlinedButton(onClick = { scope.launch { userPreferencesRepository.setNutritionMealDurationMinutes((mealDuration + 5).coerceAtMost(180)) } }) { Text("+") }
-                        }
-                    }
+                SettingsStepperRow(
+                    title = "Meal duration",
+                    value = mealDuration,
+                    subtitle = "$mealDuration min — backfilled from eaten time for breakfast, lunch, dinner",
+                    min = 5,
+                    max = 180,
+                    step = 5,
+                    onValueChange = { scope.launch { userPreferencesRepository.setNutritionMealDurationMinutes(it) } }
                 )
-                ListItem(
-                    headlineContent = { Text("Snack duration") },
-                    supportingContent = { Text("$snackDuration min — used for snacks and foods outside meal windows") },
-                    trailingContent = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { scope.launch { userPreferencesRepository.setNutritionSnackDurationMinutes((snackDuration - 5).coerceAtLeast(1)) } }) { Text("-") }
-                            OutlinedButton(onClick = { scope.launch { userPreferencesRepository.setNutritionSnackDurationMinutes((snackDuration + 5).coerceAtMost(120)) } }) { Text("+") }
-                        }
-                    }
+                SettingsStepperRow(
+                    title = "Snack duration",
+                    value = snackDuration,
+                    subtitle = "$snackDuration min — used for snacks and foods outside meal windows",
+                    min = 1,
+                    max = 120,
+                    step = 5,
+                    onValueChange = { scope.launch { userPreferencesRepository.setNutritionSnackDurationMinutes(it) } }
                 )
             }
         }

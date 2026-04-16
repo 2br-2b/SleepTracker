@@ -111,11 +111,10 @@ fun NetworkAiSettingsScreen(
 
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SettingToggleRow(
-                        label = "Enable network features",
-                        description = "Master switch for all features that require network access.",
+                    SettingsSwitchRow(
+                        title = "Enable network features",
+                        subtitle = "Master switch for all features that require network access.",
                         checked = networkEnabled,
-                        enabled = true,
                         onCheckedChange = { enabled ->
                             scope.launch {
                                 userPreferencesRepository.setGlobalNetworkEnabled(enabled)
@@ -124,9 +123,9 @@ fun NetworkAiSettingsScreen(
                         }
                     )
                     HorizontalDivider()
-                    SettingToggleRow(
-                        label = "Enable AI features",
-                        description = "AI is automatically disabled when networking is off.",
+                    SettingsSwitchRow(
+                        title = "Enable AI features",
+                        subtitle = "AI is automatically disabled when networking is off.",
                         checked = effectiveAiEnabled,
                         enabled = networkEnabled,
                         onCheckedChange = { enabled ->
@@ -394,31 +393,3 @@ private suspend fun runAiConsoleTest(
     }.getOrElse { "Connection error: ${it.message}" }
 }
 
-@Composable
-private fun SettingToggleRow(
-    label: String,
-    description: String,
-    checked: Boolean,
-    enabled: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.titleSmall,
-                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
-    }
-}
