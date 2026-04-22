@@ -228,13 +228,30 @@ fun LogExerciseSheet(
     val epocMultiplier by userPreferencesRepository.exerciseEpocMultiplier.collectAsState(initial = 1.07)
     val unitSystem by userPreferencesRepository.globalUnitSystem.collectAsState(initial = UnitSystem.IMPERIAL)
     val recentTypeIds by userPreferencesRepository.exerciseRecentTypeIds.collectAsState(initial = emptyList())
+    val exerciseTypeConfig by userPreferencesRepository.exerciseTypeConfig.collectAsState(initial = emptyList())
+    val showRecentAtTop by userPreferencesRepository.exerciseShowRecentAtTop.collectAsState(initial = false)
 
-    val sortedExerciseTypes = remember(recentTypeIds) {
-        val recentMap = recentTypeIds.withIndex().associate { (idx, id) -> id to idx }
-        DefaultExerciseTypes.all.sortedBy { recentMap[it.id] ?: Int.MAX_VALUE }
+    val sortedExerciseTypes = remember(exerciseTypeConfig, recentTypeIds, showRecentAtTop) {
+        // Build an ordered, enabled-only list based on user's config
+        val configByTypeId = exerciseTypeConfig.withIndex().associate { (idx, cfg) -> cfg.typeId to Pair(idx, cfg) }
+        val enabledTypes = DefaultExerciseTypes.all
+            .filter { type -> configByTypeId[type.id]?.second?.isEnabled != false }
+            .sortedBy { type -> configByTypeId[type.id]?.first ?: Int.MAX_VALUE }
+
+        if (showRecentAtTop && recentTypeIds.isNotEmpty()) {
+            val recentTop = recentTypeIds.take(5).filter { id -> enabledTypes.any { it.id == id } }
+            val recentSet = recentTop.toSet()
+            val pinnedItems = recentTop.mapNotNull { id -> enabledTypes.find { it.id == id } }
+            val rest = enabledTypes.filter { it.id !in recentSet }
+            pinnedItems + rest
+        } else {
+            enabledTypes
+        }
     }
 
-    var selectedType by remember { mutableStateOf(sortedExerciseTypes.first()) }
+    var selectedType by remember(sortedExerciseTypes) {
+        mutableStateOf(sortedExerciseTypes.firstOrNull() ?: DefaultExerciseTypes.all.first())
+    }
     var selectedDate by remember { mutableStateOf(LocalDate.now()) }
     var startTime by remember { mutableStateOf(LocalTime.now().minusHours(1).withSecond(0).withNano(0)) }
     var endTime by remember { mutableStateOf(LocalTime.now().withSecond(0).withNano(0)) }
@@ -300,15 +317,23 @@ fun LogExerciseSheet(
         ) {
             Text("Log Exercise", style = MaterialTheme.typography.titleLarge)
 
-            // Exercise type chips (most recently used first)
+            // Exercise type chips
             Text("Exercise Type", style = MaterialTheme.typography.labelLarge)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(sortedExerciseTypes) { type ->
-                    FilterChip(
-                        selected = selectedType.id == type.id,
-                        onClick = { selectedType = type; distanceInput = ""; sets = listOf(ExerciseSet(10)) },
-                        label = { Text("${type.icon} ${type.displayName}") }
-                    )
+            if (sortedExerciseTypes.isEmpty()) {
+                Text(
+                    "No exercise types enabled. Go to Exercise Settings to enable some.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(sortedExerciseTypes) { type ->
+                        FilterChip(
+                            selected = selectedType.id == type.id,
+                            onClick = { selectedType = type; distanceInput = ""; sets = listOf(ExerciseSet(10)) },
+                            label = { Text("${type.icon} ${type.displayName}") }
+                        )
+                    }
                 }
             }
 

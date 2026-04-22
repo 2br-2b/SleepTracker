@@ -12,6 +12,8 @@ import codegito.xyz.healthconnector.data.model.TimeRange
 import codegito.xyz.healthconnector.data.model.TrackingType
 import codegito.xyz.healthconnector.data.model.AiProvider
 import codegito.xyz.healthconnector.data.SleepStageConfig
+import codegito.xyz.healthconnector.exercise.domain.ExerciseTypeConfig
+import codegito.xyz.healthconnector.exercise.domain.getDefaultExerciseTypeConfig
 import codegito.xyz.healthconnector.nutrition.domain.NutrientConfig
 import codegito.xyz.healthconnector.nutrition.domain.NutrientDefaults
 import codegito.xyz.healthconnector.nutrition.domain.NutritionUnitSystem
@@ -158,6 +160,8 @@ CRITICAL RULES:
     private val EXERCISE_ACSM_CORRECTION_KEY        = floatPreferencesKey("exercise_acsm_correction")
     private val EXERCISE_EPOC_MULTIPLIER_KEY        = floatPreferencesKey("exercise_epoc_multiplier")
     private val EXERCISE_RECENT_TYPE_IDS_KEY        = stringPreferencesKey("exercise_recent_type_ids")
+    private val EXERCISE_TYPE_CONFIG_JSON_KEY        = stringPreferencesKey("exercise_type_config_json")
+    private val EXERCISE_SHOW_RECENT_AT_TOP_KEY      = booleanPreferencesKey("exercise_show_recent_at_top")
     // Global unit system — controls weight (kg/lbs), nutrition (g/oz), distance (km/mi).
     // DO NOT split this into per-feature unit settings.
     private val GLOBAL_UNIT_SYSTEM_KEY              = stringPreferencesKey("global_unit_system")
@@ -412,6 +416,18 @@ CRITICAL RULES:
     /** Ordered list of recently used exercise type IDs, most recent first. */
     val exerciseRecentTypeIds: Flow<List<String>> = context.dataStore.data
         .map { prefs -> prefs[EXERCISE_RECENT_TYPE_IDS_KEY]?.split(",")?.filter { it.isNotBlank() } ?: emptyList() }
+
+    /** User-ordered, enable/disable config for exercise types. */
+    val exerciseTypeConfig: Flow<List<ExerciseTypeConfig>> = context.dataStore.data
+        .map { prefs ->
+            prefs[EXERCISE_TYPE_CONFIG_JSON_KEY]?.let {
+                runCatching { json.decodeFromString<List<ExerciseTypeConfig>>(it) }.getOrNull()
+            } ?: getDefaultExerciseTypeConfig()
+        }
+
+    /** When true, the 5 most recently used exercise types appear at the top of the list. */
+    val exerciseShowRecentAtTop: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[EXERCISE_SHOW_RECENT_AT_TOP_KEY] ?: false }
 
     // ── Sleep setters ─────────────────────────────────────────────────────
 
@@ -670,6 +686,14 @@ CRITICAL RULES:
 
     suspend fun setExerciseRecentTypeIds(ids: List<String>) {
         context.dataStore.edit { prefs -> prefs[EXERCISE_RECENT_TYPE_IDS_KEY] = ids.joinToString(",") }
+    }
+
+    suspend fun saveExerciseTypeConfig(config: List<ExerciseTypeConfig>) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_TYPE_CONFIG_JSON_KEY] = json.encodeToString(config) }
+    }
+
+    suspend fun setExerciseShowRecentAtTop(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_SHOW_RECENT_AT_TOP_KEY] = enabled }
     }
 
     /** Moves the given exercise type to the front of the recently used list. */

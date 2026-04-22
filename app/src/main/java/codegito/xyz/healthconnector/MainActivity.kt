@@ -48,6 +48,7 @@ import codegito.xyz.healthconnector.data.UserPreferencesRepository
 import codegito.xyz.healthconnector.nutrition.data.NutritionIndexBuildManager
 import codegito.xyz.healthconnector.nutrition.data.NutritionDatabaseProvider
 import codegito.xyz.healthconnector.ui.EditNutrientsScreen
+import codegito.xyz.healthconnector.ui.EditExerciseTypesScreen
 import codegito.xyz.healthconnector.ui.EditSleepStagesScreen
 import codegito.xyz.healthconnector.ui.DeveloperPromptsSettingsScreen
 import codegito.xyz.healthconnector.ui.ExerciseHomeScreen
@@ -435,7 +436,14 @@ fun MainApp(
                 ExerciseSettingsScreen(
                     userPreferencesRepository = userPreferencesRepository,
                     onBack = { navController.popBackStack() },
-                    onPermissions = { navController.navigate(Screen.Permissions.route) }
+                    onPermissions = { navController.navigate(Screen.Permissions.route) },
+                    onEditExerciseTypes = { navController.navigate(Screen.EditExerciseTypes.route) }
+                )
+            }
+            composable(Screen.EditExerciseTypes.route) {
+                EditExerciseTypesScreen(
+                    userPreferencesRepository = userPreferencesRepository,
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable(Screen.Settings.route) {
@@ -944,6 +952,7 @@ sealed class Screen(val route: String) {
     object DeveloperPromptsSettings : Screen("developer_prompts_settings")
     object EditSleepStages : Screen("edit_sleep_stages")
     object EditNutrients : Screen("edit_nutrients")
+    object EditExerciseTypes : Screen("edit_exercise_types")
     object NutritionDay : Screen("nutrition/day/{date}") {
         fun route(date: LocalDate) = "nutrition/day/$date"
     }
