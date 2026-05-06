@@ -2,24 +2,15 @@ package codegito.xyz.healthconnector.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyItemScope
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import codegito.xyz.healthconnector.DragReorderState
 import codegito.xyz.healthconnector.data.SleepStageConfig
 import codegito.xyz.healthconnector.data.UserPreferencesRepository
@@ -164,83 +155,16 @@ fun LazyItemScope.SleepStageEditRow(
     onDrag: (Float) -> Unit,
     onDragEnd: () -> Unit
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (isDragged) {
-                    Modifier
-                        .zIndex(1f)
-                        .graphicsLayer {
-                            translationY = dragReorderState.draggedOffset
-                            scaleX = 1.02f
-                            scaleY = 1.02f
-                        }
-                } else {
-                    Modifier.animateItem()
-                }
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = if (stage.isEnabled) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                // Drag Handle
-                Icon(
-                    imageVector = Icons.Default.Menu,
-                    contentDescription = "Drag to reorder",
-                    modifier = Modifier.pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { onDragStart() },
-                            onDrag = { change, offset ->
-                                change.consume()
-                                onDrag(offset.y)
-                            },
-                            onDragEnd = { onDragEnd() },
-                            onDragCancel = { onDragEnd() }
-                        )
-                    }
-                )
-
-                // Emoji
-                Text(
-                    text = stage.emoji,
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier
-                        .clickable { onEmojiClick() }
-                        .padding(4.dp)
-                )
-
-                // Name
-                Column {
-                    Text(
-                        text = stage.name,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = if (stage.isEnabled) "Enabled" else "Disabled",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // Toggle
-            Switch(
-                checked = stage.isEnabled,
-                onCheckedChange = onToggleEnabled
-            )
-        }
-    }
+    DraggableEditRow(
+        name = stage.name,
+        icon = stage.emoji,
+        isEnabled = stage.isEnabled,
+        isDragged = isDragged,
+        dragReorderState = dragReorderState,
+        onToggleEnabled = onToggleEnabled,
+        onIconClick = onEmojiClick,
+        onDragStart = onDragStart,
+        onDrag = onDrag,
+        onDragEnd = onDragEnd
+    )
 }

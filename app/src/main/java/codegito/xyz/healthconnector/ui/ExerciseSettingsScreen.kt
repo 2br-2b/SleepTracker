@@ -22,7 +22,8 @@ import kotlinx.coroutines.launch
 fun ExerciseSettingsScreen(
     userPreferencesRepository: UserPreferencesRepository,
     onBack: () -> Unit,
-    onPermissions: () -> Unit
+    onPermissions: () -> Unit,
+    onEditExerciseTypes: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
 
@@ -157,6 +158,18 @@ fun ExerciseSettingsScreen(
                         scope.launch { userPreferencesRepository.setExerciseDefaultWeightKg(kg) }
                     }) { Text("Save") }
                 }
+            )
+
+            HorizontalDivider()
+
+            // ── Exercise types ────────────────────────────────────────────
+            SectionHeader("Exercise Types")
+
+            ListItem(
+                headlineContent = { Text("Edit exercise types") },
+                supportingContent = { Text("Reorder, enable or disable exercise types") },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().clickable { onEditExerciseTypes() }
             )
 
             HorizontalDivider()
