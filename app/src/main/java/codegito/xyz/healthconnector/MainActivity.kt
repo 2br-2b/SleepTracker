@@ -556,9 +556,11 @@ fun HomeScreen(
 
     val today = LocalDate.now()
     val zoneId = ZoneId.systemDefault()
-    val todayOvernightLogged = remember(sleepSessions, rolloverHour) {
-        val startBound = today.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
-        val endBound = today.plusDays(1).atTime(rolloverHour, 0).atZone(zoneId).toInstant()
+    // "Last night" is the completed overnight window: yesterday-rolloverHour → today-rolloverHour
+    val lastNight = today.minusDays(1)
+    val lastNightLogged = remember(sleepSessions, rolloverHour) {
+        val startBound = lastNight.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
+        val endBound = today.atTime(rolloverHour, 0).atZone(zoneId).toInstant()
         sleepSessions.any { session ->
             session.startTime.isAfter(startBound) && session.startTime.isBefore(endBound)
                     && session.title != SleepDataLogger.NAP_TITLE
@@ -571,11 +573,11 @@ fun HomeScreen(
         },
         floatingActionButton = {
             if (hasSleepWrite == true) {
-                val fabLabel = if (!todayOvernightLogged) "Log Today's Sleep" else "Add Nap"
+                val fabLabel = if (!lastNightLogged) "Log Today's Sleep" else "Add Nap"
                 ExtendedFloatingActionButton(
                     text = { Text(fabLabel) },
                     icon = { Icon(Icons.Default.Add, contentDescription = fabLabel) },
-                    onClick = { onOpenSession(LocalDate.now(), null, todayOvernightLogged) }
+                    onClick = { onOpenSession(lastNight, null, lastNightLogged) }
                 )
             }
         }

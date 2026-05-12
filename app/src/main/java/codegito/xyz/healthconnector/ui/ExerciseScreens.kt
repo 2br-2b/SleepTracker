@@ -42,6 +42,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
@@ -457,8 +458,9 @@ fun LogExerciseSheet(
         )
     }
     if (showDatePicker) {
+        // DatePicker stores/returns dates as UTC midnight millis; use ZoneOffset.UTC for round-trip
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = selectedDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+            initialSelectedDateMillis = selectedDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
         )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
@@ -466,7 +468,7 @@ fun LogExerciseSheet(
                 TextButton(onClick = {
                     datePickerState.selectedDateMillis?.let { millis ->
                         selectedDate = JavaInstant.ofEpochMilli(millis)
-                            .atZone(zoneId).toLocalDate()
+                            .atZone(ZoneOffset.UTC).toLocalDate()
                     }
                     showDatePicker = false
                 }) { Text("OK") }
