@@ -45,6 +45,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import kotlinx.coroutines.flow.first
 
 // ── Home Screen ───────────────────────────────────────────────────────────────
 
@@ -237,14 +238,23 @@ fun LogExerciseSheet(
 
     var selectedType by remember { mutableStateOf(sortedExerciseTypes.first()) }
     var selectedDate by remember { mutableStateOf(LocalDate.now()) }
-    var startTime by remember { mutableStateOf(LocalTime.now().minusHours(1).withSecond(0).withNano(0)) }
-    var endTime by remember { mutableStateOf(LocalTime.now().withSecond(0).withNano(0)) }
+    val now = remember { LocalTime.now().withSecond(0).withNano(0) }
+    var endTime by remember { mutableStateOf(now) }
+    var startTime by remember { mutableStateOf(now.minusHours(1)) }
+    var durationInput by remember { mutableStateOf("60") }
     var distanceInput by remember { mutableStateOf("") }
     var sets by remember { mutableStateOf(listOf(ExerciseSet(reps = 10))) }
     var isSaving by remember { mutableStateOf(false) }
     var showStartPicker by remember { mutableStateOf(false) }
     var showEndPicker by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+
+    // Seed duration and times from the last saved session length
+    LaunchedEffect(Unit) {
+        val stored = userPreferencesRepository.exerciseLastDurationMinutes.first()
+        durationInput = stored.toString()
+        startTime = now.minusMinutes(stored.toLong())
+    }
 
     val dateFormatter = DateTimeFormatter.ofPattern("EEE, MMM d")
     val isMetric = unitSystem == UnitSystem.METRIC
@@ -337,6 +347,21 @@ fun LogExerciseSheet(
                 }
             }
 
+            // Duration field — stays in sync with start/end time
+            OutlinedTextField(
+                value = durationInput,
+                onValueChange = { v ->
+                    durationInput = v
+                    v.toIntOrNull()?.takeIf { it > 0 }?.let { mins ->
+                        endTime = startTime.plusMinutes(mins.toLong())
+                    }
+                },
+                label = { Text("Duration (min)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
             // Optional: distance (cardio) or sets/reps (strength)
             if (selectedType.usesDistance) {
                 OutlinedTextField(
@@ -428,6 +453,9 @@ fun LogExerciseSheet(
                         )
                         healthConnectManager.writeExerciseSession(finalEntry)
                         userPreferencesRepository.markExerciseTypeUsed(entry.exerciseType.id)
+                        durationInput.toIntOrNull()?.takeIf { it > 0 }?.let {
+                            userPreferencesRepository.setExerciseLastDurationMinutes(it)
+                        }
                         isSaving = false
                         onSaved()
                     }
@@ -445,7 +473,14 @@ fun LogExerciseSheet(
         AppTimePickerDialog(
             initialHour = startTime.hour,
             initialMinute = startTime.minute,
-            onConfirm = { h, m -> startTime = LocalTime.of(h, m); showStartPicker = false },
+            onConfirm = { h, m ->
+                startTime = LocalTime.of(h, m)
+                // Keep duration constant, move end time
+                durationInput.toIntOrNull()?.takeIf { it > 0 }?.let { mins ->
+                    endTime = startTime.plusMinutes(mins.toLong())
+                }
+                showStartPicker = false
+            },
             onDismiss = { showStartPicker = false }
         )
     }
@@ -453,7 +488,14 @@ fun LogExerciseSheet(
         AppTimePickerDialog(
             initialHour = endTime.hour,
             initialMinute = endTime.minute,
-            onConfirm = { h, m -> endTime = LocalTime.of(h, m); showEndPicker = false },
+            onConfirm = { h, m ->
+                endTime = LocalTime.of(h, m)
+                // Recalculate duration from new end time
+                val mins = Duration.between(startTime, endTime).toMinutes()
+                    .let { if (it <= 0) it + 24 * 60 else it }.toInt()
+                durationInput = mins.toString()
+                showEndPicker = false
+            },
             onDismiss = { showEndPicker = false }
         )
     }

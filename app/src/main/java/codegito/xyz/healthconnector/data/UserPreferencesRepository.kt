@@ -158,6 +158,7 @@ CRITICAL RULES:
     private val EXERCISE_ACSM_CORRECTION_KEY        = floatPreferencesKey("exercise_acsm_correction")
     private val EXERCISE_EPOC_MULTIPLIER_KEY        = floatPreferencesKey("exercise_epoc_multiplier")
     private val EXERCISE_RECENT_TYPE_IDS_KEY        = stringPreferencesKey("exercise_recent_type_ids")
+    private val EXERCISE_LAST_DURATION_MIN_KEY      = intPreferencesKey("exercise_last_duration_minutes")
     // Global unit system — controls weight (kg/lbs), nutrition (g/oz), distance (km/mi).
     // DO NOT split this into per-feature unit settings.
     private val GLOBAL_UNIT_SYSTEM_KEY              = stringPreferencesKey("global_unit_system")
@@ -412,6 +413,9 @@ CRITICAL RULES:
     /** Ordered list of recently used exercise type IDs, most recent first. */
     val exerciseRecentTypeIds: Flow<List<String>> = context.dataStore.data
         .map { prefs -> prefs[EXERCISE_RECENT_TYPE_IDS_KEY]?.split(",")?.filter { it.isNotBlank() } ?: emptyList() }
+
+    val exerciseLastDurationMinutes: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[EXERCISE_LAST_DURATION_MIN_KEY] ?: 60 }
 
     // ── Sleep setters ─────────────────────────────────────────────────────
 
@@ -670,6 +674,10 @@ CRITICAL RULES:
 
     suspend fun setExerciseRecentTypeIds(ids: List<String>) {
         context.dataStore.edit { prefs -> prefs[EXERCISE_RECENT_TYPE_IDS_KEY] = ids.joinToString(",") }
+    }
+
+    suspend fun setExerciseLastDurationMinutes(minutes: Int) {
+        context.dataStore.edit { prefs -> prefs[EXERCISE_LAST_DURATION_MIN_KEY] = minutes }
     }
 
     /** Moves the given exercise type to the front of the recently used list. */
